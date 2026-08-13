@@ -21,8 +21,10 @@ import {
   createUser,
   listBranchesForActor,
   listTeam,
+  setUserActive,
   type CreatableRole,
 } from '../application/use-cases/users';
+import { createBranch, listBranches } from '../application/use-cases/branches';
 import {
   buildContainer,
   clearAuthCookies,
@@ -390,5 +392,45 @@ branchRoutes.get(
     const container = buildContainer(c.env);
     const items = await listBranchesForActor(container.users, c.get('user'));
     return c.json({ ok: true, items });
+  },
+);
+
+/** إنشاء فرع — المالك فقط (`BRANCH_MANAGE` غائبة عن مدير الفرع عمدًا) */
+branchRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.BRANCH_MANAGE] }), async (c) => {
+  const body = await readJson<{
+    code?: string;
+    name?: string;
+    address?: string | null;
+    phone?: string | null;
+  }>(c);
+
+  const container = buildContainer(c.env);
+  const created = await createBranch(container.branchOps, c.get('user'), {
+    code: body.code ?? '',
+    name: body.name ?? '',
+    address: body.address ?? null,
+    phone: body.phone ?? null,
+  });
+
+  return c.json({ ok: true, id: created.id }, 201);
+});
+
+/** تعطيل / إعادة تفعيل حساب */
+userRoutes.post(
+  '/:id/active',
+  requireAuth({ requireAll: [PERMISSIONS.USER_EDIT] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الحساب مفقود.');
+
+    const body = await readJson<{ isActive?: boolean }>(c);
+    if (typeof body.isActive !== 'boolean') {
+      throw Errors.validation('القيمة المطلوبة غير صحيحة.');
+    }
+
+    const container = buildContainer(c.env);
+    await setUserActive(container.users, c.get('user'), id, body.isActive);
+
+    return c.json({ ok: true });
   },
 );
