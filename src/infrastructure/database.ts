@@ -19,10 +19,13 @@ import type {
   AnnouncementRepository,
   AuditLogger,
   AuthenticatedUser,
+  BranchRepository,
+  BranchSummary,
   RateLimiter,
   RoleKey,
   SessionRecord,
   SessionRepository,
+  TeamMember,
   UserRecord,
   UserRepository,
 } from '../application/ports';
@@ -149,6 +152,117 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
 
     async updatePasswordHash(userId, hash) {
       await db.from('users').update({ password_hash: hash }).eq('id', userId);
+    },
+
+    async create(data) {
+      // نحتاج معرّف الدور الداخلي — الجدول يربط بـ role_id لا role_key مباشرة
+      const { data: role, error: roleError } = await db
+        .from('roles')
+        .select('id')
+        .eq('key', data.roleKey)
+        .single();
+
+      if (roleError || !role) throw Errors.internal(`role lookup: ${roleError?.message}`);
+
+      const { data: row, error } = await db
+        .from('users')
+        .insert({
+          username: data.username,
+          full_name: data.fullName,
+          password_hash: data.passwordHash,
+          role_id: role.id,
+          branch_id: data.branchId,
+          is_active: true,
+          // لسه مفيش شاشة "غيّر كلمة المرور" مبنية في هذه الوحدة،
+          // فتفعيل الإجبار هنا كان سيحبس المستخدم من غير مخرج
+          must_change_password: false,
+        })
+        .select('id')
+        .single();
+
+      if (error || !row) {
+        // 23505 = unique violation في بوستجرس — اسم المستخدم مكرّر
+        if (error?.code === '23505') throw Errors.validation('اسم المستخدم ده مُستخدَم بالفعل.');
+        throw Errors.internal(`user insert: ${error?.message}`);
+      }
+
+      return { id: row.id as string };
+    },
+
+    async listInScope(scope) {
+      let query = db
+        .from('users')
+        .select('id, username, full_name, branch_id, is_active, created_at, role:roles(key)')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(200); // سقف احترازي لشاشة موبايل
+
+      // النوع بيجبرنا نتعامل مع الحالتين صراحةً — مفيش "لو نسيت الفلتر
+      // هيعرض الكل". لازم تكتب allBranches بإيدك عشان تشوف كل الفروع.
+      if (!('allBranches' in scope)) {
+        query = query.eq('branch_id', scope.branchId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw Errors.internal(`users list: ${error.message}`);
+
+      return ((data ?? []) as RawTeamMember[]).map(toTeamMember);
+    },
+  };
+}
+
+// صف الفريق كما يرجعه PostgREST — role ممكن تيجي كائن أو مصفوفة
+// حسب طريقة استنتاج العلاقة، فنتعامل مع الاحتمالين بأمان
+interface RawTeamMember {
+  id: string;
+  username: string;
+  full_name: string;
+  branch_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  role: { key: string } | { key: string }[] | null;
+}
+
+function toTeamMember(raw: RawTeamMember): TeamMember {
+  const role = Array.isArray(raw.role) ? raw.role[0] : raw.role;
+  return {
+    id: raw.id,
+    username: raw.username,
+    fullName: raw.full_name,
+    roleKey: (role?.key ?? 'STAFF') as RoleKey,
+    branchId: raw.branch_id,
+    isActive: raw.is_active,
+    createdAt: new Date(raw.created_at),
+  };
+}
+
+// ─────────── الفروع ───────────
+
+export function createBranchRepository(db: SupabaseClient): BranchRepository {
+  return {
+    async listActive() {
+      const { data, error } = await db
+        .from('branches')
+        .select('id, code, name')
+        .is('deleted_at', null)
+        .eq('is_active', true)
+        .order('name');
+
+      if (error) throw Errors.internal(`branches list: ${error.message}`);
+      return (data ?? []) as BranchSummary[];
+    },
+
+    async exists(branchId) {
+      const { data, error } = await db
+        .from('branches')
+        .select('id')
+        .eq('id', branchId)
+        .is('deleted_at', null)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`branch exists: ${error.message}`);
+      return Boolean(data);
     },
   };
 }
