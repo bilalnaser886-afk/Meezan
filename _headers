@@ -1,0 +1,6 @@
+# هيدرات أمنية على الملفات الثابتة.
+# (مسارات التطبيق بتاخد هيدراتها من secureHeaders في الكود)
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin

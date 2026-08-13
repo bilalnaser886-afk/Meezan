@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════
+#  إعدادات Cloudflare Pages
+#
+#  ⚠ الأسرار مش بتتكتب هنا خالص. الملف ده بيروح على GitHub.
+#  مكان الأسرار: Cloudflare ← مشروعك ← Settings ← Variables
+# ═══════════════════════════════════════════════════════════
+
+name = "pos-branch-system"
+compatibility_date = "2025-01-15"
+
+# لازم عشان مكتبة supabase-js تشتغل
+compatibility_flags = ["nodejs_compat"]
+
+# المجلد اللي فيه الملفات الثابتة. لازم يكون موجود حتى لو شبه فاضي.
+pages_build_output_dir = "public"
+
+# متغيّر عادي (مش سرّ) — عدد لفّات تجزئة كلمة المرور
+[vars]
+PBKDF2_ITERATIONS = "100000"

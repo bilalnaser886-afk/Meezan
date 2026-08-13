@@ -1,0 +1,186 @@
+/**
+ * التطبيق
+ *
+ * الملف ده بيبني التطبيق بس، وما بيصدّرش نقطة دخول.
+ * نقطة الدخول في `functions/[[path]].ts` — لأن Cloudflare Pages
+ * بتدوّر على مجلد `functions` مش على ملف واحد.
+ *
+ * تشبيه: ده تصميم الصالة. الباب اللي الناس بتدخل منه في ملف تاني.
+ */
+
+import { Hono } from 'hono';
+import { secureHeaders } from 'hono/secure-headers';
+import { SESSION_POLICY, assertEnv, jwtRole, superAdminPath, type Env } from './domain/config';
+import { AppError } from './domain/errors';
+import { PERMISSIONS } from './domain/permissions';
+import { announcementRoutes, authRoutes, setupRoutes } from './server/routes';
+import { requireAuth, type AppBindings } from './server/guard';
+import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
+import { normalizeSupabaseUrl } from './infrastructure/database';
+import { dashboardPage, loginPage, setupPage, vaultPage } from './ui/pages';
+
+export const app = new Hono<AppBindings>();
+
+// ─────────── هيدرات أمنية على كل رد ───────────
+app.use(
+  '*',
+  secureHeaders({
+    xFrameOptions: 'DENY', // يمنع وضع الموقع جوّه إطار (clickjacking)
+    xContentTypeOptions: 'nosniff',
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    strictTransportSecurity: 'max-age=63072000; includeSubDomains',
+  }),
+);
+
+// ─────────── فحص الإعدادات ───────────
+// أول حاجة بتحصل: نتأكد إن المتغيّرات موجودة وصح.
+// الهدف رسالة واضحة بدل انهيار غامض وسط يوم شغل.
+app.use('*', async (c, next) => {
+  try {
+    assertEnv(c.env);
+  } catch (error) {
+    console.error('[config]', error);
+    return c.text(
+      'النظام مش مضبوط بعد.\n\n' +
+        (error instanceof Error ? error.message : '') +
+        '\n\nروح: Cloudflare ← مشروعك ← Settings ← Variables and Secrets',
+      503,
+    );
+  }
+  await next();
+});
+
+// ─────────── مُوحِّد الأخطاء ───────────
+app.onError((error, c) => {
+  const wantsHtml = c.req.header('accept')?.includes('text/html');
+
+  if (error instanceof AppError && wantsHtml && error.httpStatus === 401) {
+    return c.redirect('/login?expired=1');
+  }
+  return errorResponse(c, error);
+});
+
+app.notFound((c) => c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'غير موجود.' } }, 404));
+
+// ═══════════════════ مسارات الـ API ═══════════════════
+
+app.route('/api/auth', authRoutes);
+app.route('/api/announcements', announcementRoutes);
+app.route('/', setupRoutes);
+
+// ═══════════════════ الصفحات ═══════════════════
+
+app.get('/', (c) => c.redirect('/login'));
+
+/**
+ * صفحة فحص — إنت مالكش terminal، فدي عينك على النظام.
+ * ⚠ لما كل حاجة تشتغل، امسح المسار ده.
+ */
+app.get('/health', async (c) => {
+  const checks: Record<string, unknown> = {
+    project: new URL(normalizeSupabaseUrl(c.env.SUPABASE_URL)).host,
+    keyRole: jwtRole(c.env.SUPABASE_SERVICE_KEY) ?? 'غير معروف (مفتاح مش JWT)',
+    setupPageOpen: Boolean(c.env.SETUP_SECRET && c.env.SETUP_SECRET.length >= 16),
+  };
+
+  try {
+    const { db } = buildContainer(c.env);
+
+    const { data: roles, error: rolesError } = await db.from('roles').select('key');
+    if (rolesError) {
+      checks.database = 'فشل';
+      checks.hint = rolesError.message;
+      return c.json({ ok: false, checks }, 500);
+    }
+
+    checks.database = 'متصل';
+    checks.rolesSeeded = roles?.length ?? 0; // المتوقّع 3
+
+    const { data: ownerExists, error: rpcError } = await db.rpc('fn_owner_exists');
+    if (rpcError) {
+      checks.functions = 'ناقصة';
+      checks.hint = 'شغّل ملف supabase/02_functions.sql';
+      return c.json({ ok: false, checks }, 500);
+    }
+
+    checks.functions = 'موجودة';
+    checks.ownerExists = ownerExists;
+
+    const ready = checks.rolesSeeded === 3 && checks.keyRole === 'service_role';
+    return c.json({ ok: ready, checks }, ready ? 200 : 500);
+  } catch (error) {
+    checks.database = 'فشل';
+    checks.hint = error instanceof Error ? error.message : 'خطأ غير معروف';
+    return c.json({ ok: false, checks }, 500);
+  }
+});
+
+app.get('/login', (c) => c.html(loginPage({ expired: c.req.query('expired') === '1' })));
+
+/**
+ * صفحة الإعداد لمرّة واحدة.
+ * بتختفي تماماً (404) لو SETUP_SECRET مش مضبوط — يعني بعد ما
+ * تمسحه من كلاودفلير، الصفحة مش موجودة أصلاً.
+ */
+app.get('/setup', (c) => {
+  if (!c.env.SETUP_SECRET || c.env.SETUP_SECRET.length < 16) return c.notFound();
+  return c.html(setupPage());
+});
+
+const ROLE_LABELS: Record<string, string> = {
+  SUPER_ADMIN: 'المالك — صلاحية كاملة',
+  BRANCH_MANAGER: 'مدير فرع — نطاق فرعك',
+  STAFF: 'موظّف — البيع وتسجيل العملاء',
+};
+
+app.get('/app', requireAuth({ redirectOnFail: true }), (c) => {
+  const user = c.get('user');
+
+  return c.html(
+    dashboardPage({
+      fullName: user.fullName,
+      roleKey: user.roleKey,
+      roleLabel: ROLE_LABELS[user.roleKey] ?? user.roleKey,
+      permissions: user.permissions,
+      canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
+      idleTimeoutSeconds: SESSION_POLICY.IDLE_TIMEOUT_SECONDS,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+    }),
+  );
+});
+
+// ═══════════════════ البوّابة السرّية ═══════════════════
+
+/**
+ * لازم تتسجّل **آخر حاجة**، عشان المسارات الثابتة فوق تاخد أولويتها.
+ *
+ * ══ كن صريح مع نفسك ══
+ * المسار المخفي **مطبّ سرعة، مش قفل**. بيخبّي الباب عن الماسحات
+ * الآلية، لكنه ما بيصمدش قدّام حد يعرف العنوان.
+ *
+ * الأقفال الحقيقية الأربعة، وكلها شغّالة:
+ *   1) المفتاح التاني بعد كلمة المرور
+ *   2) حدّ 5 محاولات لكل 15 دقيقة على البوّابة دي
+ *   3) قائمة IP مسموحة
+ *   4) فصل البوّابات (المالك ما يدخلش من باب الموظفين والعكس)
+ */
+app.get('/:maybeSecret', (c) => {
+  const secret = superAdminPath(c.env);
+  if (!secret || c.req.param('maybeSecret') !== secret) return c.notFound();
+
+  const allowList = (c.env.SUPER_ADMIN_ALLOWED_IPS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (allowList.length > 0) {
+    const ip = getRequestContext(c).ipAddress ?? '';
+    // 404 مش 403: ما نأكّدش للمهاجم إنه لقى الباب الصح
+    if (!allowList.includes(ip)) return c.notFound();
+  }
+
+  c.header('X-Robots-Tag', 'noindex, nofollow');
+  return c.html(vaultPage());
+});
+
+export default app;
