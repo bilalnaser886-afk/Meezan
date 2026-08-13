@@ -10,14 +10,14 @@
 
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import { SESSION_POLICY, assertEnv, jwtRole, superAdminPath, type Env } from './domain/config';
+import { SESSION_POLICY, assertEnv, superAdminPath, type Env } from './domain/config';
 import { AppError } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
 import { announcementRoutes, authRoutes, branchRoutes, setupRoutes, userRoutes } from './server/routes';
 import { listBranchesForActor, listTeam } from './application/use-cases/users';
+import { listBranches } from './application/use-cases/branches';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
-import { normalizeSupabaseUrl } from './infrastructure/database';
 import { dashboardPage, loginPage, setupPage, vaultPage } from './ui/pages';
 
 export const app = new Hono<AppBindings>();
@@ -75,48 +75,9 @@ app.route('/', setupRoutes);
 
 app.get('/', (c) => c.redirect('/login'));
 
-/**
- * صفحة فحص — إنت مالكش terminal، فدي عينك على النظام.
- * ⚠ لما كل حاجة تشتغل، امسح المسار ده.
- */
-app.get('/health', async (c) => {
-  const checks: Record<string, unknown> = {
-    project: new URL(normalizeSupabaseUrl(c.env.SUPABASE_URL)).host,
-    keyRole: jwtRole(c.env.SUPABASE_SERVICE_KEY) ?? 'غير معروف (مفتاح مش JWT)',
-    setupPageOpen: Boolean(c.env.SETUP_SECRET && c.env.SETUP_SECRET.length >= 16),
-  };
-
-  try {
-    const { db } = buildContainer(c.env);
-
-    const { data: roles, error: rolesError } = await db.from('roles').select('key');
-    if (rolesError) {
-      checks.database = 'فشل';
-      checks.hint = rolesError.message;
-      return c.json({ ok: false, checks }, 500);
-    }
-
-    checks.database = 'متصل';
-    checks.rolesSeeded = roles?.length ?? 0; // المتوقّع 3
-
-    const { data: ownerExists, error: rpcError } = await db.rpc('fn_owner_exists');
-    if (rpcError) {
-      checks.functions = 'ناقصة';
-      checks.hint = 'شغّل ملف supabase/02_functions.sql';
-      return c.json({ ok: false, checks }, 500);
-    }
-
-    checks.functions = 'موجودة';
-    checks.ownerExists = ownerExists;
-
-    const ready = checks.rolesSeeded === 3 && checks.keyRole === 'service_role';
-    return c.json({ ok: ready, checks }, ready ? 200 : 500);
-  } catch (error) {
-    checks.database = 'فشل';
-    checks.hint = error instanceof Error ? error.message : 'خطأ غير معروف';
-    return c.json({ ok: false, checks }, 500);
-  }
-});
+// ملاحظة: مسار /health اتشال في المرحلة صفر.
+// كان أداة تشخيص وقت الإعداد الأول، وبعد ما النظام استقر بقى
+// بيكشف معلومات عن البنية لأي زائر بدون فايدة.
 
 app.get('/login', (c) => c.html(loginPage({ expired: c.req.query('expired') === '1' })));
 
@@ -142,16 +103,20 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
 
   const canViewUsers = user.permissions.includes(PERMISSIONS.USER_VIEW);
   const canCreateUsers = user.permissions.includes(PERMISSIONS.USER_CREATE);
+  const canEditUsers = user.permissions.includes(PERMISSIONS.USER_EDIT);
+  const canManageBranches = user.permissions.includes(PERMISSIONS.BRANCH_MANAGE);
 
   // نجيبهم هنا على الخادم بدل fetch من المتصفح: أسرع (رحلة واحدة
-  // بدل اتنين) وأبسط للقائمة المنسدلة اللي محتاجة تتعرض فوراً
-  const [team, branches] = await Promise.all([
+  // بدل تلاتة) وأبسط للقوائم اللي محتاجة تتعرض فوراً
+  const [team, branchOptions, allBranches] = await Promise.all([
     canViewUsers ? listTeam(container.users, user) : Promise.resolve([]),
     canCreateUsers ? listBranchesForActor(container.users, user) : Promise.resolve([]),
+    canManageBranches ? listBranches(container.branchOps, user) : Promise.resolve([]),
   ]);
 
   return c.html(
     dashboardPage({
+      currentUserId: user.id,
       fullName: user.fullName,
       roleKey: user.roleKey,
       roleLabel: ROLE_LABELS[user.roleKey] ?? user.roleKey,
@@ -159,8 +124,11 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
       canViewUsers,
       canCreateUsers,
+      canEditUsers,
+      canManageBranches,
       team,
-      branches,
+      branches: branchOptions,
+      allBranches,
       idleTimeoutSeconds: SESSION_POLICY.IDLE_TIMEOUT_SECONDS,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
     }),
