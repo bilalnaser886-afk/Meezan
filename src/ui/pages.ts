@@ -333,12 +333,29 @@ const SETUP_SCRIPT = `
 
 // ═══════════════════ 4) لوحة التحكم ═══════════════════
 
+export interface DashboardTeamMember {
+  id: string;
+  username: string;
+  fullName: string;
+  roleKey: string;
+  isActive: boolean;
+}
+
+export interface DashboardBranch {
+  id: string;
+  name: string;
+}
+
 export interface DashboardData {
   fullName: string;
   roleLabel: string;
   roleKey: string;
   permissions: string[];
   canBroadcast: boolean;
+  canViewUsers: boolean;
+  canCreateUsers: boolean;
+  team: DashboardTeamMember[];
+  branches: DashboardBranch[];
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
 }
@@ -380,6 +397,105 @@ const BROADCAST_FORM = `
   </form>
 </section>`;
 
+const ROLE_BADGE: Record<string, string> = {
+  SUPER_ADMIN: 'مالك',
+  BRANCH_MANAGER: 'مدير فرع',
+  STAFF: 'موظّف',
+};
+
+/**
+ * قائمة الفريق.
+ *
+ * كل اسم وكل username بييجي من قاعدة البيانات، وممكن يحتوي حروف
+ * حسّاسة لو كتبها حد بسوء نية. لهذا بنستخدم html`` (بتهرّب تلقائياً)
+ * مش raw() هنا — على عكس BROADCAST_FORM اللي هو HTML ثابت كتبناه إحنا.
+ */
+function teamListHtml(team: DashboardTeamMember[]): Html {
+  if (team.length === 0) {
+    return html`<p class="muted">لسه مفيش حسابات مضافة.</p>`;
+  }
+
+  const rows = team.map(
+    (m) => html`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
+      <div>
+        <strong>${m.fullName}</strong>
+        <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);direction:ltr;text-align:right">${m.username}</div>
+      </div>
+      <span class="gate-tag" data-severity="INFO">${ROLE_BADGE[m.roleKey] ?? m.roleKey}${m.isActive ? '' : ' · معطّل'}</span>
+    </div>`,
+  );
+
+  return html`${rows}`;
+}
+
+function teamCardHtml(data: DashboardData): Html {
+  return html`<section class="card">
+    <h2>الفريق</h2>
+    <p class="muted">${data.roleKey === 'SUPER_ADMIN' ? 'كل الحسابات في كل الفروع.' : 'حسابات فرعك.'}</p>
+    ${teamListHtml(data.team)}
+  </section>`;
+}
+
+/**
+ * نموذج إضافة حساب.
+ *
+ * القائمة المنسدلة للفرع بتظهر بس لو data.branches فيها عناصر —
+ * وهي مش بتتملى أصلاً إلا للمالك (شوف listBranchesForActor في
+ * application/use-cases/users.ts). مدير الفرع مش بيشوف الحقل ده
+ * خالص، لأن فرعه مفروض تلقائياً من هويته في الخادم، مش من الفورم.
+ */
+function createUserFormHtml(data: DashboardData): Html {
+  const isOwner = data.roleKey === 'SUPER_ADMIN';
+
+  const branchField =
+    data.branches.length > 0
+      ? html`<div class="field">
+          <label class="field-label" for="u-branch">الفرع</label>
+          <select class="field-input" id="u-branch">
+            ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+          </select>
+        </div>`
+      : '';
+
+  return html`<section class="card">
+    <h2>إضافة حساب</h2>
+    <p class="muted">
+      ${isOwner
+        ? 'اختَر الفرع والدور. الحساب هيدخل بنفس اسم المستخدم وكلمة المرور اللي هتكتبها.'
+        : 'الحساب هيتربط بفرعك تلقائياً. لو اخترت «مدير فرع»، هيبقى بنفس صلاحياتك بالظبط جوّه الفرع ده.'}
+    </p>
+
+    <div class="alert-box" id="umsg" role="alert" hidden><span id="umsg-text"></span></div>
+
+    <form id="uf" novalidate>
+      <div class="field">
+        <label class="field-label" for="u-fullname">الاسم الكامل</label>
+        <input class="field-input" id="u-fullname" type="text" maxlength="80" required>
+      </div>
+      <div class="field">
+        <label class="field-label" for="u-username">اسم المستخدم</label>
+        <input class="field-input" id="u-username" type="text" dir="ltr" autocomplete="off"
+          spellcheck="false" maxlength="32" required>
+        <p class="field-hint">حروف إنجليزية صغيرة وأرقام فقط، من 3 لـ 32 حرف.</p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="u-password">كلمة المرور المبدئية</label>
+        <input class="field-input" id="u-password" type="text" dir="ltr" autocomplete="off" required>
+        <p class="field-hint">12 حرف على الأقل. سلّمها للموظّف بنفسك بعد الإنشاء.</p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="u-role">الدور</label>
+        <select class="field-input" id="u-role">
+          <option value="STAFF">موظّف</option>
+          <option value="BRANCH_MANAGER">مدير فرع</option>
+        </select>
+      </div>
+      ${branchField}
+      <button class="btn-primary" id="ubtn" type="submit">إنشاء الحساب</button>
+    </form>
+  </section>`;
+}
+
 export function dashboardPage(data: DashboardData): Html {
   // الصلاحيات بتتهرّب تلقائياً جوّه html`` — آمنة للعرض
   const chips = data.permissions.map((p) => html`<li>${p}</li>`);
@@ -402,6 +518,8 @@ export function dashboardPage(data: DashboardData): Html {
     <ul class="chips">${chips}</ul>
   </section>
   ${data.canBroadcast ? raw(BROADCAST_FORM) : ''}
+  ${data.canCreateUsers ? createUserFormHtml(data) : ''}
+  ${data.canViewUsers ? teamCardHtml(data) : ''}
 </main>
 
 <div id="gate-root"></div>
@@ -588,6 +706,57 @@ function dashboardScript(idleTimeout: number, warnAt: number): string {
   }
 
   loadAnnouncements();
+
+  // ── إضافة حساب ──
+  var uf = document.getElementById('uf');
+  if (uf) {
+    uf.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var btn = document.getElementById('ubtn');
+      var box = document.getElementById('umsg');
+      var text = document.getElementById('umsg-text');
+      var branchEl = document.getElementById('u-branch');
+
+      btn.disabled = true;
+      btn.textContent = 'جارٍ الإنشاء…';
+
+      try {
+        var res = await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            fullName: document.getElementById('u-fullname').value,
+            username: document.getElementById('u-username').value,
+            password: document.getElementById('u-password').value,
+            roleKey: document.getElementById('u-role').value,
+            branchId: branchEl ? branchEl.value : null
+          })
+        });
+        var data = await res.json().catch(function () { return null; });
+
+        box.hidden = false;
+        if (res.ok) {
+          box.setAttribute('data-tone', 'ok');
+          text.textContent = 'تم إنشاء الحساب. الصفحة هتتحدّث الآن…';
+          // إعادة تحميل عشان الحساب الجديد يظهر في قائمة الفريق
+          // (القائمة مبنية من الخادم وقت فتح الصفحة، مش حيّة).
+          setTimeout(function () { window.location.reload(); }, 1000);
+        } else {
+          box.removeAttribute('data-tone');
+          text.textContent = (data && data.error && data.error.message) || 'فشل الإنشاء.';
+          btn.disabled = false;
+          btn.textContent = 'إنشاء الحساب';
+        }
+      } catch (e) {
+        box.hidden = false;
+        box.removeAttribute('data-tone');
+        text.textContent = 'تعذّر الاتصال بالخادم.';
+        btn.disabled = false;
+        btn.textContent = 'إنشاء الحساب';
+      }
+    });
+  }
 })();
 `;
 }
