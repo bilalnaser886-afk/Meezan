@@ -14,6 +14,19 @@ compatibility_flags = ["nodejs_compat"]
 # المجلد اللي فيه الملفات الثابتة. لازم يكون موجود حتى لو شبه فاضي.
 pages_build_output_dir = "public"
 
-# متغيّر عادي (مش سرّ) — عدد لفّات تجزئة كلمة المرور
+# ⚠ مهم تعرفه:
+# لما مشروع Pages يكون فيه wrangler.toml، الملف ده بياخد الأولوية
+# وبيلغي أي متغيّر من نوع "Text" بتحطّه في لوحة كلاودفلير.
+# الأسرار (Secret) بس هي اللي بتفضل شغّالة من اللوحة.
+#
+# يعني: أي حاجة **مش سرّ** لازم تتكتب هنا، مش في اللوحة.
 [vars]
+# رابط مشروعك على سوبابيز — ده مش سرّ، ظاهر في أي تطبيق ويب
+SUPABASE_URL = "https://fjhldlitpzekrskrbydu.supabase.co"
+
+# عدد لفّات تجزئة كلمة المرور
 PBKDF2_ITERATIONS = "100000"
+
+# الأسرار (SUPABASE_SERVICE_KEY / JWT_SECRET / REFRESH_TOKEN_PEPPER /
+# SUPER_ADMIN_PATH / SETUP_SECRET) مكانها لوحة كلاودفلير كـ Secret.
+# عمرها ما تتكتب هنا — الملف ده بيروح على GitHub.
