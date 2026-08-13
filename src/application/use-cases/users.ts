@@ -21,6 +21,7 @@ import type {
   Clock,
   PasswordHasher,
   RoleKey,
+  SessionRepository,
   TeamMember,
   UserRepository,
 } from '../ports';
@@ -28,6 +29,8 @@ import type {
 export interface UserDeps {
   users: UserRepository;
   branches: BranchRepository;
+  /** مطلوب للتعطيل: قطع الجلسات الحيّة فورًا مش في الطلب الجاي */
+  sessions: SessionRepository;
   hasher: PasswordHasher;
   clock: Clock;
   audit: AuditLogger;
@@ -147,4 +150,68 @@ export async function listBranchesForActor(
   if (actor.roleKey !== 'SUPER_ADMIN') return [];
   const branches = await deps.branches.listActive();
   return branches.map((b) => ({ id: b.id, name: b.name }));
+}
+
+/**
+ * تعطيل أو تفعيل حساب.
+ *
+ * تشبيه: سحب كارت النادي من عضو. مش بتمسح اسمه من السجل — سجلّه
+ * ومبيعاته وكل حركاته بتفضل. بس الكارت ما بيفتحش الباب تاني.
+ *
+ * ══ خمس قواعد، كل واحدة ليها سبب ══
+ */
+export async function setUserActive(
+  deps: UserDeps,
+  actor: AuthenticatedUser,
+  targetUserId: string,
+  isActive: boolean,
+): Promise<void> {
+  // 1) الصلاحية العامة
+  if (!actor.permissions.includes(PERMISSIONS.USER_EDIT)) {
+    throw Errors.forbidden(PERMISSIONS.USER_EDIT);
+  }
+
+  // 2) ما تعطّلش نفسك.
+  //    السبب عملي مش نظري: مدير فرع يعطّل نفسه بالغلط = يتقفل بره
+  //    النظام ومحدش يقدر يرجّعه غير المالك. نمنعها من الأساس.
+  if (targetUserId === actor.id) {
+    throw Errors.validation('ما ينفعش تعطّل حسابك بنفسك.');
+  }
+
+  const target = await deps.users.findById(targetUserId);
+  if (!target || target.deletedAt) throw Errors.notFound('الحساب');
+
+  // 3) حساب المالك محصّن.
+  //    لو اتعطّل، النظام يبقى بلا صلاحية عليا نهائيًا ومفيش طريق
+  //    رجوع (لأن /setup مقفول). ده باب مسدود، مش مخاطرة.
+  if (target.roleKey === 'SUPER_ADMIN') {
+    throw Errors.forbidden('cannot disable the owner account');
+  }
+
+  // 4) نطاق الفرع — fail-closed
+  if (actor.roleKey !== 'SUPER_ADMIN') {
+    if (!actor.branchId) throw Errors.forbidden('branch scope');
+    if (target.branchId !== actor.branchId) throw Errors.forbidden('branch scope');
+  }
+
+  await deps.users.setActive(targetUserId, isActive);
+
+  // 5) التعطيل لازم يقطع الجلسات الحيّة **فورًا**.
+  //    من غير السطر ده، الموظف المطرود يفضل شغّال لحد ما بطاقته
+  //    تنتهي — لحد 5 دقايق كاملة يقدر يبيع ويصرف فيها.
+  if (!isActive) {
+    await deps.sessions.revokeAllForUser(targetUserId, 'account_disabled', deps.clock.now());
+  }
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: isActive ? 'user.reactivate' : 'user.deactivate',
+    entity: 'User',
+    entityId: targetUserId,
+    metadata: {
+      username: target.username,
+      targetRole: target.roleKey,
+      targetBranchId: target.branchId,
+    },
+  });
 }
