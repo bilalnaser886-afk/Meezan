@@ -90,6 +90,53 @@ export interface UserRepository {
   registerFailedLogin(userId: string, lockUntil: Date | null): Promise<void>;
   clearLoginFailures(userId: string, loginAt: Date): Promise<void>;
   updatePasswordHash(userId: string, hash: string): Promise<void>;
+  create(data: CreateUserInput): Promise<{ id: string }>;
+  listInScope(scope: ListScope): Promise<TeamMember[]>;
+}
+
+/**
+ * نطاق البحث — صريح عمداً.
+ *
+ * ليه مش `branchId: string | null`؟
+ * لأن null معناها الغامض "كل الفروع"، ولو وصلت بالغلط من مدير فرع
+ * (مثلاً حسابه من غير فرع)، كان هيشوف كل مستخدمي النظام.
+ * ده اسمه fail-open: القفل يتعطّل فيفتح.
+ *
+ * النوع ده بيخلّي الغلطة دي **مستحيلة**: لازم تكتب `allBranches: true`
+ * صراحةً عشان تشوف الكل. مفيش طريقة توصلها بالصدفة.
+ */
+export type ListScope = { allBranches: true } | { branchId: string };
+
+/** بيانات إنشاء حساب جديد. الهاش يوصل هنا جاهز — المستودع لا يعرف شيئاً عن التشفير. */
+export interface CreateUserInput {
+  username: string;
+  fullName: string;
+  passwordHash: string;
+  roleKey: RoleKey;
+  branchId: string | null;
+}
+
+/** صف واحد في قائمة "الفريق" المعروضة للمدير أو المالك */
+export interface TeamMember {
+  id: string;
+  username: string;
+  fullName: string;
+  roleKey: RoleKey;
+  branchId: string | null;
+  isActive: boolean;
+  createdAt: Date;
+}
+
+export interface BranchSummary {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export interface BranchRepository {
+  listActive(): Promise<BranchSummary[]>;
+  /** فحص وجود الفرع قبل ربط مستخدم جديد به — يمنع ربطه بمعرّف وهمي */
+  exists(branchId: string): Promise<boolean>;
 }
 
 export interface SessionRecord {
