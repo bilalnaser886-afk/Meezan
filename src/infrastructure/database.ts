@@ -208,10 +208,12 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
 
       return ((data ?? []) as RawTeamMember[]).map(toTeamMember);
     },
+    async setActive(userId, isActive) {
+      const { error } = await db.from('users').update({ is_active: isActive }).eq('id', userId);
+      if (error) throw Errors.internal(`user setActive: ${error.message}`);
+    },
   };
 }
-
-// صف الفريق كما يرجعه PostgREST — role ممكن تيجي كائن أو مصفوفة
 // حسب طريقة استنتاج العلاقة، فنتعامل مع الاحتمالين بأمان
 interface RawTeamMember {
   id: string;
@@ -239,17 +241,37 @@ function toTeamMember(raw: RawTeamMember): TeamMember {
 // ─────────── الفروع ───────────
 
 export function createBranchRepository(db: SupabaseClient): BranchRepository {
+  const COLUMNS = 'id, code, name, is_active';
+
+  const toSummary = (r: {
+    id: string;
+    code: string;
+    name: string;
+    is_active: boolean;
+  }): BranchSummary => ({ id: r.id, code: r.code, name: r.name, isActive: r.is_active });
+
   return {
     async listActive() {
       const { data, error } = await db
         .from('branches')
-        .select('id, code, name')
+        .select(COLUMNS)
         .is('deleted_at', null)
         .eq('is_active', true)
         .order('name');
 
-      if (error) throw Errors.internal(`branches list: ${error.message}`);
-      return (data ?? []) as BranchSummary[];
+      if (error) throw Errors.internal(`branches listActive: ${error.message}`);
+      return (data ?? []).map(toSummary);
+    },
+
+    async listAll() {
+      const { data, error } = await db
+        .from('branches')
+        .select(COLUMNS)
+        .is('deleted_at', null)
+        .order('name');
+
+      if (error) throw Errors.internal(`branches listAll: ${error.message}`);
+      return (data ?? []).map(toSummary);
     },
 
     async exists(branchId) {
@@ -263,6 +285,41 @@ export function createBranchRepository(db: SupabaseClient): BranchRepository {
 
       if (error) throw Errors.internal(`branch exists: ${error.message}`);
       return Boolean(data);
+    },
+
+    async findByCode(code) {
+      const { data, error } = await db
+        .from('branches')
+        .select(COLUMNS)
+        .eq('code', code)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`branch findByCode: ${error.message}`);
+      return data ? toSummary(data) : null;
+    },
+
+    async create(data) {
+      const { data: row, error } = await db
+        .from('branches')
+        .insert({
+          code: data.code,
+          name: data.name,
+          address: data.address,
+          phone: data.phone,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      if (error || !row) {
+        // 23505 = unique violation — الكود مكرر رغم الفحص المسبق
+        // (ممكن يحصل لو اتنين بيضيفوا في نفس اللحظة)
+        if (error?.code === '23505') throw Errors.validation('كود الفرع ده مستخدم بالفعل.');
+        throw Errors.internal(`branch insert: ${error?.message}`);
+      }
+
+      return { id: row.id as string };
     },
   };
 }
