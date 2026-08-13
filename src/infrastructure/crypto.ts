@@ -1,4 +1,4 @@
-/**
+ /**
  * التشفير — بـ Web Crypto فقط
  *
  * ══ ليه اتغيّر عن Argon2؟ ══
@@ -193,7 +193,6 @@ export function newId(): string {
 
 const ISSUER = 'pos-system';
 const AUDIENCE = 'pos-client';
-const encoder = new TextEncoder();
 
 export async function signAccessToken(
   payload: AccessTokenPayload,
