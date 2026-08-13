@@ -18,6 +18,12 @@ import {
   getPendingAnnouncements,
 } from '../application/use-cases/announcements';
 import {
+  createUser,
+  listBranchesForActor,
+  listTeam,
+  type CreatableRole,
+} from '../application/use-cases/users';
+import {
   buildContainer,
   clearAuthCookies,
   getRequestContext,
@@ -322,3 +328,67 @@ setupRoutes.post('/api/setup', async (c) => {
     message: 'تم إنشاء حساب المالك. امسح SETUP_SECRET من إعدادات كلاودفلير دلوقتي.',
   });
 });
+
+
+// ═══════════════════ 4) المستخدمون والفروع ═══════════════════
+//
+// تشبيه: كشف الأحزمة في النادي. المالك يمنح أي حزام لأي صالة.
+// مدير الفرع يرقّي جوّه صالته هو بس — والقاعدة دي مفروضة في
+// application/use-cases/users.ts، مش هنا. هنا مجرد استقبال وتسليم.
+
+export const userRoutes = new Hono<AppBindings>();
+
+/** قائمة الفريق — المالك يرى الجميع، مدير الفرع يرى فرعه فقط */
+userRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.USER_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listTeam(container.users, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+interface CreateUserBody {
+  username?: string;
+  fullName?: string;
+  password?: string;
+  roleKey?: string;
+  branchId?: string | null;
+}
+
+const CREATABLE_ROLES: CreatableRole[] = ['BRANCH_MANAGER', 'STAFF'];
+
+userRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.USER_CREATE] }), async (c) => {
+  const body = await readJson<CreateUserBody>(c);
+
+  // لا نثق بقيمة roleKey القادمة من المتصفح إلا بعد مطابقتها
+  // بقائمة مغلقة — هذا ما يمنع مرور "SUPER_ADMIN" في الطلب
+  if (!CREATABLE_ROLES.includes(body.roleKey as CreatableRole)) {
+    throw Errors.validation('الدور غير معروف.');
+  }
+
+  const container = buildContainer(c.env);
+  const created = await createUser(container.users, c.get('user'), {
+    username: body.username ?? '',
+    fullName: body.fullName ?? '',
+    password: body.password ?? '',
+    roleKey: body.roleKey as CreatableRole,
+    branchId: body.branchId ?? null,
+  });
+
+  return c.json({ ok: true, id: created.id }, 201);
+});
+
+export const branchRoutes = new Hono<AppBindings>();
+
+/** قائمة الفروع النشطة — تُستخدم لملء القائمة المنسدلة عند إنشاء حساب */
+branchRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.USER_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listBranchesForActor(container.users, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
