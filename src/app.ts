@@ -13,7 +13,8 @@ import { secureHeaders } from 'hono/secure-headers';
 import { SESSION_POLICY, assertEnv, jwtRole, superAdminPath, type Env } from './domain/config';
 import { AppError } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
-import { announcementRoutes, authRoutes, setupRoutes } from './server/routes';
+import { announcementRoutes, authRoutes, branchRoutes, setupRoutes, userRoutes } from './server/routes';
+import { listBranchesForActor, listTeam } from './application/use-cases/users';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
 import { normalizeSupabaseUrl } from './infrastructure/database';
@@ -66,6 +67,8 @@ app.notFound((c) => c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'غ
 
 app.route('/api/auth', authRoutes);
 app.route('/api/announcements', announcementRoutes);
+app.route('/api/users', userRoutes);
+app.route('/api/branches', branchRoutes);
 app.route('/', setupRoutes);
 
 // ═══════════════════ الصفحات ═══════════════════
@@ -133,8 +136,19 @@ const ROLE_LABELS: Record<string, string> = {
   STAFF: 'موظّف — البيع وتسجيل العملاء',
 };
 
-app.get('/app', requireAuth({ redirectOnFail: true }), (c) => {
+app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
   const user = c.get('user');
+  const container = buildContainer(c.env);
+
+  const canViewUsers = user.permissions.includes(PERMISSIONS.USER_VIEW);
+  const canCreateUsers = user.permissions.includes(PERMISSIONS.USER_CREATE);
+
+  // نجيبهم هنا على الخادم بدل fetch من المتصفح: أسرع (رحلة واحدة
+  // بدل اتنين) وأبسط للقائمة المنسدلة اللي محتاجة تتعرض فوراً
+  const [team, branches] = await Promise.all([
+    canViewUsers ? listTeam(container.users, user) : Promise.resolve([]),
+    canCreateUsers ? listBranchesForActor(container.users, user) : Promise.resolve([]),
+  ]);
 
   return c.html(
     dashboardPage({
@@ -143,6 +157,10 @@ app.get('/app', requireAuth({ redirectOnFail: true }), (c) => {
       roleLabel: ROLE_LABELS[user.roleKey] ?? user.roleKey,
       permissions: user.permissions,
       canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
+      canViewUsers,
+      canCreateUsers,
+      team,
+      branches,
       idleTimeoutSeconds: SESSION_POLICY.IDLE_TIMEOUT_SECONDS,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
     }),
