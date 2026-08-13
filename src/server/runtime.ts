@@ -16,6 +16,7 @@ import { deleteCookie, setCookie } from 'hono/cookie';
 import type { AuthDeps } from '../application/use-cases/auth';
 import type { AnnouncementDeps } from '../application/use-cases/announcements';
 import type { UserDeps } from '../application/use-cases/users';
+import type { BranchDeps } from '../application/use-cases/branches';
 import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
@@ -38,6 +39,7 @@ export interface Container {
   auth: AuthDeps;
   announcements: AnnouncementDeps;
   users: UserDeps;
+  branchOps: BranchDeps;
   branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
@@ -49,12 +51,13 @@ export function buildContainer(env: Env): Container {
   const hasher = createHasher(Number.isFinite(iterations) ? iterations : 100_000);
   const userRepo = createUserRepository(db);
   const branchRepo = createBranchRepository(db);
+  const sessionRepo = createSessionRepository(db);
 
   return {
     db,
     auth: {
       users: userRepo,
-      sessions: createSessionRepository(db),
+      sessions: sessionRepo,
       hasher,
       tokens: createTokenService(env.REFRESH_TOKEN_PEPPER),
       clock: systemClock,
@@ -70,7 +73,13 @@ export function buildContainer(env: Env): Container {
     users: {
       users: userRepo,
       branches: branchRepo,
+      sessions: sessionRepo,
       hasher,
+      clock: systemClock,
+      audit,
+    },
+    branchOps: {
+      branches: branchRepo,
       clock: systemClock,
       audit,
     },
