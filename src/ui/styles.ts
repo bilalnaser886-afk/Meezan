@@ -124,5 +124,35 @@ select.field-input{appearance:none}
 
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* ═══ قائمة الفريق والفروع ═══
+   الصف بيتعامل كسطر في كشف — الاسم بالخط العادي، والمعرّف بخط
+   الآلة الكاتبة لأنه معرّف نظام مش اسم بشري.
+   الحساب المعطّل بياخد شطب خفيف، زي فاتورة ملغية في دفتر. */
+.roster{margin:0;padding:0;list-style:none;border-top:1px solid var(--line)}
+.roster-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 0;border-bottom:1px solid var(--line)}
+.roster-main{min-width:0}
+.roster-name{display:block;font-size:15px;font-weight:600;line-height:1.4}
+.roster-id{display:block;margin-top:2px;font-family:var(--font-mono);font-size:12px;
+  color:var(--ink-soft);direction:ltr;text-align:right;overflow-wrap:anywhere}
+.roster-side{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.roster-row[data-inactive="true"] .roster-name{text-decoration:line-through;
+  text-decoration-thickness:1px;color:var(--ink-soft)}
+.roster-row[data-inactive="true"] .roster-id{opacity:.6}
+
+.tag{display:inline-block;padding:3px 8px;font-family:var(--font-mono);font-size:11px;
+  letter-spacing:.06em;border-radius:2px;white-space:nowrap;
+  color:var(--ink-soft);background:var(--field);border:1px solid var(--line)}
+.tag[data-variant="off"]{color:var(--alert);background:#fdf3f2;border-color:#f0d5d2}
+
+.btn-mini{height:36px;padding:0 12px;font-family:var(--font-ui);font-size:13px;
+  font-weight:600;color:var(--ink);background:var(--paper);border:1px solid var(--line);
+  border-radius:var(--radius);cursor:pointer;white-space:nowrap;
+  transition:border-color .12s,color .12s}
+.btn-mini:hover:not(:disabled){border-color:var(--ink-soft)}
+.btn-mini[data-danger="true"]:hover:not(:disabled){color:var(--alert);border-color:var(--alert)}
+.btn-mini:disabled{opacity:.5;cursor:not-allowed}
+
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 `;
