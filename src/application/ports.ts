@@ -92,6 +92,7 @@ export interface UserRepository {
   updatePasswordHash(userId: string, hash: string): Promise<void>;
   create(data: CreateUserInput): Promise<{ id: string }>;
   listInScope(scope: ListScope): Promise<TeamMember[]>;
+  setActive(userId: string, isActive: boolean): Promise<void>;
 }
 
 /**
@@ -131,12 +132,25 @@ export interface BranchSummary {
   id: string;
   code: string;
   name: string;
+  isActive: boolean;
+}
+
+export interface CreateBranchInput {
+  code: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
 }
 
 export interface BranchRepository {
+  /** الفروع النشطة فقط — للقوائم المنسدلة */
   listActive(): Promise<BranchSummary[]>;
+  /** كل الفروع غير المحذوفة، بما فيها المعطّلة — لشاشة الإدارة */
+  listAll(): Promise<BranchSummary[]>;
   /** فحص وجود الفرع قبل ربط مستخدم جديد به — يمنع ربطه بمعرّف وهمي */
   exists(branchId: string): Promise<boolean>;
+  findByCode(code: string): Promise<BranchSummary | null>;
+  create(data: CreateBranchInput): Promise<{ id: string }>;
 }
 
 export interface SessionRecord {
