@@ -15,6 +15,8 @@ import type { Context } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import type { AuthDeps } from '../application/use-cases/auth';
 import type { AnnouncementDeps } from '../application/use-cases/announcements';
+import type { UserDeps } from '../application/use-cases/users';
+import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
 import type { RequestContext } from '../application/use-cases/auth';
@@ -22,6 +24,7 @@ import { createHasher, createTokenService } from '../infrastructure/crypto';
 import {
   createAnnouncementRepository,
   createAuditLogger,
+  createBranchRepository,
   createDb,
   createRateLimiter,
   createSessionRepository,
@@ -34,6 +37,8 @@ const systemClock = { now: () => new Date() };
 export interface Container {
   auth: AuthDeps;
   announcements: AnnouncementDeps;
+  users: UserDeps;
+  branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
 
@@ -41,13 +46,16 @@ export function buildContainer(env: Env): Container {
   const db = createDb(env);
   const audit = createAuditLogger(db);
   const iterations = Number.parseInt(env.PBKDF2_ITERATIONS ?? '100000', 10);
+  const hasher = createHasher(Number.isFinite(iterations) ? iterations : 100_000);
+  const userRepo = createUserRepository(db);
+  const branchRepo = createBranchRepository(db);
 
   return {
     db,
     auth: {
-      users: createUserRepository(db),
+      users: userRepo,
       sessions: createSessionRepository(db),
-      hasher: createHasher(Number.isFinite(iterations) ? iterations : 100_000),
+      hasher,
       tokens: createTokenService(env.REFRESH_TOKEN_PEPPER),
       clock: systemClock,
       audit,
@@ -59,6 +67,14 @@ export function buildContainer(env: Env): Container {
       clock: systemClock,
       audit,
     },
+    users: {
+      users: userRepo,
+      branches: branchRepo,
+      hasher,
+      clock: systemClock,
+      audit,
+    },
+    branches: branchRepo,
   };
 }
 
