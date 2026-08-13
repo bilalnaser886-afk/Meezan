@@ -346,7 +346,15 @@ export interface DashboardBranch {
   name: string;
 }
 
+export interface DashboardBranchFull {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+}
+
 export interface DashboardData {
+  currentUserId: string;
   fullName: string;
   roleLabel: string;
   roleKey: string;
@@ -354,8 +362,11 @@ export interface DashboardData {
   canBroadcast: boolean;
   canViewUsers: boolean;
   canCreateUsers: boolean;
+  canEditUsers: boolean;
+  canManageBranches: boolean;
   team: DashboardTeamMember[];
   branches: DashboardBranch[];
+  allBranches: DashboardBranchFull[];
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
 }
@@ -406,33 +417,119 @@ const ROLE_BADGE: Record<string, string> = {
 /**
  * قائمة الفريق.
  *
- * كل اسم وكل username بييجي من قاعدة البيانات، وممكن يحتوي حروف
- * حسّاسة لو كتبها حد بسوء نية. لهذا بنستخدم html`` (بتهرّب تلقائياً)
+ * كل اسم و username بييجي من قاعدة البيانات، وممكن يحتوي حروف
+ * حسّاسة لو كتبها حد بسوء نية. لهذا بنستخدم html`` (بتهرّب تلقائيًا)
  * مش raw() هنا — على عكس BROADCAST_FORM اللي هو HTML ثابت كتبناه إحنا.
+ *
+ * زرار التعطيل بيختفي في تلات حالات، وكلها منطقية:
+ *   - حسابك إنت (منع القفل الذاتي)
+ *   - حساب المالك (محصّن)
+ *   - لو مالكش صلاحية USER_EDIT
+ * والخادم بيرفض التلاتة برضه — الإخفاء هنا راحة مش حماية.
  */
-function teamListHtml(team: DashboardTeamMember[]): Html {
-  if (team.length === 0) {
-    return html`<p class="muted">لسه مفيش حسابات مضافة.</p>`;
+function teamListHtml(data: DashboardData): Html {
+  if (data.team.length === 0) {
+    return html`<p class="muted">لسه مفيش حسابات مضافة. ابدأ بإضافة حساب من الفورم فوق.</p>`;
   }
 
-  const rows = team.map(
-    (m) => html`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">
-      <div>
-        <strong>${m.fullName}</strong>
-        <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);direction:ltr;text-align:right">${m.username}</div>
-      </div>
-      <span class="gate-tag" data-severity="INFO">${ROLE_BADGE[m.roleKey] ?? m.roleKey}${m.isActive ? '' : ' · معطّل'}</span>
-    </div>`,
-  );
+  const rows = data.team.map((m) => {
+    const canToggle =
+      data.canEditUsers && m.id !== data.currentUserId && m.roleKey !== 'SUPER_ADMIN';
 
-  return html`${rows}`;
+    const action = canToggle
+      ? html`<button
+          class="btn-mini"
+          type="button"
+          data-toggle-user="${m.id}"
+          data-next="${m.isActive ? 'off' : 'on'}"
+          data-danger="${m.isActive ? 'true' : 'false'}"
+        >${m.isActive ? 'تعطيل' : 'تفعيل'}</button>`
+      : '';
+
+    return html`<li class="roster-row" data-inactive="${m.isActive ? 'false' : 'true'}">
+      <div class="roster-main">
+        <span class="roster-name">${m.fullName}</span>
+        <span class="roster-id">${m.username}</span>
+      </div>
+      <div class="roster-side">
+        ${m.isActive ? '' : html`<span class="tag" data-variant="off">معطّل</span>`}
+        <span class="tag">${ROLE_BADGE[m.roleKey] ?? m.roleKey}</span>
+        ${action}
+      </div>
+    </li>`;
+  });
+
+  return html`<ul class="roster">${rows}</ul>`;
 }
 
 function teamCardHtml(data: DashboardData): Html {
   return html`<section class="card">
     <h2>الفريق</h2>
-    <p class="muted">${data.roleKey === 'SUPER_ADMIN' ? 'كل الحسابات في كل الفروع.' : 'حسابات فرعك.'}</p>
-    ${teamListHtml(data.team)}
+    <p class="muted">
+      ${data.roleKey === 'SUPER_ADMIN' ? 'كل الحسابات في كل الفروع.' : 'حسابات فرعك.'}
+      التعطيل بيقطع جلسة الموظّف فورًا ويمنعه من الدخول، وبيحتفظ بكل سجلّه ومبيعاته.
+    </p>
+    <div class="alert-box" id="tmsg" role="alert" hidden><span id="tmsg-text"></span></div>
+    ${teamListHtml(data)}
+  </section>`;
+}
+
+/**
+ * إدارة الفروع — المالك فقط.
+ *
+ * كود الفرع بيتعرض بخط الآلة الكاتبة لأنه معرّف بيتكتب في الفواتير
+ * والتقارير، مش اسم بشري.
+ */
+function branchesCardHtml(data: DashboardData): Html {
+  const list =
+    data.allBranches.length === 0
+      ? html`<p class="muted">مفيش فروع لسه.</p>`
+      : html`<ul class="roster">
+          ${data.allBranches.map(
+            (b) => html`<li class="roster-row" data-inactive="${b.isActive ? 'false' : 'true'}">
+              <div class="roster-main">
+                <span class="roster-name">${b.name}</span>
+                <span class="roster-id">${b.code}</span>
+              </div>
+              <div class="roster-side">
+                ${b.isActive ? '' : html`<span class="tag" data-variant="off">معطّل</span>`}
+              </div>
+            </li>`,
+          )}
+        </ul>`;
+
+  return html`<section class="card">
+    <h2>الفروع</h2>
+    <p class="muted">
+      الفرع لازم يتعمل قبل ما تقدر تضيف حسابات ليه. الكود بيظهر في الفواتير
+      والتقارير، فخلّيه قصير وثابت.
+    </p>
+
+    <div class="alert-box" id="brmsg" role="alert" hidden><span id="brmsg-text"></span></div>
+
+    <form id="brf" novalidate>
+      <div class="field">
+        <label class="field-label" for="br-code">كود الفرع</label>
+        <input class="field-input" id="br-code" type="text" dir="ltr" autocomplete="off"
+          spellcheck="false" maxlength="16" required>
+        <p class="field-hint">حروف إنجليزية كبيرة وأرقام وشرطة. مثال: RYD-01</p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="br-name">اسم الفرع</label>
+        <input class="field-input" id="br-name" type="text" maxlength="80" required>
+      </div>
+      <div class="field">
+        <label class="field-label" for="br-address">العنوان (اختياري)</label>
+        <input class="field-input" id="br-address" type="text" maxlength="200">
+      </div>
+      <div class="field">
+        <label class="field-label" for="br-phone">التليفون (اختياري)</label>
+        <input class="field-input" id="br-phone" type="tel" dir="ltr" maxlength="32">
+      </div>
+      <button class="btn-primary" id="brbtn" type="submit">إضافة الفرع</button>
+    </form>
+
+    <div style="margin-top:22px">${list}</div>
   </section>`;
 }
 
@@ -518,6 +615,7 @@ export function dashboardPage(data: DashboardData): Html {
     <ul class="chips">${chips}</ul>
   </section>
   ${data.canBroadcast ? raw(BROADCAST_FORM) : ''}
+  ${data.canManageBranches ? branchesCardHtml(data) : ''}
   ${data.canCreateUsers ? createUserFormHtml(data) : ''}
   ${data.canViewUsers ? teamCardHtml(data) : ''}
 </main>
@@ -754,6 +852,99 @@ function dashboardScript(idleTimeout: number, warnAt: number): string {
         text.textContent = 'تعذّر الاتصال بالخادم.';
         btn.disabled = false;
         btn.textContent = 'إنشاء الحساب';
+      }
+    });
+  }
+
+  // ── تعطيل / تفعيل حساب ──
+  // تفويض الحدث من المستند بدل ربط كل زرار على حدة — أبسط، ومش
+  // بيتكسر لو القائمة اتغيّرت
+  document.addEventListener('click', async function (event) {
+    var btn = event.target.closest ? event.target.closest('[data-toggle-user]') : null;
+    if (!btn) return;
+
+    var userId = btn.getAttribute('data-toggle-user');
+    var turnOn = btn.getAttribute('data-next') === 'on';
+    var box = document.getElementById('tmsg');
+    var text = document.getElementById('tmsg-text');
+
+    if (!turnOn && !confirm('تعطيل الحساب ده؟ هيتقطع من النظام فورًا.')) return;
+
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+      var res = await fetch('/api/users/' + encodeURIComponent(userId) + '/active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ isActive: turnOn })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      if (res.ok) { window.location.reload(); return; }
+
+      if (box) {
+        box.hidden = false;
+        box.removeAttribute('data-tone');
+        text.textContent = (data && data.error && data.error.message) || 'فشل التنفيذ.';
+      }
+    } catch (e) {
+      if (box) {
+        box.hidden = false;
+        box.removeAttribute('data-tone');
+        text.textContent = 'تعذّر الاتصال بالخادم.';
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
+  // ── إضافة فرع ──
+  var brf = document.getElementById('brf');
+  if (brf) {
+    brf.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var btn = document.getElementById('brbtn');
+      var box = document.getElementById('brmsg');
+      var text = document.getElementById('brmsg-text');
+
+      btn.disabled = true;
+      btn.textContent = 'جارٍ الإضافة…';
+
+      try {
+        var res = await fetch('/api/branches', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            code: document.getElementById('br-code').value,
+            name: document.getElementById('br-name').value,
+            address: document.getElementById('br-address').value,
+            phone: document.getElementById('br-phone').value
+          })
+        });
+        var data = await res.json().catch(function () { return null; });
+
+        box.hidden = false;
+        if (res.ok) {
+          box.setAttribute('data-tone', 'ok');
+          text.textContent = 'تمت إضافة الفرع. الصفحة هتتحدّث الآن…';
+          setTimeout(function () { window.location.reload(); }, 1000);
+        } else {
+          box.removeAttribute('data-tone');
+          text.textContent = (data && data.error && data.error.message) || 'فشلت الإضافة.';
+          btn.disabled = false;
+          btn.textContent = 'إضافة الفرع';
+        }
+      } catch (e) {
+        box.hidden = false;
+        box.removeAttribute('data-tone');
+        text.textContent = 'تعذّر الاتصال بالخادم.';
+        btn.disabled = false;
+        btn.textContent = 'إضافة الفرع';
       }
     });
   }
