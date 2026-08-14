@@ -6,7 +6,10 @@
  */
 
 export const SESSION_POLICY = {
-  /** الخروج التلقائي بعد خمول — المطلوب في المواصفات: 10 دقائق */
+  /**
+   * المهلة الافتراضية — تُستخدم كحد أقصى وكقيمة احتياطية.
+   * القيمة الفعلية لكل دور في IDLE_POLICY تحت.
+   */
   IDLE_TIMEOUT_SECONDS: 10 * 60,
   /** عمر بطاقة الدخول قصير عمداً: لو اتسرقت، بتموت بسرعة */
   ACCESS_TOKEN_TTL_SECONDS: 5 * 60,
@@ -15,6 +18,48 @@ export const SESSION_POLICY = {
   /** تحذير المستخدم قبل انتهاء المهلة بالمدة دي */
   IDLE_WARNING_SECONDS: 60,
 } as const;
+
+/**
+ * سياسة الخمول حسب الدور.
+ *
+ * ══ ليه مش رقم واحد للكل؟ ══
+ * العشر دقايق ممتازة للوحة المالك — بيانات حسّاسة وشاشة ممكن
+ * تتساب مفتوحة في مكتب.
+ *
+ * لكنها مؤلمة على الكاشير: موظّف بيخدم زبون بيختار بين تلات موديلات
+ * وبيسأل ويقلّب، ممكن يعدّي عشر دقايق من غير ما يلمس الشاشة —
+ * وفجأة يلاقي نفسه اتطرد والسلة ضاعت قدّام الزبون.
+ *
+ * ══ الفرق بين LOGOUT و LOCK ══
+ *   LOGOUT = الجلسة بتموت. لازم دخول كامل من الأول.
+ *   LOCK   = الجلسة بتفضل حيّة في الخادم، الشاشة بس بتتغطّي.
+ *            بيفكّها بكلمة المرور، والصفحة بحالتها زي ما هي.
+ *
+ * تشبيه: الأول زي ما الحكم يوقف النزال ويطلّعك بره الحلبة.
+ * التاني زي وقت مستقطع — إنت لسه في الحلبة، بس واقف.
+ */
+export type IdleAction = 'LOGOUT' | 'LOCK';
+
+export interface IdleRule {
+  seconds: number;
+  action: IdleAction;
+}
+
+export const IDLE_POLICY: Record<'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF', IdleRule> = {
+  SUPER_ADMIN: { seconds: 10 * 60, action: 'LOGOUT' },
+  BRANCH_MANAGER: { seconds: 10 * 60, action: 'LOGOUT' },
+  STAFF: { seconds: 30 * 60, action: 'LOCK' },
+};
+
+/** قاعدة الخمول لدور معيّن — بترجع الأصرم لو الدور مش معروف */
+export function idleRuleFor(roleKey: string): IdleRule {
+  return (
+    IDLE_POLICY[roleKey as keyof typeof IDLE_POLICY] ?? {
+      seconds: SESSION_POLICY.IDLE_TIMEOUT_SECONDS,
+      action: 'LOGOUT' as const,
+    }
+  );
+}
 
 export const LOGIN_POLICY = {
   MAX_FAILED_ATTEMPTS: 5,
