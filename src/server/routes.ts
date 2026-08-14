@@ -11,7 +11,14 @@
 import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Context } from 'hono';
-import { checkSession, login, logout, refreshSession } from '../application/use-cases/auth';
+import {
+  checkSession,
+  lockSession,
+  login,
+  logout,
+  refreshSession,
+  unlockSession,
+} from '../application/use-cases/auth';
 import {
   acknowledgeAnnouncement,
   broadcastAnnouncement,
@@ -26,6 +33,14 @@ import {
 } from '../application/use-cases/users';
 import { createBranch, listBranches } from '../application/use-cases/branches';
 import {
+  getSalaryStatement,
+  listBalances,
+  recordMovement,
+  reviewMovement,
+} from '../application/use-cases/treasury';
+import { MoneyError, parseMoneyToPiastres } from '../domain/money';
+import type { MovementType } from '../application/ports';
+import {
   buildContainer,
   clearAuthCookies,
   getRequestContext,
@@ -33,7 +48,7 @@ import {
   setAuthCookies,
 } from './runtime';
 import { requireAuth, type AppBindings } from './guard';
-import { COOKIES, SESSION_POLICY, superAdminPath } from '../domain/config';
+import { COOKIES, SESSION_POLICY, idleRuleFor, superAdminPath } from '../domain/config';
 import { PERMISSIONS } from '../domain/permissions';
 import { Errors } from '../domain/errors';
 import { createHasher, verifyAccessToken } from '../infrastructure/crypto';
@@ -135,6 +150,7 @@ authRoutes.post('/logout', async (c) => {
 
 authRoutes.get('/session', requireAuth(), (c) => {
   const user = c.get('user');
+  const rule = idleRuleFor(user.roleKey);
 
   return c.json({
     ok: true,
@@ -146,8 +162,42 @@ authRoutes.get('/session', requireAuth(), (c) => {
       permissions: user.permissions,
       mustChangePassword: user.mustChangePassword,
     },
-    idleTimeoutSeconds: SESSION_POLICY.IDLE_TIMEOUT_SECONDS,
+    idleTimeoutSeconds: rule.seconds,
+    idleAction: rule.action,
     idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+  });
+});
+
+/** قفل الشاشة — بينادها المتصفح عند وصول مؤقّت الخمول للحد */
+authRoutes.post('/lock', requireAuth({ touchActivity: false }), async (c) => {
+  const container = buildContainer(c.env);
+  await lockSession(container.auth, c.get('sessionId'));
+  return c.json({ ok: true });
+});
+
+/**
+ * فكّ القفل بكلمة المرور.
+ *
+ * ⚠ مش محمي بـ requireAuth عن قصد — بطاقة الدخول (5 دقايق) أكيد
+ * منتهية بعد نص ساعة قفل. التحقق بيتم بتوكن التحديث + كلمة المرور
+ * جوّه حالة الاستخدام نفسها.
+ */
+authRoutes.post('/unlock', async (c) => {
+  const raw = getCookie(c, COOKIES.REFRESH);
+  if (!raw) throw Errors.sessionExpired();
+
+  const body = await readJson<{ password?: string }>(c);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!password) throw Errors.validation('اكتب كلمة المرور.');
+
+  const container = buildContainer(c.env);
+  const result = await unlockSession(container.auth, raw, password, getRequestContext(c));
+
+  setAuthCookies(c, result);
+
+  return c.json({
+    ok: true,
+    user: { id: result.user.id, fullName: result.user.fullName, roleKey: result.user.roleKey },
   });
 });
 
@@ -432,5 +482,119 @@ userRoutes.post(
     await setUserActive(container.users, c.get('user'), id, body.isActive);
 
     return c.json({ ok: true });
+  },
+);
+
+
+// ═══════════════════ 5) الخزينة ═══════════════════
+
+export const treasuryRoutes = new Hono<AppBindings>();
+
+const MOVEMENT_TYPES: MovementType[] = [
+  'DEPOSIT',
+  'WITHDRAWAL',
+  'EXPENSE',
+  'ADVANCE',
+  'ADJUSTMENT',
+];
+
+interface MovementBody {
+  treasuryId?: string;
+  type?: string;
+  amount?: string;
+  expenseReasonId?: string | null;
+  relatedUserId?: string | null;
+  note?: string | null;
+  adjustmentDirection?: string;
+}
+
+treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }), async (c) => {
+  const body = await readJson<MovementBody>(c);
+
+  if (!body.treasuryId) throw Errors.validation('اختار الخزينة.');
+  if (!MOVEMENT_TYPES.includes(body.type as MovementType)) {
+    throw Errors.validation('نوع الحركة غير معروف.');
+  }
+
+  // المبلغ بيتحوّل لقروش هنا — نقطة واحدة في النظام كله بتحوّل
+  // كلام المستخدم لرقم، فأي خطأ في التحويل بيتمسك في مكان واحد
+  let amountPiastres: number;
+  try {
+    amountPiastres = parseMoneyToPiastres(body.amount ?? '');
+  } catch (error) {
+    throw Errors.validation(error instanceof MoneyError ? error.message : 'المبلغ غير صالح.');
+  }
+
+  const container = buildContainer(c.env);
+  const result = await recordMovement(container.treasury, c.get('user'), {
+    treasuryId: body.treasuryId,
+    type: body.type as MovementType,
+    amountPiastres,
+    expenseReasonId: body.expenseReasonId ?? null,
+    relatedUserId: body.relatedUserId ?? null,
+    note: body.note ?? null,
+    adjustmentDirection: body.adjustmentDirection === 'OUT' ? 'OUT' : 'IN',
+  });
+
+  return c.json(
+    {
+      ok: true,
+      id: result.id,
+      status: result.status,
+      message:
+        result.status === 'PENDING'
+          ? 'تم تسجيل الطلب. محتاج اعتماد المدير قبل ما يأثّر على الرصيد.'
+          : 'تم تسجيل الحركة.',
+    },
+    201,
+  );
+});
+
+treasuryRoutes.post(
+  '/movements/:id/review',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_APPROVE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الحركة مفقود.');
+
+    const body = await readJson<{ decision?: string }>(c);
+    if (body.decision !== 'APPROVED' && body.decision !== 'REJECTED') {
+      throw Errors.validation('القرار غير معروف.');
+    }
+
+    const container = buildContainer(c.env);
+    await reviewMovement(container.treasury, c.get('user'), id, body.decision);
+
+    return c.json({ ok: true });
+  },
+);
+
+treasuryRoutes.get(
+  '/balances',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listBalances(container.treasury, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+treasuryRoutes.get(
+  '/salary/:userId',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const userId = c.req.param('userId');
+    const fromRaw = c.req.query('from');
+    const toRaw = c.req.query('to');
+
+    // الافتراضي: الشهر الحالي
+    const now = new Date();
+    const from = fromRaw ? new Date(fromRaw) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = toRaw ? new Date(toRaw) : new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const container = buildContainer(c.env);
+    const statement = await getSalaryStatement(container.treasury, c.get('user'), userId, from, to);
+
+    return c.json({ ok: true, statement });
   },
 );
