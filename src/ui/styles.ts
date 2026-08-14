@@ -314,6 +314,90 @@ select.field-input{appearance:none;
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
+/* ═══ السلة — قلب شاشة الكاشير ═══
+   فوق الصفحة عن قصد: الموظّف بيبصّ عليها بين كل ضغطة وضغطة،
+   والزبون بيسأل "بقى كام؟" وهو واقف قدامه. */
+.cart{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  margin-bottom:14px;overflow:hidden}
+.cart-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px var(--pad);border-bottom:1px solid var(--line-soft)}
+.cart-title{font-family:var(--font-display);font-size:15px;font-weight:600}
+.cart-empty{margin:0;padding:22px var(--pad);text-align:center;font-size:13px;
+  color:var(--ink-faint)}
+.cart-empty[hidden]{display:none}
+
+.cart-line{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:11px var(--pad);border-bottom:1px solid var(--line-soft)}
+.cart-line-main{min-width:0;flex:1}
+.cart-line-name{display:block;font-size:14px;font-weight:600;line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cart-line-sub{display:block;font-family:var(--font-mono);font-size:11px;
+  color:var(--ink-soft);margin-top:3px;direction:ltr;text-align:start}
+.cart-line-side{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex-shrink:0}
+.cart-line-amount{font-family:var(--font-mono);font-size:14px;font-weight:500;
+  font-variant-numeric:tabular-nums;direction:ltr}
+
+/* أزرار الكمية 40 بكسل: بتتضغط بالإبهام وقدّام طابور */
+.qty-steps{display:flex;align-items:center;gap:2px;border:1px solid var(--line);
+  border-radius:var(--r-sm);overflow:hidden}
+.qty-btn{width:40px;height:36px;font-family:var(--font-mono);font-size:17px;line-height:1;
+  color:var(--ink);background:var(--card);border:none;cursor:pointer}
+.qty-btn:active:not(:disabled){background:var(--surface)}
+.qty-btn:disabled{color:var(--ink-faint);cursor:not-allowed}
+.qty-num{min-width:34px;text-align:center;font-family:var(--font-mono);font-size:14px;
+  font-weight:500;font-variant-numeric:tabular-nums}
+
+.cart-total{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  padding:14px var(--pad);background:var(--ground);color:#fff}
+.cart-total-label{font-size:14px;color:rgba(255,255,255,.72)}
+.cart-total-num{font-family:var(--font-display);font-size:28px;font-weight:700;
+  line-height:1;font-variant-numeric:tabular-nums;direction:ltr}
+.cart-total-num .bal-cur{color:rgba(255,255,255,.5)}
+
+/* ═══ مربّعات المنتجات ═══
+   مربّعات كبيرة مش قايمة: الضغط بالإبهام على شاشة لمس. */
+.prod-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.prod-btn{display:flex;flex-direction:column;align-items:flex-start;gap:5px;
+  min-height:86px;padding:12px;text-align:start;cursor:pointer;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);color:var(--ink)}
+.prod-btn:active{background:var(--credit-wash);border-color:var(--credit)}
+.prod-btn[hidden]{display:none}
+.prod-btn-name{font-size:14px;font-weight:600;line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.prod-btn-price{margin-top:auto;font-family:var(--font-mono);font-size:15px;
+  font-weight:500;color:var(--credit);direction:ltr}
+.prod-btn-qty{font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);direction:rtl}
+
+/* ═══ صفوف شاشة المنتجات ═══
+   flex-wrap مش حساب عرض يدوي: لوحة التعديل بتنزل سطر كامل تحت
+   لوحدها، والسطر بيتظبط مهما طال الاسم. */
+.prod-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;
+  gap:12px;padding:12px 0;border-bottom:1px solid var(--line-soft)}
+.prod-row:last-child{border-bottom:none}
+.prod-row-main{flex:1;min-width:0}
+.prod-row-name{display:block;font-size:14px;font-weight:600;line-height:1.45}
+.prod-row-name[data-off="true"]{color:var(--ink-faint);text-decoration:line-through}
+.prod-row-sub{display:block;font-family:var(--font-mono);font-size:11px;
+  color:var(--ink-soft);margin-top:3px;direction:ltr;text-align:start}
+.prod-row-side{display:flex;align-items:center;gap:9px;flex-shrink:0}
+.prod-row-qty{font-family:var(--font-mono);font-size:17px;font-weight:500;
+  font-variant-numeric:tabular-nums;color:var(--ink)}
+/* الصفر بالأحمر: أهم معلومة في السطر لو المنتج خلص */
+.prod-row-qty[data-zero="true"]{color:var(--debit)}
+
+.prod-edit{flex-basis:100%;margin-top:2px;padding:13px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-sm)}
+.prod-edit[hidden]{display:none}
+.prod-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.prod-edit-grid .field{margin-bottom:0}
+.prod-edit-grid .field:only-child{grid-column:1/-1}
+.prod-edit-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+
+@media (max-width:360px){
+  .prod-grid{grid-template-columns:1fr}
+  .prod-edit-grid{grid-template-columns:1fr}
+}
+
 @media (max-width:360px){.tiles{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 `;
