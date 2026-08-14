@@ -17,6 +17,8 @@ import {
   announcementRoutes,
   authRoutes,
   branchRoutes,
+  productRoutes,
+  saleRoutes,
   setupRoutes,
   treasuryRoutes,
   userRoutes,
@@ -28,12 +30,17 @@ import {
   listExpenseReasons,
   listMovements,
 } from './application/use-cases/treasury';
+import { listProducts, listSellableProducts } from './application/use-cases/products';
+import { listSales } from './application/use-cases/sales';
+import type { AuthenticatedUser } from './application/ports';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
 import {
   dashboardPage,
   lockedPage,
   loginPage,
+  posPage,
+  productsPage,
   setupPage,
   treasuryPage,
   vaultPage,
@@ -89,6 +96,8 @@ app.route('/api/announcements', announcementRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/branches', branchRoutes);
 app.route('/api/treasury', treasuryRoutes);
+app.route('/api/products', productRoutes);
+app.route('/api/sales', saleRoutes);
 app.route('/', setupRoutes);
 
 // ═══════════════════ الصفحات ═══════════════════
@@ -126,6 +135,21 @@ const ROLE_LABELS: Record<string, string> = {
   STAFF: 'موظّف — البيع وتسجيل العملاء',
 };
 
+/**
+ * اسم الفرع للعرض.
+ *
+ * ⚠ الموظّف مالوش صلاحية branch.view، فالنداء بيرمي خطأ عنده.
+ * بنمسكه ونرجّع null، والواجهة بتخفي السطر بدل ما تعرض شرطة.
+ */
+async function branchLabelFor(
+  container: ReturnType<typeof buildContainer>,
+  user: AuthenticatedUser,
+): Promise<string | null> {
+  if (user.roleKey === 'SUPER_ADMIN') return 'كل الفروع';
+  const branches = await listBranches(container.branchOps, user).catch(() => []);
+  return branches[0]?.name ?? null;
+}
+
 app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
   const user = c.get('user');
   const container = buildContainer(c.env);
@@ -149,13 +173,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       : Promise.resolve([]),
   ]);
 
-  // اسم الفرع للعرض في القائمة.
-  // ⚠ الموظّف مالوش صلاحية branch.view، فالنداء هيرمي خطأ عنده.
-  // بنمسكه ونرجّع null، والقائمة بتخفي السطر بدل ما تعرض شرطة.
-  const branchLabel =
-    user.roleKey === 'SUPER_ADMIN'
-      ? 'كل الفروع'
-      : ((await listBranches(container.branchOps, user).catch(() => []))[0]?.name ?? null);
+  const branchLabel = await branchLabelFor(container, user);
 
   return c.html(
     dashboardPage({
@@ -184,6 +202,111 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
 });
 
 /**
+ * شاشة الكاشير.
+ *
+ * كل البيانات بتتجاب على الخادم في رحلة واحدة متوازية — أسرع
+ * بكتير من أربع نداءات من المتصفح على شبكة موبايل، والموظّف
+ * بيفتح الشاشة دي أول ما يبدأ ورديته.
+ */
+app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.SALES_CREATE)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+
+  const [products, balances, recent, branchLabel] = await Promise.all([
+    listSellableProducts(container.products, user),
+    listBalances(container.treasury, user),
+    listSales(container.sales, user, 10).catch(() => []),
+    branchLabelFor(container, user),
+  ]);
+
+  return c.html(
+    posPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel,
+      roleKey: user.roleKey,
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      // ⚠ الخزائن اللي مالهاش فرع (مستوى الشركة) مستبعدة: البيع
+      // لازم يتسجّل على فرع، والدالة في قاعدة البيانات بترفضها.
+      // إخفاؤها هنا بيمنع الموظّف يختار حاجة هتترفض بعد الضغط.
+      treasuries: balances
+        .filter((b) => b.isActive && b.branchId !== null)
+        .map((b) => ({ treasuryId: b.treasuryId, name: b.name, type: b.type })),
+      products: products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        pricePiastres: p.pricePiastres,
+        quantityOnHand: p.quantityOnHand,
+      })),
+      recentSales: recent.map((s) => ({
+        id: s.id,
+        totalPiastres: s.totalPiastres,
+        customerName: s.customerName,
+        staffName: s.staffName,
+        createdAt: s.createdAt,
+      })),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * شاشة المنتجات.
+ *
+ * ⚠ التكلفة مش بتتفلتر هنا. الحقل بيوصل أو ما بيوصلش من طبقة
+ * قاعدة البيانات حسب صلاحية profit.view_real، والصفحة بتعرض
+ * اللي وصلها. مكان واحد للحقيقة.
+ */
+app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+  const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
+
+  const [products, branches, branchLabel] = await Promise.all([
+    listProducts(container.products, user),
+    // قائمة الفروع للمالك بس — غيره مقفول على فرعه والاختيار
+    // مالوش معنى عنده
+    user.roleKey === 'SUPER_ADMIN' && canEdit
+      ? listBranchesForActor(container.users, user).catch(() => [])
+      : Promise.resolve([]),
+    branchLabelFor(container, user),
+  ]);
+
+  return c.html(
+    productsPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel,
+      roleKey: user.roleKey,
+      canEdit,
+      canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      branches,
+      products,
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
  * صفحة الخزينة.
  * الأرصدة والحركات وقوائم الاختيار بتتجاب على الخادم في رحلة
  * واحدة متوازية — أسرع من أربع نداءات من المتصفح على شبكة موبايل.
@@ -198,11 +321,7 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const canApprove = user.permissions.includes(PERMISSIONS.EXPENSE_APPROVE);
 
-  // نفس الحكاية: الموظّف مالوش branch.view فبنمسك الخطأ
-  const branchName =
-    user.roleKey === 'SUPER_ADMIN'
-      ? 'كل الفروع'
-      : ((await listBranches(container.branchOps, user).catch(() => []))[0]?.name ?? null);
+  const branchName = await branchLabelFor(container, user);
 
   const [balances, movements, reasons, team, pending] = await Promise.all([
     listBalances(container.treasury, user),
@@ -222,6 +341,8 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
       branchLabel: branchName,
       roleKey: user.roleKey,
       canApprove,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
       balances,
       movements,
       pending,
