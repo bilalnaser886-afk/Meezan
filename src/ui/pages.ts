@@ -239,19 +239,69 @@ function appBar(opts: {
 </header>`;
 }
 
+/**
+ * الوصول للتبويبات — بيتحسب من الصلاحيات مرة واحدة وبيتمرّر.
+ *
+ * ⚠ إخفاء التبويب **راحة مش حماية**. أي حد يقدر يكتب /pos في
+ * المتصفح. الحراسة الحقيقية في requireAuth على المسار نفسه.
+ * إحنا بنخفي عشان الموظّف ما يدوسش على باب مقفول، مش عشان نقفله.
+ */
+export interface NavAccess {
+  showPos: boolean;
+  showProducts: boolean;
+  showTreasury: boolean;
+}
+
 /** الشريط السفلي — إبهامك بيوصله من غير ما تمد إيدك */
-function tabBar(active: 'app' | 'treasury', showTreasury: boolean): Html {
+function tabBar(active: 'app' | 'pos' | 'products' | 'treasury', access: NavAccess): Html {
   return html`<nav class="tabbar">
   <a href="/app" ${active === 'app' ? raw('aria-current="page"') : ''}>
     <span class="tabbar-icon" aria-hidden="true">▣</span>الرئيسية
   </a>
-  ${showTreasury
+  ${access.showPos
+    ? html`<a href="/pos" ${active === 'pos' ? raw('aria-current="page"') : ''}>
+        <span class="tabbar-icon" aria-hidden="true">▤</span>البيع
+      </a>`
+    : ''}
+  ${access.showProducts
+    ? html`<a href="/products" ${active === 'products' ? raw('aria-current="page"') : ''}>
+        <span class="tabbar-icon" aria-hidden="true">▦</span>المنتجات
+      </a>`
+    : ''}
+  ${access.showTreasury
     ? html`<a href="/treasury" ${active === 'treasury' ? raw('aria-current="page"') : ''}>
         <span class="tabbar-icon" aria-hidden="true">₤</span>الخزينة
       </a>`
     : ''}
 </nav>`;
 }
+
+/**
+ * تحويل أختام الوقت لتوقيت المستخدم **في المتصفح**.
+ *
+ * ══ ليه مش على الخادم؟ ══
+ * كلاودفلير بتشغّل الكود بتوقيت UTC. لو نسّقنا الوقت هناك، الموظّف
+ * هيشوف بيعة الساعة 5 مكتوب عليها 3 — وهيفتكر النظام بايظ.
+ * المتصفح عارف توقيت الجهاز، فبنبعتله الختم الخام وهو ينسّقه.
+ */
+const TIME_JS = `
+(function () {
+  var nodes = document.querySelectorAll('[data-time]');
+  for (var i = 0; i < nodes.length; i++) {
+    var raw = nodes[i].getAttribute('data-time');
+    if (!raw) continue;
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) continue;
+    try {
+      nodes[i].textContent = d.toLocaleString('ar-EG', {
+        hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short'
+      });
+    } catch (e) {
+      nodes[i].textContent = d.toISOString().slice(11, 16);
+    }
+  }
+})();
+`;
 
 /** سكربت القائمة: قفلها لما تدوس بره + أزرار القفل والخروج */
 const MENU_JS = `
@@ -913,6 +963,9 @@ function createUserPanel(data: DashboardData): Html {
 
 export function dashboardPage(data: DashboardData): Html {
   const canUseTreasury = data.permissions.includes('expense.create');
+  const canSell = data.permissions.includes('sales.create');
+  const canManageProducts = data.permissions.includes('inventory.adjust');
+  const canViewProducts = data.permissions.includes('inventory.view');
   const isStaff = data.roleKey === 'STAFF';
 
   // ── شريط الانتباه: حاجة واحدة محتاجة قرارك دلوقتي ──
@@ -929,6 +982,23 @@ export function dashboardPage(data: DashboardData): Html {
 
   // ── البلاطات: اللي تقدر تعمله، بكلام مفهوم مش أكواد نظام ──
   const tiles: Html[] = [];
+
+  // البيع أول بلاطة عن قصد: دي الحاجة اللي الموظّف بيفتح النظام
+  // عشانها. اللي بيتعمل خمسين مرة في اليوم بييجي قبل اللي بيتعمل
+  // مرة في الأسبوع.
+  if (canSell) {
+    tiles.push(html`<a class="tile" data-wide href="/pos">
+      <span class="tile-label">شاشة البيع</span>
+      <span class="tile-note">اختار المنتجات واقفل الفاتورة</span>
+    </a>`);
+  }
+
+  if (canViewProducts) {
+    tiles.push(html`<a class="tile" href="/products">
+      <span class="tile-label">المنتجات</span>
+      <span class="tile-note">${canManageProducts ? 'أسعار وكميات' : 'عرض المخزون'}</span>
+    </a>`);
+  }
 
   if (canUseTreasury) {
     tiles.push(html`<a class="tile" href="/treasury">
@@ -961,10 +1031,10 @@ export function dashboardPage(data: DashboardData): Html {
   // ── شاشة الموظّف: بتقول له إيه اللي جاي بدل ما تسيبه في فراغ ──
   const staffEmpty = html`<section class="panel" open>
     <div class="empty">
-      <p class="empty-title">شاشة البيع لسه بتتبني</p>
+      <p class="empty-title">يومك يبدأ من شاشة البيع</p>
       <p class="empty-note">
-        دلوقتي تقدر تسجّل مصروف أو سُلفة من الخزينة.<br>
-        فواتير البيع وتسجيل العملاء هيتفتحوا في تحديث جاي.
+        اختار المنتجات، حدّد الخزينة، واقفل الفاتورة.<br>
+        المرتجعات وتسجيل العملاء هيتفتحوا في تحديث جاي.
       </p>
     </div>
   </section>`;
@@ -992,7 +1062,11 @@ export function dashboardPage(data: DashboardData): Html {
   ${data.canViewUsers ? teamPanel(data) : ''}
 </main>
 
-${tabBar('app', canUseTreasury)}
+${tabBar('app', {
+  showPos: canSell,
+  showProducts: canViewProducts,
+  showTreasury: canUseTreasury,
+})}
 
 <div id="gate-root"></div>
 <div id="idle-root"></div>
@@ -1294,6 +1368,9 @@ export interface TreasuryPageData {
   branchLabel: string | null;
   roleKey: string;
   canApprove: boolean;
+  /** للتبويبات السفلية — بتتحسب من الصلاحيات في app.ts */
+  canSell: boolean;
+  canViewProducts: boolean;
   balances: Array<{
     treasuryId: string;
     name: string;
@@ -1326,6 +1403,7 @@ export interface TreasuryMovementView {
 }
 
 const TYPE_LABEL: Record<string, string> = {
+  SALE: 'بيع',
   DEPOSIT: 'إيداع',
   WITHDRAWAL: 'سحب',
   EXPENSE: 'مصروف',
@@ -1506,7 +1584,11 @@ export function treasuryPage(data: TreasuryPageData): Html {
   </details>
 </main>
 
-${tabBar('treasury', true)}
+${tabBar('treasury', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: true,
+})}
 
 <div id="idle-root"></div>
 <div id="lock-root"></div>`,
@@ -1621,6 +1703,801 @@ ${MENU_JS}
       btn.disabled = false;
     }
   });
+})();
+`;
+}
+
+
+// ═══════════════════ 5) شاشة الكاشير ═══════════════════
+
+export interface PosPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  roleKey: string;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  treasuries: Array<{ treasuryId: string; name: string; type: string }>;
+  products: Array<{ id: string; name: string; pricePiastres: number; quantityOnHand: number }>;
+  recentSales: Array<{
+    id: string;
+    totalPiastres: number;
+    customerName: string | null;
+    staffName: string | null;
+    createdAt: Date;
+  }>;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * شاشة البيع.
+ *
+ * ══ قرارات التصميم، وكل واحدة من واقع الكاشير ══
+ *
+ * • السلة فوق مش تحت: الموظّف بيبصّ عليها بين كل ضغطة وضغطة،
+ *   والزبون بيسأل "بقى كام؟" وهو واقف. لو تحت، هيحتاج يسكرول
+ *   في كل مرة.
+ *
+ * • المنتجات مربّعات كبيرة مش قايمة: الضغط بالإبهام على شاشة
+ *   لمس قدّام طابور، مش بالماوس على مكتب.
+ *
+ * • الكمية المتاحة مكتوبة على كل منتج: أحسن من إنه يضغط ويلاقي
+ *   رسالة "مش متاح" بعد ما وعد الزبون.
+ *
+ * • مفيش زرار "إلغاء الفاتورة" كبير جنب "تم البيع": الاتنين جنب
+ *   بعض على شاشة لمس = غلطة مستنية تحصل.
+ *
+ * • السلة في ذاكرة الصفحة. وسياسة الموظّف قفل شاشة مش تسجيل
+ *   خروج (30 دقيقة)، فالسلة بتفضل موجودة ورا الستارة.
+ */
+export function posPage(data: PosPageData): Html {
+  const hasTreasury = data.treasuries.length > 0;
+  const hasProducts = data.products.length > 0;
+
+  const productsHtml = !hasProducts
+    ? html`<div class="empty">
+        <p class="empty-title">مفيش منتجات متاحة</p>
+        <p class="empty-note">
+          إمّا لسه ما اتضافتش منتجات، أو الكميات كلها خلصت.<br>
+          المدير بيضيفها ويورّدها من شاشة المنتجات.
+        </p>
+      </div>`
+    : html`<div class="prod-grid" id="prod-grid">
+        ${data.products.map(
+          (p) => html`<button class="prod-btn" type="button"
+            data-add="${p.id}"
+            data-name="${p.name}"
+            data-price="${String(p.pricePiastres)}"
+            data-max="${String(p.quantityOnHand)}">
+            <span class="prod-btn-name">${p.name}</span>
+            <span class="prod-btn-price">${formatPiastres(p.pricePiastres)}</span>
+            <span class="prod-btn-qty">متاح ${String(p.quantityOnHand)}</span>
+          </button>`,
+        )}
+      </div>`;
+
+  return shell({
+    title: 'البيع',
+    script: posScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="posmsg" role="alert" hidden><span id="posmsg-text"></span></div>
+
+  <section class="cart">
+    <div class="cart-head">
+      <span class="cart-title">السلة</span>
+      <button class="btn-mini" type="button" id="cart-clear" hidden>تفريغ</button>
+    </div>
+
+    <p class="cart-empty" id="cart-empty">فاضية. اختار منتج من تحت.</p>
+    <div id="cart-lines"></div>
+
+    <div class="cart-total">
+      <span class="cart-total-label">الإجمالي</span>
+      <span class="cart-total-num" id="cart-total">0.00<span class="bal-cur">ج.م</span></span>
+    </div>
+  </section>
+
+  ${!hasTreasury
+    ? html`<div class="alert-box"><span>
+        مفيش خزينة متاحة لفرعك، فمش هينفع تقفل فاتورة. كلّم المالك يضيف خزينة للفرع.
+      </span></div>`
+    : ''}
+
+  <details class="panel" open>
+    <summary>إتمام البيع</summary>
+    <div class="panel-body">
+      <div class="field">
+        <label class="field-label" for="pos-treasury">الخزينة</label>
+        <select class="field-input" id="pos-treasury" ${hasTreasury ? '' : raw('disabled')}>
+          ${data.treasuries.map(
+            (t) => html`<option value="${t.treasuryId}">${t.name}</option>`,
+          )}
+        </select>
+        <p class="field-hint">
+          وسيلة الدفع بتتقرا من الخزينة نفسها — كاش، فيزا، إنستاباي.${data.roleKey === 'SUPER_ADMIN'
+            ? ' إنت بتشوف منتجات كل الفروع، فاختار خزينة نفس فرع المنتجات اللي في السلة.'
+            : ''}
+        </p>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="pos-cname">اسم العميل (اختياري)</label>
+        <input class="field-input" id="pos-cname" type="text" maxlength="80" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="pos-cphone">رقم الهاتف (اختياري)</label>
+        <input class="field-input" id="pos-cphone" type="tel" inputmode="tel"
+          dir="ltr" maxlength="32" autocomplete="off">
+      </div>
+
+      <button class="btn-primary" id="pos-submit" type="button" disabled>تم البيع</button>
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>المنتجات</summary>
+    <div class="panel-body">
+      ${hasProducts
+        ? html`<div class="field">
+            <input class="field-input" id="pos-search" type="search"
+              placeholder="دوّر بالاسم" autocomplete="off">
+          </div>`
+        : ''}
+      ${productsHtml}
+    </div>
+  </details>
+
+  ${data.recentSales.length > 0
+    ? html`<details class="panel">
+        <summary>آخر الفواتير</summary>
+        <div class="panel-body">
+          ${data.recentSales.map(
+            (s) => html`<div class="mv-row">
+              <div class="mv-main">
+                <span class="mv-title">${s.customerName ?? 'بيع'}</span>
+                <span class="mv-sub">
+                  ${s.staffName ? `${s.staffName} · ` : ''}<span data-time="${s.createdAt.toISOString()}"></span>
+                </span>
+              </div>
+              <div class="mv-side">
+                <span class="mv-amount" data-dir="IN">+${formatPiastres(s.totalPiastres)}</span>
+              </div>
+            </div>`,
+          )}
+        </div>
+      </details>`
+    : ''}
+</main>
+
+${tabBar('pos', {
+  showPos: true,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function posScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+${TIME_JS}
+
+(function () {
+  // السلة في الذاكرة: معرّف المنتج ← { الاسم، السعر بالقرش، الكمية، المتاح }
+  var cart = {};
+
+  var linesEl = document.getElementById('cart-lines');
+  var emptyEl = document.getElementById('cart-empty');
+  var totalEl = document.getElementById('cart-total');
+  var clearEl = document.getElementById('cart-clear');
+  var submitEl = document.getElementById('pos-submit');
+  var boxEl = document.getElementById('posmsg');
+  var textEl = document.getElementById('posmsg-text');
+
+  // نفس منطق formatPiastres في الخادم بالظبط — القسمة على 100
+  // بتحصل وقت العرض بس. كل الحسابات فوق بالقرش كأرقام صحيحة.
+  function money(piastres) {
+    var neg = piastres < 0;
+    var abs = Math.abs(Math.trunc(piastres));
+    var pounds = Math.floor(abs / 100);
+    var rest = abs % 100;
+    return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' + String(rest).padStart(2, '0');
+  }
+
+  function total() {
+    var sum = 0;
+    for (var id in cart) sum += cart[id].price * cart[id].qty;
+    return sum;
+  }
+
+  function count() {
+    var n = 0;
+    for (var id in cart) n++;
+    return n;
+  }
+
+  function render() {
+    var ids = Object.keys(cart);
+    linesEl.innerHTML = '';
+
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      var line = cart[id];
+
+      var row = document.createElement('div');
+      row.className = 'cart-line';
+
+      var main = document.createElement('div');
+      main.className = 'cart-line-main';
+
+      var name = document.createElement('span');
+      name.className = 'cart-line-name';
+      name.textContent = line.name;
+
+      var sub = document.createElement('span');
+      sub.className = 'cart-line-sub';
+      sub.textContent = money(line.price) + ' × ' + line.qty;
+
+      main.appendChild(name);
+      main.appendChild(sub);
+
+      var side = document.createElement('div');
+      side.className = 'cart-line-side';
+
+      var amount = document.createElement('span');
+      amount.className = 'cart-line-amount';
+      amount.textContent = money(line.price * line.qty);
+
+      var steps = document.createElement('div');
+      steps.className = 'qty-steps';
+
+      var minus = document.createElement('button');
+      minus.type = 'button';
+      minus.className = 'qty-btn';
+      minus.setAttribute('data-dec', id);
+      minus.setAttribute('aria-label', 'نقص');
+      minus.textContent = '−';
+
+      var num = document.createElement('span');
+      num.className = 'qty-num';
+      num.textContent = String(line.qty);
+
+      var plus = document.createElement('button');
+      plus.type = 'button';
+      plus.className = 'qty-btn';
+      plus.setAttribute('data-inc', id);
+      plus.setAttribute('aria-label', 'زيادة');
+      plus.textContent = '+';
+      // القفل عند حدّ المتاح: أحسن من رسالة خطأ بعد الوعد للزبون
+      if (line.qty >= line.max) plus.disabled = true;
+
+      steps.appendChild(minus);
+      steps.appendChild(num);
+      steps.appendChild(plus);
+
+      side.appendChild(amount);
+      side.appendChild(steps);
+
+      row.appendChild(main);
+      row.appendChild(side);
+      linesEl.appendChild(row);
+    }
+
+    var isEmpty = ids.length === 0;
+    emptyEl.hidden = !isEmpty;
+    clearEl.hidden = isEmpty;
+    totalEl.innerHTML = money(total()) + '<span class="bal-cur">ج.م</span>';
+
+    var treasury = document.getElementById('pos-treasury');
+    submitEl.disabled = isEmpty || !treasury || !treasury.value;
+    submitEl.textContent = isEmpty ? 'تم البيع' : 'تم البيع · ' + money(total()) + ' ج.م';
+  }
+
+  function add(btn) {
+    var id = btn.getAttribute('data-add');
+    var max = parseInt(btn.getAttribute('data-max'), 10) || 0;
+    if (max <= 0) return;
+
+    if (!cart[id]) {
+      cart[id] = {
+        name: btn.getAttribute('data-name'),
+        price: parseInt(btn.getAttribute('data-price'), 10) || 0,
+        qty: 0,
+        max: max
+      };
+    }
+    if (cart[id].qty >= cart[id].max) return;
+    cart[id].qty++;
+    render();
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+
+    var addBtn = t.closest('[data-add]');
+    if (addBtn) { add(addBtn); return; }
+
+    var inc = t.closest('[data-inc]');
+    if (inc) {
+      var idInc = inc.getAttribute('data-inc');
+      if (cart[idInc] && cart[idInc].qty < cart[idInc].max) { cart[idInc].qty++; render(); }
+      return;
+    }
+
+    var dec = t.closest('[data-dec]');
+    if (dec) {
+      var idDec = dec.getAttribute('data-dec');
+      if (cart[idDec]) {
+        cart[idDec].qty--;
+        if (cart[idDec].qty <= 0) delete cart[idDec];
+        render();
+      }
+      return;
+    }
+  });
+
+  clearEl.addEventListener('click', function () {
+    if (!confirm('تفريغ السلة كلها؟')) return;
+    cart = {};
+    render();
+  });
+
+  // ── البحث: بيخفي المربّعات مش بيعيد بناءها ──
+  var search = document.getElementById('pos-search');
+  if (search) {
+    search.addEventListener('input', function () {
+      var q = search.value.trim();
+      var btns = document.querySelectorAll('[data-add]');
+      for (var i = 0; i < btns.length; i++) {
+        var name = btns[i].getAttribute('data-name') || '';
+        btns[i].hidden = q.length > 0 && name.indexOf(q) === -1;
+      }
+    });
+  }
+
+  // ── إتمام البيع ──
+  submitEl.addEventListener('click', async function () {
+    var ids = Object.keys(cart);
+    if (ids.length === 0) return;
+
+    var items = [];
+    for (var i = 0; i < ids.length; i++) {
+      items.push({ productId: ids[i], quantity: cart[ids[i]].qty });
+    }
+
+    submitEl.disabled = true;
+    submitEl.textContent = 'جارٍ التسجيل…';
+
+    try {
+      var res = await fetch('/api/sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          treasuryId: document.getElementById('pos-treasury').value,
+          items: items,
+          customerName: document.getElementById('pos-cname').value || null,
+          customerPhone: document.getElementById('pos-cphone').value || null
+        })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      boxEl.hidden = false;
+      if (res.ok) {
+        boxEl.setAttribute('data-tone', 'ok');
+        textEl.textContent = 'تم البيع — ' + money(data.totalPiastres) + ' ج.م';
+        cart = {};
+        // إعادة تحميل عشان الكميات المتاحة تتحدّث من الخادم.
+        // لو سبناها زي ما هي، الموظّف ممكن يبيع كمية خلصت.
+        setTimeout(function () { window.location.reload(); }, 1100);
+        return;
+      }
+
+      boxEl.removeAttribute('data-tone');
+      textEl.textContent = (data && data.error && data.error.message) || 'فشل البيع.';
+    } catch (err) {
+      boxEl.hidden = false;
+      boxEl.removeAttribute('data-tone');
+      // ⚠ مش بنقول "ما اتسجّلتش" — إحنا مش عارفين.
+      // الطلب ممكن يكون وصل الخادم واتنفّذ والرد هو اللي ضاع.
+      // لو قلنا للموظّف إنها فشلت، هيبيع تاني ويتسجّل بيعين.
+      textEl.textContent = 'انقطع الاتصال. حدّث الصفحة وشوف آخر الفواتير قبل ما تعيد البيع.';
+    } finally {
+      render();
+    }
+  });
+
+  render();
+})();
+`;
+}
+
+
+// ═══════════════════ 6) شاشة المنتجات ═══════════════════
+
+export interface ProductsPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  roleKey: string;
+  /** inventory.adjust — يقدر يضيف ويعدّل ويورّد */
+  canEdit: boolean;
+  /** profit.view_real — يشوف التكلفة */
+  canSeeCost: boolean;
+  canSell: boolean;
+  canUseTreasury: boolean;
+  /** للمالك بس — لاختيار الفرع عند الإضافة */
+  branches: Array<{ id: string; name: string }>;
+  products: Array<{
+    id: string;
+    name: string;
+    pricePiastres: number;
+    costPiastres?: number;
+    quantityOnHand: number;
+    isActive: boolean;
+  }>;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * شاشة المنتجات.
+ *
+ * ══ ملاحظة على التكلفة ══
+ * لو الحقل `costPiastres` مش موجود في الكائن، يبقى اللي بيتفرّج
+ * مالوش صلاحية يشوفه — وما وصلوش من الخادم أصلاً.
+ *
+ * الشرط `p.costPiastres !== undefined` تحت **مش** هو الحماية.
+ * هو مجرد تعامل مع حقيقة إن الحقل مش موجود. الحماية اتعملت خلاص
+ * في طبقة قاعدة البيانات قبل ما البيانات تسيب الخادم.
+ */
+export function productsPage(data: ProductsPageData): Html {
+  const rows =
+    data.products.length === 0
+      ? html`<div class="empty">
+          <p class="empty-title">مفيش منتجات لسه</p>
+          <p class="empty-note">
+            ${data.canEdit
+              ? 'ابدأ بإضافة أول منتج من القسم اللي فوق.'
+              : 'المدير هو اللي بيضيف المنتجات.'}
+          </p>
+        </div>`
+      : html`${data.products.map(
+          (p) => html`<div class="prod-row" data-row="${p.id}">
+            <div class="prod-row-main">
+              <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">${p.name}</span>
+              <span class="prod-row-sub">
+                ${formatPiastres(p.pricePiastres)} ج.م${p.costPiastres !== undefined
+                  ? ` · تكلفة ${formatPiastres(p.costPiastres)}`
+                  : ''}${p.isActive ? '' : ' · موقوف'}
+              </span>
+            </div>
+
+            <div class="prod-row-side">
+              <span class="prod-row-qty" data-zero="${p.quantityOnHand === 0 ? 'true' : 'false'}">
+                ${String(p.quantityOnHand)}
+              </span>
+              ${data.canEdit
+                ? html`<button class="btn-mini" type="button" data-edit="${p.id}">تعديل</button>`
+                : ''}
+            </div>
+
+            ${data.canEdit
+              ? html`<div class="prod-edit" id="edit-${p.id}" hidden>
+                  <div class="prod-edit-grid">
+                    <div class="field">
+                      <label class="field-label" for="price-${p.id}">سعر البيع</label>
+                      <input class="field-input" id="price-${p.id}" type="text"
+                        inputmode="decimal" dir="ltr" value="${formatPiastres(p.pricePiastres)}">
+                    </div>
+                    ${p.costPiastres !== undefined
+                      ? html`<div class="field">
+                          <label class="field-label" for="cost-${p.id}">التكلفة</label>
+                          <input class="field-input" id="cost-${p.id}" type="text"
+                            inputmode="decimal" dir="ltr" value="${formatPiastres(p.costPiastres)}">
+                        </div>`
+                      : ''}
+                  </div>
+                  <button class="btn-mini" type="button" data-save-price="${p.id}">حفظ الأسعار</button>
+
+                  <div class="prod-edit-grid" style="margin-top:12px">
+                    <div class="field">
+                      <label class="field-label" for="stock-${p.id}">تعديل الكمية</label>
+                      <input class="field-input" id="stock-${p.id}" type="text"
+                        inputmode="numeric" dir="ltr" placeholder="5 أو -2">
+                      <p class="field-hint">اكتب الفرق مش الرقم النهائي. سالب = خصم تالف أو جرد.</p>
+                    </div>
+                  </div>
+                  <div class="prod-edit-actions">
+                    <button class="btn-mini" type="button" data-save-stock="${p.id}">تعديل الكمية</button>
+                    <button class="btn-mini" type="button" data-danger="${p.isActive ? 'true' : 'false'}"
+                      data-toggle="${p.id}" data-active="${p.isActive ? 'true' : 'false'}">
+                      ${p.isActive ? 'إيقاف المنتج' : 'إعادة تفعيل'}
+                    </button>
+                  </div>
+                </div>`
+              : ''}
+          </div>`,
+        )}`;
+
+  const addPanel = !data.canEdit
+    ? ''
+    : html`<details class="panel">
+        <summary>إضافة منتج</summary>
+        <div class="panel-body">
+          <div class="alert-box" id="addmsg" role="alert" hidden><span id="addmsg-text"></span></div>
+
+          <form id="addf" novalidate>
+            ${data.branches.length > 0
+              ? html`<div class="field">
+                  <label class="field-label" for="np-branch">الفرع</label>
+                  <select class="field-input" id="np-branch">
+                    ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+                  </select>
+                </div>`
+              : ''}
+
+            <div class="field">
+              <label class="field-label" for="np-name">اسم المنتج</label>
+              <input class="field-input" id="np-name" type="text" maxlength="80" required>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="np-price">سعر البيع</label>
+              <input class="field-input" id="np-price" type="text" inputmode="decimal"
+                dir="ltr" autocomplete="off" required>
+              <p class="field-hint">بالجنيه. مثال: 150 أو 150.75</p>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="np-cost">التكلفة (اختياري)</label>
+              <input class="field-input" id="np-cost" type="text" inputmode="decimal"
+                dir="ltr" autocomplete="off">
+              <p class="field-hint">سيبها فاضية لو مش معروفة — هتتسجّل صفر.</p>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="np-qty">الكمية الحالية</label>
+              <input class="field-input" id="np-qty" type="text" inputmode="numeric"
+                dir="ltr" value="0">
+            </div>
+
+            <button class="btn-primary" id="addbtn" type="submit">إضافة المنتج</button>
+          </form>
+        </div>
+      </details>`;
+
+  return shell({
+    title: 'المنتجات',
+    script: productsScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="prodmsg" role="alert" hidden><span id="prodmsg-text"></span></div>
+
+  ${addPanel}
+
+  <details class="panel" open>
+    <summary>المخزون (${String(data.products.length)})</summary>
+    <div class="panel-body">
+      ${rows}
+    </div>
+  </details>
+</main>
+
+${tabBar('products', {
+  showPos: data.canSell,
+  showProducts: true,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function productsScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+
+(function () {
+  var box = document.getElementById('prodmsg');
+  var text = document.getElementById('prodmsg-text');
+
+  function say(message, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    text.textContent = message;
+    box.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function send(url, body, btn, busyLabel) {
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyLabel;
+
+    try {
+      var res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      if (res.ok) return data || {};
+
+      say((data && data.error && data.error.message) || 'فشل التنفيذ.', false);
+      return null;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return null;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  // ── فتح وقفل لوحة التعديل ──
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+
+    var toggle = t.closest('[data-edit]');
+    if (toggle) {
+      var panel = document.getElementById('edit-' + toggle.getAttribute('data-edit'));
+      if (panel) {
+        panel.hidden = !panel.hidden;
+        toggle.textContent = panel.hidden ? 'تعديل' : 'إغلاق';
+      }
+    }
+  });
+
+  // ── حفظ الأسعار ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-save-price]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-save-price');
+    var priceEl = document.getElementById('price-' + id);
+    var costEl = document.getElementById('cost-' + id);
+
+    var body = { price: priceEl ? priceEl.value : undefined };
+    // التكلفة بتتبعت بس لو الحقل موجود أصلاً في الصفحة.
+    // مفيش حقل = مفيش صلاحية = مفيش قيمة تتبعت.
+    if (costEl) body.cost = costEl.value;
+
+    var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
+    if (result) {
+      say('اتحفظ.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── تعديل الكمية ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-save-stock]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-save-stock');
+    var input = document.getElementById('stock-' + id);
+    if (!input || !input.value.trim()) { say('اكتب الكمية الأول.', false); return; }
+
+    var result = await send(
+      '/api/products/' + encodeURIComponent(id) + '/stock',
+      { delta: input.value },
+      btn,
+      'جارٍ التعديل…'
+    );
+
+    if (result) {
+      say('الكمية بقت ' + result.quantityOnHand + '.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── إيقاف / تفعيل ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-toggle]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-toggle');
+    var isActive = btn.getAttribute('data-active') === 'true';
+
+    if (isActive && !confirm('إيقاف المنتج ده؟ مش هيظهر في شاشة البيع، وتاريخ مبيعاته هيفضل زي ما هو.')) return;
+
+    var result = await send(
+      '/api/products/' + encodeURIComponent(id),
+      { isActive: !isActive },
+      btn,
+      'جارٍ التنفيذ…'
+    );
+
+    if (result) {
+      say(isActive ? 'المنتج اتوقف.' : 'المنتج رجع شغّال.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── إضافة منتج ──
+  var form = document.getElementById('addf');
+  if (form) {
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var btn = document.getElementById('addbtn');
+      var msg = document.getElementById('addmsg');
+      var msgText = document.getElementById('addmsg-text');
+      var branch = document.getElementById('np-branch');
+
+      btn.disabled = true;
+      btn.textContent = 'جارٍ الإضافة…';
+
+      try {
+        var res = await fetch('/api/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            name: document.getElementById('np-name').value,
+            price: document.getElementById('np-price').value,
+            cost: document.getElementById('np-cost').value,
+            quantity: document.getElementById('np-qty').value,
+            branchId: branch ? branch.value : null
+          })
+        });
+        var data = await res.json().catch(function () { return null; });
+
+        msg.hidden = false;
+        if (res.ok) {
+          msg.setAttribute('data-tone', 'ok');
+          msgText.textContent = 'المنتج اتضاف.';
+          setTimeout(function () { window.location.reload(); }, 900);
+          return;
+        }
+
+        msg.removeAttribute('data-tone');
+        msgText.textContent = (data && data.error && data.error.message) || 'فشلت الإضافة.';
+      } catch (err) {
+        msg.hidden = false;
+        msg.removeAttribute('data-tone');
+        msgText.textContent = 'تعذّر الاتصال بالخادم.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'إضافة المنتج';
+      }
+    });
+  }
 })();
 `;
 }
