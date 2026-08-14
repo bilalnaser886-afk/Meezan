@@ -10,15 +10,34 @@
 
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import { SESSION_POLICY, assertEnv, superAdminPath, type Env } from './domain/config';
+import { SESSION_POLICY, assertEnv, idleRuleFor, superAdminPath, type Env } from './domain/config';
 import { AppError } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
-import { announcementRoutes, authRoutes, branchRoutes, setupRoutes, userRoutes } from './server/routes';
+import {
+  announcementRoutes,
+  authRoutes,
+  branchRoutes,
+  setupRoutes,
+  treasuryRoutes,
+  userRoutes,
+} from './server/routes';
 import { listBranchesForActor, listTeam } from './application/use-cases/users';
 import { listBranches } from './application/use-cases/branches';
+import {
+  listBalances,
+  listExpenseReasons,
+  listMovements,
+} from './application/use-cases/treasury';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
-import { dashboardPage, loginPage, setupPage, vaultPage } from './ui/pages';
+import {
+  dashboardPage,
+  lockedPage,
+  loginPage,
+  setupPage,
+  treasuryPage,
+  vaultPage,
+} from './ui/pages';
 
 export const app = new Hono<AppBindings>();
 
@@ -69,6 +88,7 @@ app.route('/api/auth', authRoutes);
 app.route('/api/announcements', announcementRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/branches', branchRoutes);
+app.route('/api/treasury', treasuryRoutes);
 app.route('/', setupRoutes);
 
 // ═══════════════════ الصفحات ═══════════════════
@@ -80,6 +100,15 @@ app.get('/', (c) => c.redirect('/login'));
 // بيكشف معلومات عن البنية لأي زائر بدون فايدة.
 
 app.get('/login', (c) => c.html(loginPage({ expired: c.req.query('expired') === '1' })));
+
+/**
+ * شاشة فك القفل.
+ *
+ * ⚠ مش محمية بـ requireAuth عن قصد — الجلسة المقفولة بترمي 423،
+ * فلو حميناها هتعمل حلقة إعادة توجيه لا نهائية. الصفحة نفسها
+ * ما بتعرضش أي بيانات؛ التحقق الحقيقي في /api/auth/unlock.
+ */
+app.get('/locked', (c) => c.html(lockedPage()));
 
 /**
  * صفحة الإعداد لمرّة واحدة.
@@ -105,6 +134,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
   const canCreateUsers = user.permissions.includes(PERMISSIONS.USER_CREATE);
   const canEditUsers = user.permissions.includes(PERMISSIONS.USER_EDIT);
   const canManageBranches = user.permissions.includes(PERMISSIONS.BRANCH_MANAGE);
+  const idleRule = idleRuleFor(user.roleKey);
 
   // نجيبهم هنا على الخادم بدل fetch من المتصفح: أسرع (رحلة واحدة
   // بدل تلاتة) وأبسط للقوائم اللي محتاجة تتعرض فوراً
@@ -129,8 +159,52 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       team,
       branches: branchOptions,
       allBranches,
-      idleTimeoutSeconds: SESSION_POLICY.IDLE_TIMEOUT_SECONDS,
+      idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * صفحة الخزينة.
+ * الأرصدة والحركات وقوائم الاختيار بتتجاب على الخادم في رحلة
+ * واحدة متوازية — أسرع من أربع نداءات من المتصفح على شبكة موبايل.
+ */
+app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.EXPENSE_CREATE)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const canApprove = user.permissions.includes(PERMISSIONS.EXPENSE_APPROVE);
+
+  const [balances, movements, reasons, team, pending] = await Promise.all([
+    listBalances(container.treasury, user),
+    listMovements(container.treasury, user),
+    listExpenseReasons(container.treasury, user),
+    user.permissions.includes(PERMISSIONS.USER_VIEW)
+      ? listTeam(container.users, user)
+      : Promise.resolve([]),
+    canApprove ? listMovements(container.treasury, user, 'PENDING') : Promise.resolve([]),
+  ]);
+
+  return c.html(
+    treasuryPage({
+      currentUserId: user.id,
+      fullName: user.fullName,
+      roleKey: user.roleKey,
+      canApprove,
+      balances,
+      movements,
+      pending,
+      reasons,
+      team: team.filter((t) => t.isActive),
+      idleTimeoutSeconds: idleRuleFor(user.roleKey).seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRuleFor(user.roleKey).action,
     }),
   );
 });
