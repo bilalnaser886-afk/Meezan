@@ -153,12 +153,124 @@ export interface BranchRepository {
   create(data: CreateBranchInput): Promise<{ id: string }>;
 }
 
+// ═══════════════════ الخزينة ═══════════════════
+
+export type MovementDirection = 'IN' | 'OUT';
+
+/** الأنواع المدعومة حاليًا. التحويلات (TRANSFER_*) موجودة في
+ *  قاعدة البيانات لكن لسه مش مفعّلة في التطبيق. */
+export type MovementType = 'DEPOSIT' | 'WITHDRAWAL' | 'EXPENSE' | 'ADVANCE' | 'ADJUSTMENT';
+
+export type MovementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface TreasuryBalance {
+  treasuryId: string;
+  name: string;
+  type: string;
+  branchId: string | null;
+  isActive: boolean;
+  /** بالقرش دايمًا */
+  balancePiastres: number;
+  movementCount: number;
+}
+
+export interface ExpenseReason {
+  id: string;
+  name: string;
+  isAdvance: boolean;
+  branchId: string | null;
+}
+
+export interface MovementRecord {
+  id: string;
+  treasuryId: string;
+  branchId: string | null;
+  direction: MovementDirection;
+  type: MovementType;
+  amountPiastres: number;
+  status: MovementStatus;
+  expenseReasonId: string | null;
+  relatedUserId: string | null;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+}
+
+/** سجل حركة بعد إضافة الأسماء — المستودع بيرجّع معرّفات، وحالة
+ *  الاستخدام بتحوّلها لأسماء من قوائم عندها أصلاً. ده بيتجنّب
+ *  ربط أربع علاقات في استعلام واحد (المستخدمون مربوطين 4 مرات
+ *  بجدول الحركات) — أبسط وأقل عرضة للكسر. */
+export interface EnrichedMovement extends MovementRecord {
+  treasuryName: string;
+  reasonName: string | null;
+  relatedUserName: string | null;
+  createdByName: string | null;
+}
+
+export interface CreateMovementInput {
+  treasuryId: string;
+  branchId: string | null;
+  direction: MovementDirection;
+  type: MovementType;
+  amountPiastres: number;
+  status: MovementStatus;
+  expenseReasonId: string | null;
+  relatedUserId: string | null;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+  approvedById: string | null;
+  approvedAt: Date | null;
+}
+
+export interface MovementFilter {
+  /** null = كل الفروع (للمالك فقط) */
+  branchId: string | null;
+  status?: MovementStatus;
+  limit: number;
+}
+
+export interface SalaryStatement {
+  baseSalaryPiastres: number;
+  totalAdvancesPiastres: number;
+  netDuePiastres: number;
+  carriedDebtPiastres: number;
+  advanceCount: number;
+}
+
+export interface TreasuryRepository {
+  listBalances(branchId: string | null): Promise<TreasuryBalance[]>;
+  /** بيرجّع الفرع التابع له، أو null لو الخزينة مش موجودة */
+  findScope(treasuryId: string): Promise<{ branchId: string | null } | null>;
+}
+
+export interface MovementRepository {
+  create(data: CreateMovementInput): Promise<{ id: string }>;
+  list(filter: MovementFilter): Promise<MovementRecord[]>;
+  findById(id: string): Promise<MovementRecord | null>;
+  review(
+    id: string,
+    status: 'APPROVED' | 'REJECTED',
+    reviewerId: string,
+    at: Date,
+  ): Promise<void>;
+  salaryStatement(userId: string, from: Date, to: Date): Promise<SalaryStatement>;
+}
+
+export interface ExpenseReasonRepository {
+  /** أسباب الفرع + الأسباب العامة (branch_id = null) */
+  listForBranch(branchId: string | null): Promise<ExpenseReason[]>;
+  findById(id: string): Promise<ExpenseReason | null>;
+}
+
 export interface SessionRecord {
   id: string;
   userId: string;
   lastSeenAt: Date;
   expiresAt: Date;
   revokedAt: Date | null;
+  /** لو مش null، الشاشة مقفولة والجلسة لسه حيّة */
+  lockedAt: Date | null;
 }
 
 export interface SessionRepository {
@@ -175,6 +287,10 @@ export interface SessionRepository {
   rotate(id: string, newDigest: string, at: Date): Promise<void>;
   revoke(id: string, reason: string, at: Date): Promise<void>;
   revokeAllForUser(userId: string, reason: string, at: Date): Promise<void>;
+  /** قفل الشاشة — الجلسة تفضل حيّة */
+  lock(id: string, at: Date): Promise<void>;
+  /** فك القفل + تصفير عدّاد الخمول في نفس العملية */
+  unlock(id: string, at: Date): Promise<void>;
 }
 
 export interface AnnouncementRecord {
