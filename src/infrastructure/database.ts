@@ -21,11 +21,19 @@ import type {
   AuthenticatedUser,
   BranchRepository,
   BranchSummary,
+  ExpenseReason,
+  ExpenseReasonRepository,
+  MovementDirection,
+  MovementRecord,
+  MovementRepository,
+  MovementStatus,
+  MovementType,
   RateLimiter,
   RoleKey,
   SessionRecord,
   SessionRepository,
   TeamMember,
+  TreasuryRepository,
   UserRecord,
   UserRepository,
 } from '../application/ports';
@@ -208,13 +216,16 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
 
       return ((data ?? []) as RawTeamMember[]).map(toTeamMember);
     },
+
     async setActive(userId, isActive) {
       const { error } = await db.from('users').update({ is_active: isActive }).eq('id', userId);
       if (error) throw Errors.internal(`user setActive: ${error.message}`);
     },
   };
 }
-// حسب طريقة استنتاج العلاقة، فنتعامل مع الاحتمالين بأمان
+
+// صف الفريق كما يرجعه PostgREST — العلاقة ممكن تيجي كائن أو مصفوفة
+// حسب طريقة استنتاجها، فنتعامل مع الاحتمالين بأمان
 interface RawTeamMember {
   id: string;
   username: string;
@@ -324,6 +335,238 @@ export function createBranchRepository(db: SupabaseClient): BranchRepository {
   };
 }
 
+// ─────────── الخزينة ───────────
+
+export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository {
+  return {
+    async listBalances(branchId) {
+      // الرصيد محسوب في قاعدة البيانات مش هنا — الجمع مكانه جنب
+      // الدفتر، مش في رحلة شبكة
+      const { data, error } = await db.rpc('fn_treasury_balances', { p_branch_id: branchId });
+      if (error) throw Errors.internal(`fn_treasury_balances: ${error.message}`);
+
+      return ((data ?? []) as Array<{
+        treasury_id: string;
+        name: string;
+        type: string;
+        branch_id: string | null;
+        is_active: boolean;
+        balance_piastres: number | string;
+        movement_count: number | string;
+      }>).map((r) => ({
+        treasuryId: r.treasury_id,
+        name: r.name,
+        type: r.type,
+        branchId: r.branch_id,
+        isActive: r.is_active,
+        // bigint ممكن يرجع كنص من PostgREST — بنوحّده لرقم
+        balancePiastres: Number(r.balance_piastres),
+        movementCount: Number(r.movement_count),
+      }));
+    },
+
+    async findScope(treasuryId) {
+      const { data, error } = await db
+        .from('treasuries')
+        .select('branch_id')
+        .eq('id', treasuryId)
+        .is('deleted_at', null)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`treasury findScope: ${error.message}`);
+      return data ? { branchId: data.branch_id as string | null } : null;
+    },
+  };
+}
+
+// ─────────── حركات الخزينة ───────────
+
+const MOVEMENT_COLUMNS =
+  'id, treasury_id, branch_id, direction, type, amount_piastres, status, ' +
+  'expense_reason_id, related_user_id, note, occurred_at, created_by_id';
+
+interface RawMovement {
+  id: string;
+  treasury_id: string;
+  branch_id: string | null;
+  direction: MovementDirection;
+  type: MovementType;
+  amount_piastres: number | string;
+  status: MovementStatus;
+  expense_reason_id: string | null;
+  related_user_id: string | null;
+  note: string | null;
+  occurred_at: string;
+  created_by_id: string;
+}
+
+function toMovement(raw: RawMovement): MovementRecord {
+  return {
+    id: raw.id,
+    treasuryId: raw.treasury_id,
+    branchId: raw.branch_id,
+    direction: raw.direction,
+    type: raw.type,
+    amountPiastres: Number(raw.amount_piastres),
+    status: raw.status,
+    expenseReasonId: raw.expense_reason_id,
+    relatedUserId: raw.related_user_id,
+    note: raw.note,
+    occurredAt: new Date(raw.occurred_at),
+    createdById: raw.created_by_id,
+  };
+}
+
+export function createMovementRepository(db: SupabaseClient): MovementRepository {
+  return {
+    async create(data) {
+      const { data: row, error } = await db
+        .from('treasury_movements')
+        .insert({
+          treasury_id: data.treasuryId,
+          branch_id: data.branchId,
+          direction: data.direction,
+          type: data.type,
+          amount_piastres: data.amountPiastres,
+          status: data.status,
+          expense_reason_id: data.expenseReasonId,
+          related_user_id: data.relatedUserId,
+          note: data.note,
+          occurred_at: data.occurredAt.toISOString(),
+          created_by_id: data.createdById,
+          approved_by_id: data.approvedById,
+          approved_at: data.approvedAt?.toISOString() ?? null,
+        })
+        .select('id')
+        .single();
+
+      if (error || !row) {
+        // 23514 = check constraint violation — القيود المنطقية في
+        // قاعدة البيانات رفضت السجل (سُلفة بلا موظّف مثلاً)
+        if (error?.code === '23514') {
+          throw Errors.validation('بيانات الحركة ناقصة أو غير متسقة.');
+        }
+        throw Errors.internal(`movement insert: ${error?.message}`);
+      }
+
+      return { id: row.id as string };
+    },
+
+    async list(filter) {
+      let query = db
+        .from('treasury_movements')
+        .select(MOVEMENT_COLUMNS)
+        .is('deleted_at', null)
+        .order('occurred_at', { ascending: false })
+        .limit(filter.limit);
+
+      if (filter.branchId !== null) query = query.eq('branch_id', filter.branchId);
+      if (filter.status) query = query.eq('status', filter.status);
+
+      const { data, error } = await query;
+      if (error) throw Errors.internal(`movements list: ${error.message}`);
+
+      return ((data ?? []) as RawMovement[]).map(toMovement);
+    },
+
+    async findById(id) {
+      const { data, error } = await db
+        .from('treasury_movements')
+        .select(MOVEMENT_COLUMNS)
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`movement findById: ${error.message}`);
+      return data ? toMovement(data as RawMovement) : null;
+    },
+
+    async review(id, status, reviewerId, at) {
+      // الشرط على الحالة مهم: بيمنع اعتماد حركة اتراجعت بالفعل
+      // لو ضغط اتنين على الزرار في نفس اللحظة
+      const { error } = await db
+        .from('treasury_movements')
+        .update({
+          status,
+          approved_by_id: reviewerId,
+          approved_at: at.toISOString(),
+        })
+        .eq('id', id)
+        .eq('status', 'PENDING');
+
+      if (error) throw Errors.internal(`movement review: ${error.message}`);
+    },
+
+    async salaryStatement(userId, from, to) {
+      const { data, error } = await db.rpc('fn_user_salary_statement', {
+        p_user_id: userId,
+        p_from: from.toISOString(),
+        p_to: to.toISOString(),
+      });
+
+      if (error) throw Errors.internal(`fn_user_salary_statement: ${error.message}`);
+
+      const row = (data as Array<Record<string, number | string>> | null)?.[0];
+      return {
+        baseSalaryPiastres: Number(row?.base_salary_piastres ?? 0),
+        totalAdvancesPiastres: Number(row?.total_advances_piastres ?? 0),
+        netDuePiastres: Number(row?.net_due_piastres ?? 0),
+        carriedDebtPiastres: Number(row?.carried_debt_piastres ?? 0),
+        advanceCount: Number(row?.advance_count ?? 0),
+      };
+    },
+  };
+}
+
+// ─────────── أسباب الصرف ───────────
+
+export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReasonRepository {
+  const map = (r: {
+    id: string;
+    name: string;
+    is_advance: boolean;
+    branch_id: string | null;
+  }): ExpenseReason => ({
+    id: r.id,
+    name: r.name,
+    isAdvance: r.is_advance,
+    branchId: r.branch_id,
+  });
+
+  return {
+    async listForBranch(branchId) {
+      // الأسباب العامة (branch_id = null) متاحة للكل، زائد أسباب
+      // الفرع نفسه لو موجود
+      let query = db
+        .from('expense_reasons')
+        .select('id, name, is_advance, branch_id')
+        .is('deleted_at', null)
+        .eq('is_active', true)
+        .order('name');
+
+      query = branchId ? query.or(`branch_id.is.null,branch_id.eq.${branchId}`) : query.is('branch_id', null);
+
+      const { data, error } = await query;
+      if (error) throw Errors.internal(`expense reasons: ${error.message}`);
+      return (data ?? []).map(map);
+    },
+
+    async findById(id) {
+      const { data, error } = await db
+        .from('expense_reasons')
+        .select('id, name, is_advance, branch_id')
+        .eq('id', id)
+        .is('deleted_at', null)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`expense reason findById: ${error.message}`);
+      return data ? map(data) : null;
+    },
+  };
+}
+
 // ─────────── الجلسات ───────────
 
 interface RawSession {
@@ -332,6 +575,7 @@ interface RawSession {
   last_seen_at: string;
   expires_at: string;
   revoked_at: string | null;
+  locked_at: string | null;
 }
 
 function toSessionRecord(raw: RawSession): SessionRecord {
@@ -341,10 +585,11 @@ function toSessionRecord(raw: RawSession): SessionRecord {
     lastSeenAt: new Date(raw.last_seen_at),
     expiresAt: new Date(raw.expires_at),
     revokedAt: toDate(raw.revoked_at),
+    lockedAt: toDate(raw.locked_at),
   };
 }
 
-const SESSION_COLUMNS = 'id, user_id, last_seen_at, expires_at, revoked_at';
+const SESSION_COLUMNS = 'id, user_id, last_seen_at, expires_at, revoked_at, locked_at';
 
 export function createSessionRepository(db: SupabaseClient): SessionRepository {
   return {
@@ -415,6 +660,26 @@ export function createSessionRepository(db: SupabaseClient): SessionRepository {
         .from('sessions')
         .update({ revoked_at: at.toISOString(), revoke_reason: reason })
         .eq('user_id', userId)
+        .is('revoked_at', null);
+    },
+
+    async lock(id, at) {
+      // ملاحظة: مش بنحدّث last_seen_at هنا. وقت القفل بيتسجّل
+      // في locked_at، وعدّاد الخمول بيفضل زي ما هو.
+      await db
+        .from('sessions')
+        .update({ locked_at: at.toISOString() })
+        .eq('id', id)
+        .is('revoked_at', null);
+    },
+
+    async unlock(id, at) {
+      // فك القفل + تصفير عدّاد الخمول في تحديث واحد — عشان الموظّف
+      // ما يتقفلش تاني بعد ثانية لأن last_seen_at لسه قديم
+      await db
+        .from('sessions')
+        .update({ locked_at: null, last_seen_at: at.toISOString() })
+        .eq('id', id)
         .is('revoked_at', null);
     },
   };
