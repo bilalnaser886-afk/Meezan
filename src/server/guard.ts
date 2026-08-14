@@ -13,7 +13,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { COOKIES, type Env } from '../domain/config';
-import { Errors } from '../domain/errors';
+import { AppError, Errors } from '../domain/errors';
 import type { PermissionKey } from '../domain/permissions';
 import type { AuthenticatedUser } from '../application/ports';
 import { verifyAccessToken } from '../infrastructure/crypto';
@@ -72,7 +72,14 @@ export function requireAuth(options: GuardOptions = {}): MiddlewareHandler<AppBi
 
       await next();
     } catch (error) {
-      if (options.redirectOnFail) return c.redirect('/login?expired=1');
+      if (options.redirectOnFail) {
+        // القفل غير الانتهاء: الجلسة لسه حيّة، فبنوجّه لشاشة فك
+        // القفل مش لصفحة الدخول — وبنسيب الكوكيز زي ما هي.
+        if (error instanceof AppError && error.code === 'SESSION_LOCKED') {
+          return c.redirect('/locked');
+        }
+        return c.redirect('/login?expired=1');
+      }
       throw error; // بيمسكه app.onError ويحوّله لرد JSON موحّد
     }
   };
