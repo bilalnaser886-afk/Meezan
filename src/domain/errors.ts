@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'ACCOUNT_INACTIVE'
   | 'SESSION_EXPIRED'
   | 'SESSION_IDLE_TIMEOUT'
+  | 'SESSION_LOCKED'
   | 'UNAUTHENTICATED'
   | 'FORBIDDEN'
   | 'RATE_LIMITED'
@@ -59,6 +60,17 @@ export const Errors = {
 
   idleTimeout: () =>
     new AppError('SESSION_IDLE_TIMEOUT', 401, 'تم إنهاء الجلسة لعدم النشاط. سجّل الدخول من جديد.'),
+
+  /**
+   * الشاشة مقفولة — الجلسة **لسه حيّة**.
+   * كود 423 مش 401 عشان الواجهة تفرّق: 401 يعني روح لصفحة الدخول،
+   * 423 يعني اعرض شاشة فكّ القفل والحالة محفوظة.
+   *
+   * ⚠ مهم: الكوكيز **ما بتتمسحش** مع الخطأ ده — من غيرها مفيش
+   * طريقة نفكّ القفل أصلاً.
+   */
+  sessionLocked: () =>
+    new AppError('SESSION_LOCKED', 423, 'الشاشة مقفولة. اكتب كلمة المرور للمتابعة.'),
 
   unauthenticated: () =>
     new AppError('UNAUTHENTICATED', 401, 'يجب تسجيل الدخول أولاً.'),
