@@ -17,6 +17,7 @@ import type { AuthDeps } from '../application/use-cases/auth';
 import type { AnnouncementDeps } from '../application/use-cases/announcements';
 import type { UserDeps } from '../application/use-cases/users';
 import type { BranchDeps } from '../application/use-cases/branches';
+import type { TreasuryDeps } from '../application/use-cases/treasury';
 import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
@@ -27,8 +28,11 @@ import {
   createAuditLogger,
   createBranchRepository,
   createDb,
+  createExpenseReasonRepository,
+  createMovementRepository,
   createRateLimiter,
   createSessionRepository,
+  createTreasuryRepository,
   createUserRepository,
 } from '../infrastructure/database';
 
@@ -40,6 +44,7 @@ export interface Container {
   announcements: AnnouncementDeps;
   users: UserDeps;
   branchOps: BranchDeps;
+  treasury: TreasuryDeps;
   branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
@@ -80,6 +85,14 @@ export function buildContainer(env: Env): Container {
     },
     branchOps: {
       branches: branchRepo,
+      clock: systemClock,
+      audit,
+    },
+    treasury: {
+      treasuries: createTreasuryRepository(db),
+      movements: createMovementRepository(db),
+      expenseReasons: createExpenseReasonRepository(db),
+      users: userRepo,
       clock: systemClock,
       audit,
     },
@@ -140,6 +153,10 @@ export function errorResponse(c: Context, error: unknown): Response {
   if (error instanceof AppError) {
     if (error.httpStatus >= 500) console.error('[error]', error.code, error.internalDetail);
 
+    // ⚠ لاحظ إن SESSION_LOCKED **مش** في القائمة دي، وده مقصود.
+    // القفل معناه إن الجلسة لسه حيّة — لو مسحنا الكوكيز، هيضيع
+    // توكن التحديث اللي هو الطريق الوحيد لفكّ القفل، والموظّف
+    // هيتطرد بدل ما يتقفل. ما تضيفهوش هنا.
     if (error.code === 'SESSION_EXPIRED' || error.code === 'SESSION_IDLE_TIMEOUT') {
       clearAuthCookies(c);
     }
