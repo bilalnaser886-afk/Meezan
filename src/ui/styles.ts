@@ -1,217 +1,319 @@
 /**
- * أنماط الواجهة
+ * نظام التصميم — "البنكنوت"
  *
- * عالمين مختلفين عمداً، والفرق بينهم بيحكي القصة الأمنية:
+ * ══ من فين جت الألوان؟ ══
+ * النظام ده بيتعامل مع فلوس مصرية طول اليوم. فبدل ما نخترع لوحة
+ * ألوان، أخدناها من الحاجة اللي في إيد الموظّف فعلاً — الجنيه:
  *
- * 1) شاشة الكاشير: ورقية، ساطعة، أزرار كبيرة تتضغط بإبهام مبلول
- *    وبسرعة قدّام طابور. مستوحاة من ورق الفواتير الحراري.
- *    العنصر المميّز: حافّة تمزيق الفاتورة فوق الكرت.
+ *   البترولي الغامق  ← حبر فئة الـ200
+ *   الأخضر           ← فئة الـ20   (دخل / تأكيد)
+ *   القرمزي          ← فئة الـ10   (منصرف / خطر)
+ *   الذهبي           ← خيط الأمان  (معلّق / محتاج انتباه)
+ *   الورقي           ← ورق البنكنوت نفسه
  *
- * 2) بوّابة المالك: مظلمة، صامتة، **من غير أي هوية بصرية**.
- *    لا شعار، لا اسم نظام، لا رسايل مساعدة. الباب المخفي
- *    ما يصحّش يعلن عن اللي وراه. الغياب هنا قرار، مش كسل.
+ * ══ العنصر المميّز: الختم ══
+ * المحلات في مصر بتختم كل ورقة. فالدور بيتعرض كختم مطاطي مايل
+ * شوية بحدّين — أصدق وأقرب للواقع من تاج ملوّن عادي.
  *
- * كل ده CSS واحد بيتبعت مع الصفحة — مفيش خطوة بناء ولا ملفات
- * خارجية تتحمّل. أهم حاجة عندك: أقل عدد ممكن من الحاجات اللي تقع.
+ * ══ الخطوط ══
+ * Readex Pro      للعناوين والمبالغ — عربي بشخصية، مش الافتراضي
+ * IBM Plex Arabic للنص — كثيف ومقروء في الأحجام الصغيرة
+ * IBM Plex Mono   للأرقام والمعرّفات — خانات متساوية العرض عشان
+ *                 المبالغ تتصفّ تحت بعضها في عمود
  */
 
 export const BASE_CSS = `
 :root{
-  --paper:#fff; --paper-edge:#eceef1; --ink:#0f1b2d; --ink-soft:#5a6b80;
-  --field:#f2f5f8; --line:#d9e0e8; --till:#0b6e4f; --till-deep:#085239;
-  --alert:#b4322a; --amber:#b8710d;
-  --vault:#0a0d10; --vault-panel:#11151a; --vault-line:#1f262e;
-  --vault-ink:#c3ccd6; --vault-dim:#6c7784;
+  --ground:#0E2A33; --ground-soft:#173B46;
+  --surface:#EDF1EF; --card:#FFFFFF; --line:#D7E0DC; --line-soft:#E8EEEB;
+  --ink:#0E2A33; --ink-soft:#5F757C; --ink-faint:#93A5AA;
+  --credit:#12805C; --credit-deep:#0C6247; --credit-wash:#E6F2ED;
+  --debit:#9E2B3E; --debit-wash:#FAECEE;
+  --thread:#B5822A; --thread-wash:#FBF3E2;
+
+  --font-display:'Readex Pro',system-ui,sans-serif;
   --font-ui:'IBM Plex Sans Arabic',system-ui,-apple-system,sans-serif;
   --font-mono:'IBM Plex Mono',ui-monospace,monospace;
-  --radius:4px; --tap:56px;
+
+  --r:10px; --r-sm:6px; --tap:54px; --pad:16px;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;font-family:var(--font-ui);color:var(--ink);
-  background:var(--paper-edge);-webkit-text-size-adjust:100%}
-:focus-visible{outline:3px solid var(--till);outline-offset:2px}
+  background:var(--surface);-webkit-text-size-adjust:100%;
+  -webkit-tap-highlight-color:transparent}
+:focus-visible{outline:2.5px solid var(--credit);outline-offset:2px;border-radius:3px}
+button{font:inherit}
 
-.counter{min-height:100dvh;display:grid;place-items:center;padding:24px 16px;
-  background:repeating-linear-gradient(180deg,transparent 0 39px,rgba(15,27,45,.035) 39px 40px),var(--paper-edge)}
-.counter-card{width:100%;max-width:420px;background:var(--paper);border:1px solid var(--line);
-  border-top:none;padding:32px 28px 28px;box-shadow:0 12px 32px -20px rgba(15,27,45,.5)}
-.receipt-edge{width:100%;max-width:420px;height:12px;display:block;color:var(--paper)}
-.counter-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;
-  color:var(--ink-soft);margin:0 0 6px;direction:ltr;text-align:right}
-.counter-title{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 4px}
-.counter-sub{font-size:14px;color:var(--ink-soft);margin:0 0 26px;line-height:1.6}
+/* ═══ الختم — العنصر المميّز ═══
+   حدّين (border + inset shadow) وميلة بسيطة = إحساس الختم
+   المطاطي المتحطّ بإيد على ورقة. */
+.stamp{display:inline-block;padding:3px 9px 4px;border:1.5px solid currentColor;
+  border-radius:4px;box-shadow:inset 0 0 0 1px currentColor;
+  font-family:var(--font-display);font-size:11px;font-weight:600;
+  letter-spacing:.02em;line-height:1.4;transform:rotate(-1.5deg);white-space:nowrap}
+.stamp[data-role="SUPER_ADMIN"]{color:var(--thread)}
+.stamp[data-role="BRANCH_MANAGER"]{color:var(--credit)}
+.stamp[data-role="STAFF"]{color:var(--ink-faint)}
 
-.field{margin-bottom:16px}
+/* ═══ الشريط العلوي ═══ */
+.app-bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;
+  justify-content:space-between;gap:12px;padding:12px var(--pad);
+  background:var(--ground);color:#fff}
+.who{display:flex;align-items:center;gap:10px;min-width:0}
+.who-name{font-family:var(--font-display);font-size:16px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ═══ قائمة النقط الثلاث ═══
+   مبنية على <details> — بتشتغل بالكيبورد وبدون أي JavaScript. */
+.menu{position:relative}
+.menu>summary{list-style:none;width:40px;height:40px;display:grid;place-items:center;
+  border-radius:var(--r-sm);cursor:pointer;font-size:20px;line-height:1;color:#fff;
+  background:rgba(255,255,255,.08)}
+.menu>summary::-webkit-details-marker{display:none}
+.menu[open]>summary{background:rgba(255,255,255,.18)}
+.menu-sheet{position:absolute;inset-inline-end:0;top:calc(100% + 8px);z-index:60;
+  min-width:236px;padding:6px;background:var(--card);color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:0 16px 40px -16px rgba(14,42,51,.5)}
+.menu-info{padding:10px 12px 12px;border-bottom:1px solid var(--line-soft);margin-bottom:6px}
+.menu-row{display:flex;justify-content:space-between;gap:12px;font-size:13px;
+  padding:3px 0;color:var(--ink-soft)}
+.menu-row b{color:var(--ink);font-weight:600;font-family:var(--font-mono);
+  font-size:12px;direction:ltr}
+.menu-item{display:block;width:100%;text-align:start;padding:11px 12px;font-size:15px;
+  color:var(--ink);background:none;border:none;border-radius:var(--r-sm);cursor:pointer}
+.menu-item:hover{background:var(--surface)}
+.menu-item[data-danger]{color:var(--debit)}
+
+/* ═══ شريط الانتباه ═══ بيقول حاجة واحدة: فيه حاجة مستنياك ولا لأ */
+.strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
+  border-radius:var(--r);margin-bottom:14px;background:var(--card);
+  border:1px solid var(--line)}
+.strip[data-tone="wait"]{background:var(--thread-wash);border-color:#EBD9AE}
+.strip-count{font-family:var(--font-display);font-size:26px;font-weight:700;line-height:1;
+  color:var(--thread);font-variant-numeric:tabular-nums}
+.strip-text{font-size:14px;line-height:1.55;flex:1}
+.strip-text b{font-weight:600}
+.strip-go{padding:9px 14px;font-size:14px;font-weight:600;color:#fff;
+  background:var(--thread);border:none;border-radius:var(--r-sm);
+  text-decoration:none;white-space:nowrap}
+.strip[data-tone="calm"] .strip-text{color:var(--ink-soft)}
+
+/* ═══ بلاطات الإجراءات ═══ */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
+.tile{display:flex;flex-direction:column;justify-content:space-between;gap:10px;
+  min-height:94px;padding:14px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r);text-decoration:none;color:var(--ink)}
+.tile:active{background:var(--surface)}
+.tile-label{font-family:var(--font-display);font-size:15px;font-weight:600;line-height:1.3}
+.tile-note{font-size:12px;color:var(--ink-soft);line-height:1.5}
+.tile-num{font-family:var(--font-mono);font-size:19px;font-weight:500;
+  font-variant-numeric:tabular-nums;direction:ltr}
+.tile[data-wide]{grid-column:1/-1;min-height:0;flex-direction:row;align-items:center;
+  justify-content:space-between}
+
+/* ═══ الأقسام القابلة للطي ═══ */
+.panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  margin-bottom:10px;overflow:hidden}
+.panel>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;padding:15px var(--pad);cursor:pointer;font-family:var(--font-display);
+  font-size:15px;font-weight:600}
+.panel>summary::-webkit-details-marker{display:none}
+.panel>summary::after{content:'+';font-family:var(--font-mono);font-size:19px;
+  color:var(--ink-faint);line-height:1}
+.panel[open]>summary::after{content:'−'}
+.panel[open]>summary{border-bottom:1px solid var(--line-soft)}
+.panel-body{padding:var(--pad)}
+
+/* ═══ الشريط السفلي ═══ إبهامك بيوصله من غير ما تمد إيدك */
+.tabbar{position:fixed;inset-inline:0;bottom:0;z-index:40;display:flex;
+  background:var(--card);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom)}
+.tabbar a{flex:1;padding:11px 4px 13px;text-align:center;text-decoration:none;
+  font-size:12px;font-weight:600;color:var(--ink-faint);
+  border-top:2.5px solid transparent;margin-top:-1px}
+.tabbar a[aria-current="page"]{color:var(--credit);border-top-color:var(--credit)}
+.tabbar-icon{display:block;font-family:var(--font-mono);font-size:17px;margin-bottom:2px}
+.shell{max-width:640px;margin:0 auto;padding:14px var(--pad) 96px}
+
+/* ═══ الحقول ═══ */
+.field{margin-bottom:15px}
 .field-label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
-.field-input,.field-area{width:100%;padding:0 14px;font-family:var(--font-ui);font-size:17px;
-  color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:var(--radius);
-  transition:border-color .12s,background .12s}
+.field-input,.field-area{width:100%;padding:0 14px;font-family:var(--font-ui);font-size:16px;
+  color:var(--ink);background:var(--card);border:1.5px solid var(--line);
+  border-radius:var(--r-sm);transition:border-color .12s}
 .field-input{height:var(--tap)}
-.field-area{padding:14px;min-height:110px;font-size:15px;line-height:1.7;resize:vertical}
-.field-input:focus,.field-area:focus{background:var(--paper);border-color:var(--till);outline:none}
+.field-area{padding:13px 14px;min-height:104px;font-size:15px;line-height:1.7;resize:vertical}
+.field-input:focus,.field-area:focus{border-color:var(--credit);outline:none}
+select.field-input{appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-faint) 50%),
+    linear-gradient(135deg,var(--ink-faint) 50%,transparent 50%);
+  background-position:16px calc(50% + 1px),21px calc(50% + 1px);
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .field-hint{font-size:12px;color:var(--ink-soft);margin:6px 0 0;line-height:1.6}
-select.field-input{appearance:none}
 
-.btn-primary{width:100%;height:var(--tap);margin-top:8px;font-family:var(--font-ui);
-  font-size:17px;font-weight:600;color:#fff;background:var(--till);border:none;
-  border-radius:var(--radius);cursor:pointer;transition:background .12s}
-.btn-primary:hover:not(:disabled){background:var(--till-deep)}
-.btn-primary:disabled{background:var(--ink-soft);cursor:not-allowed}
-.btn-ghost{height:44px;padding:0 18px;font-family:var(--font-ui);font-size:15px;
-  color:var(--ink);background:transparent;border:1px solid var(--line);
-  border-radius:var(--radius);cursor:pointer}
+.btn-primary{width:100%;height:var(--tap);font-family:var(--font-display);font-size:16px;
+  font-weight:600;color:#fff;background:var(--credit);border:none;border-radius:var(--r-sm);
+  cursor:pointer;transition:background .12s}
+.btn-primary:hover:not(:disabled){background:var(--credit-deep)}
+.btn-primary:disabled{background:var(--ink-faint);cursor:not-allowed}
+.btn-mini{height:36px;padding:0 13px;font-size:13px;font-weight:600;color:var(--ink);
+  background:var(--card);border:1.5px solid var(--line);border-radius:var(--r-sm);
+  cursor:pointer;white-space:nowrap;transition:border-color .12s,color .12s}
+.btn-mini:hover:not(:disabled){border-color:var(--ink-soft)}
+.btn-mini[data-danger="true"]:hover:not(:disabled){color:var(--debit);border-color:var(--debit)}
+.btn-mini:disabled{opacity:.5;cursor:not-allowed}
 
-.alert-box{display:flex;gap:10px;padding:12px 14px;margin-bottom:18px;font-size:14px;
-  line-height:1.5;color:var(--alert);background:#fdf3f2;border-inline-start:3px solid var(--alert);
-  border-radius:0 var(--radius) var(--radius) 0}
-.alert-box[data-tone="ok"]{color:var(--till-deep);background:#e9f4ef;border-color:var(--till)}
+.alert-box{display:flex;gap:10px;padding:12px 14px;margin-bottom:16px;font-size:14px;
+  line-height:1.6;color:var(--debit);background:var(--debit-wash);
+  border-inline-start:3px solid var(--debit);border-radius:0 var(--r-sm) var(--r-sm) 0}
+.alert-box[data-tone="ok"]{color:var(--credit-deep);background:var(--credit-wash);
+  border-color:var(--credit)}
 .alert-box[hidden]{display:none}
 
-.counter-foot{display:flex;justify-content:space-between;margin-top:24px;padding-top:16px;
-  border-top:1px dashed var(--line);font-family:var(--font-mono);font-size:11px;
-  color:var(--ink-soft);direction:ltr}
-
-.vault{min-height:100dvh;display:grid;place-items:center;padding:24px;
-  background:var(--vault);color:var(--vault-ink)}
-.vault-card{width:100%;max-width:340px}
-.vault-field{margin-bottom:14px}
-.vault-input{width:100%;height:50px;padding:0 14px;font-family:var(--font-mono);font-size:15px;
-  letter-spacing:.05em;color:var(--vault-ink);background:var(--vault-panel);
-  border:1px solid var(--vault-line);border-radius:2px;transition:border-color .15s}
-.vault-input::placeholder{color:var(--vault-dim);letter-spacing:.12em}
-.vault-input:focus{border-color:var(--vault-ink);outline:none}
-.vault-btn{width:100%;height:50px;margin-top:6px;font-family:var(--font-mono);font-size:14px;
-  letter-spacing:.1em;color:var(--vault);background:var(--vault-ink);border:none;
-  border-radius:2px;cursor:pointer}
-.vault-btn:disabled{color:var(--vault-dim);background:var(--vault-line);cursor:not-allowed}
-.vault-error{font-family:var(--font-mono);font-size:12px;color:#d8756c;margin:0 0 14px;min-height:16px}
-
-.shell{max-width:720px;margin:0 auto;padding:20px 16px 80px}
-.card{background:var(--paper);border:1px solid var(--line);border-radius:6px;
-  padding:20px;margin-bottom:16px}
-.card h2{margin:0 0 4px;font-size:17px}
-.card p.muted{margin:0 0 16px;font-size:13px;color:var(--ink-soft);line-height:1.6}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:14px 16px;background:var(--ink);color:#fff}
-.topbar strong{font-size:15px}
-.topbar span{font-family:var(--font-mono);font-size:11px;opacity:.7;display:block}
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
-.chips li{font-family:var(--font-mono);font-size:11px;padding:4px 8px;
-  background:var(--field);border:1px solid var(--line);border-radius:2px;direction:ltr}
-
-.gate-backdrop{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;
-  background:rgba(10,16,26,.72);backdrop-filter:blur(3px)}
-.gate-panel{width:100%;max-width:520px;max-height:88dvh;display:flex;flex-direction:column;
-  background:var(--paper);border-radius:6px;overflow:hidden}
-.gate-head{padding:18px 22px 14px;border-bottom:1px solid var(--line)}
-.gate-tag{display:inline-block;padding:3px 9px;margin-bottom:10px;font-family:var(--font-mono);
-  font-size:11px;letter-spacing:.1em;border-radius:2px}
-.gate-tag[data-severity="INFO"]{color:var(--till-deep);background:#e6f2ed}
-.gate-tag[data-severity="WARNING"]{color:var(--amber);background:#fbf1e0}
-.gate-tag[data-severity="CRITICAL"]{color:#fff;background:var(--alert)}
-.gate-title{font-size:20px;font-weight:700;margin:0}
-.gate-body{padding:20px 22px;overflow-y:auto;font-size:15px;line-height:1.75;white-space:pre-wrap}
-.gate-foot{padding:16px 22px;border-top:1px solid var(--line);background:var(--field)}
-.gate-count{font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);
-  margin:0 0 10px;direction:ltr;text-align:right}
-
-.idle-bar{position:fixed;inset-block-end:0;inset-inline:0;z-index:90;display:flex;
-  align-items:center;justify-content:center;gap:14px;padding:14px 18px;font-size:15px;
-  color:#fff;background:var(--alert)}
-.idle-count{font-family:var(--font-mono);font-size:18px;font-weight:500}
-.idle-btn{padding:9px 18px;font-family:var(--font-ui);font-size:15px;font-weight:600;
-  color:var(--alert);background:#fff;border:none;border-radius:var(--radius);cursor:pointer}
-
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
-  clip:rect(0,0,0,0);white-space:nowrap;border:0}
-
-/* ═══ قائمة الفريق والفروع ═══
-   الصف بيتعامل كسطر في كشف — الاسم بالخط العادي، والمعرّف بخط
-   الآلة الكاتبة لأنه معرّف نظام مش اسم بشري.
-   الحساب المعطّل بياخد شطب خفيف، زي فاتورة ملغية في دفتر. */
-.roster{margin:0;padding:0;list-style:none;border-top:1px solid var(--line)}
+/* ═══ القوائم ═══ */
+.roster{margin:0;padding:0;list-style:none}
 .roster-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:12px 0;border-bottom:1px solid var(--line)}
+  padding:13px 0;border-bottom:1px solid var(--line-soft)}
+.roster-row:last-child{border-bottom:none}
 .roster-main{min-width:0}
 .roster-name{display:block;font-size:15px;font-weight:600;line-height:1.4}
 .roster-id{display:block;margin-top:2px;font-family:var(--font-mono);font-size:12px;
   color:var(--ink-soft);direction:ltr;text-align:right;overflow-wrap:anywhere}
 .roster-side{display:flex;align-items:center;gap:8px;flex-shrink:0}
-.roster-row[data-inactive="true"] .roster-name{text-decoration:line-through;
-  text-decoration-thickness:1px;color:var(--ink-soft)}
-.roster-row[data-inactive="true"] .roster-id{opacity:.6}
+.roster-row[data-inactive="true"] .roster-name{text-decoration:line-through;color:var(--ink-faint)}
+.roster-row[data-inactive="true"] .roster-id{opacity:.55}
 
 .tag{display:inline-block;padding:3px 8px;font-family:var(--font-mono);font-size:11px;
-  letter-spacing:.06em;border-radius:2px;white-space:nowrap;
-  color:var(--ink-soft);background:var(--field);border:1px solid var(--line)}
-.tag[data-variant="off"]{color:var(--alert);background:#fdf3f2;border-color:#f0d5d2}
+  border-radius:3px;white-space:nowrap;color:var(--ink-soft);background:var(--surface);
+  border:1px solid var(--line)}
+.tag[data-variant="off"]{color:var(--debit);background:var(--debit-wash);border-color:#F0D2D7}
+.tag[data-variant="wait"]{color:var(--thread);background:var(--thread-wash);border-color:#EBD9AE}
 
-.btn-mini{height:36px;padding:0 12px;font-family:var(--font-ui);font-size:13px;
-  font-weight:600;color:var(--ink);background:var(--paper);border:1px solid var(--line);
-  border-radius:var(--radius);cursor:pointer;white-space:nowrap;
-  transition:border-color .12s,color .12s}
-.btn-mini:hover:not(:disabled){border-color:var(--ink-soft)}
-.btn-mini[data-danger="true"]:hover:not(:disabled){color:var(--alert);border-color:var(--alert)}
-.btn-mini:disabled{opacity:.5;cursor:not-allowed}
-
-/* ═══ قفل الشاشة ═══
-   شاشة كاملة معتمة فوق الصفحة — **مش** انتقال لصفحة تانية.
-   ده مقصود: سلة البيع بتفضل في مكانها في الـ DOM ورا القفل.
-   تشبيه: ستارة بتتسحب على الكاونتر، مش قفل المحل. */
-.lock-screen{position:fixed;inset:0;z-index:200;display:grid;place-items:center;
-  padding:24px;background:var(--ink);color:#fff}
-.lock-card{width:100%;max-width:320px;text-align:center}
-.lock-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;
-  color:rgba(255,255,255,.5);margin:0 0 12px}
-.lock-title{font-size:22px;font-weight:700;margin:0 0 6px}
-.lock-who{font-size:14px;color:rgba(255,255,255,.65);margin:0 0 24px}
-.lock-input{width:100%;height:var(--tap);padding:0 14px;font-family:var(--font-ui);
-  font-size:17px;color:#fff;background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.18);border-radius:var(--radius);text-align:center}
-.lock-input:focus{outline:none;border-color:#fff;background:rgba(255,255,255,.13)}
-.lock-btn{width:100%;height:var(--tap);margin-top:10px;font-family:var(--font-ui);
-  font-size:17px;font-weight:600;color:var(--ink);background:#fff;border:none;
-  border-radius:var(--radius);cursor:pointer}
-.lock-btn:disabled{opacity:.5;cursor:not-allowed}
-.lock-error{font-size:14px;color:#f2a29b;margin:14px 0 0;min-height:20px}
-.lock-exit{margin-top:20px;font-size:13px;color:rgba(255,255,255,.5);
-  background:none;border:none;text-decoration:underline;cursor:pointer;
-  font-family:var(--font-ui)}
-
-/* ═══ الخزينة ═══
-   الرصيد بيتعرض بخط الآلة الكاتبة (tabular) عشان الأرقام تتصفّ
-   تحت بعضها في عمود — زي كشف حساب بنكي بالظبط. الخط العادي
-   بيدّي كل رقم عرض مختلف والعمود يطلع مكسور. */
-.balances{display:grid;gap:10px;margin-bottom:4px}
-.bal-card{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
-  padding:14px 16px;background:var(--field);border:1px solid var(--line);
-  border-radius:var(--radius)}
+/* ═══ الأرصدة ═══
+   المبلغ بخط العرض بحجم كبير وخيط ذهبي فوقه، زي رقم الفئة على
+   البنكنوت. ده المكان الوحيد اللي بنصرف فيه جرأة بصرية. */
+.balances{display:grid;gap:10px}
+.bal-card{padding:15px var(--pad);background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r);border-top:2px solid var(--thread)}
 .bal-name{font-size:14px;font-weight:600}
-.bal-meta{display:block;font-family:var(--font-mono);font-size:11px;
-  color:var(--ink-soft);margin-top:2px;direction:ltr;text-align:right}
-.bal-amount{font-family:var(--font-mono);font-size:20px;font-weight:500;
-  font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}
-.bal-amount[data-negative="true"]{color:var(--alert)}
+.bal-meta{display:block;font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);
+  margin-top:2px;direction:ltr;text-align:right}
+.bal-amount{display:block;margin-top:10px;font-family:var(--font-display);font-size:30px;
+  font-weight:600;line-height:1;font-variant-numeric:tabular-nums;direction:ltr;
+  text-align:right;color:var(--credit-deep)}
+.bal-amount[data-negative="true"]{color:var(--debit)}
+.bal-cur{font-family:var(--font-ui);font-size:14px;font-weight:500;color:var(--ink-faint);
+  margin-inline-start:6px}
+.bal-total{border-top-color:var(--ground);background:var(--ground);color:#fff}
+.bal-total .bal-name{color:rgba(255,255,255,.72)}
+.bal-total .bal-amount{color:#fff}
+.bal-total .bal-cur{color:rgba(255,255,255,.5)}
 
+/* ═══ الحركات ═══ */
 .mv-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-  padding:12px 0;border-bottom:1px solid var(--line)}
+  padding:13px 0;border-bottom:1px solid var(--line-soft)}
+.mv-row:last-child{border-bottom:none}
 .mv-main{min-width:0;flex:1}
 .mv-title{font-size:14px;font-weight:600;line-height:1.5}
 .mv-sub{display:block;font-size:12px;color:var(--ink-soft);margin-top:3px;line-height:1.6}
-.mv-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.mv-side{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex-shrink:0}
 .mv-amount{font-family:var(--font-mono);font-size:15px;font-weight:500;
   font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}
-.mv-amount[data-dir="IN"]{color:var(--till)}
-.mv-amount[data-dir="OUT"]{color:var(--alert)}
-.mv-row[data-status="PENDING"]{background:#fdfaf3}
-.mv-row[data-status="REJECTED"] .mv-title{text-decoration:line-through;color:var(--ink-soft)}
+.mv-amount[data-dir="IN"]{color:var(--credit)}
+.mv-amount[data-dir="OUT"]{color:var(--debit)}
+.mv-row[data-status="PENDING"]{background:var(--thread-wash);
+  margin-inline:calc(var(--pad) * -1);padding-inline:var(--pad)}
+.mv-row[data-status="REJECTED"] .mv-title{text-decoration:line-through;color:var(--ink-faint)}
 .mv-actions{display:flex;gap:6px}
 
-.nav-links{display:flex;gap:8px;padding:12px 16px;background:var(--paper);
-  border-bottom:1px solid var(--line);overflow-x:auto}
-.nav-links a{padding:8px 14px;font-size:14px;font-weight:600;color:var(--ink-soft);
-  text-decoration:none;border-radius:var(--radius);white-space:nowrap}
-.nav-links a[aria-current="page"]{color:var(--paper);background:var(--ink)}
+.empty{padding:26px 16px;text-align:center}
+.empty-title{font-family:var(--font-display);font-size:15px;font-weight:600;margin:0 0 6px}
+.empty-note{font-size:13px;color:var(--ink-soft);line-height:1.65;margin:0}
+.muted{font-size:13px;color:var(--ink-soft);line-height:1.65;margin:0 0 14px}
 
+/* ═══ نافذة الإعلان الإلزامي ═══ */
+.gate-backdrop{position:fixed;inset:0;z-index:100;display:grid;place-items:center;
+  padding:18px;background:rgba(14,42,51,.76);backdrop-filter:blur(3px)}
+.gate-panel{width:100%;max-width:520px;max-height:88dvh;display:flex;flex-direction:column;
+  background:var(--card);border-radius:var(--r);overflow:hidden}
+.gate-head{padding:18px var(--pad) 14px;border-bottom:1px solid var(--line)}
+.gate-tag{display:inline-block;padding:3px 9px;margin-bottom:10px;font-family:var(--font-mono);
+  font-size:11px;border-radius:3px}
+.gate-tag[data-severity="INFO"]{color:var(--credit-deep);background:var(--credit-wash)}
+.gate-tag[data-severity="WARNING"]{color:var(--thread);background:var(--thread-wash)}
+.gate-tag[data-severity="CRITICAL"]{color:#fff;background:var(--debit)}
+.gate-title{font-family:var(--font-display);font-size:20px;font-weight:700;margin:0}
+.gate-body{padding:18px var(--pad);overflow-y:auto;font-size:15px;line-height:1.8;
+  white-space:pre-wrap}
+.gate-foot{padding:15px var(--pad);border-top:1px solid var(--line);background:var(--surface)}
+.gate-count{font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);margin:0 0 10px;
+  direction:ltr;text-align:right}
+
+/* ═══ شريط تحذير الخمول ═══ */
+.idle-bar{position:fixed;inset-block-end:0;inset-inline:0;z-index:90;display:flex;
+  align-items:center;justify-content:center;gap:12px;padding:14px 16px;
+  padding-bottom:calc(14px + env(safe-area-inset-bottom));font-size:15px;color:#fff;
+  background:var(--debit)}
+.idle-count{font-family:var(--font-mono);font-size:18px;font-weight:500}
+.idle-btn{padding:9px 17px;font-size:15px;font-weight:600;color:var(--debit);background:#fff;
+  border:none;border-radius:var(--r-sm);cursor:pointer}
+
+/* ═══ قفل الشاشة ═══ */
+.lock-screen{position:fixed;inset:0;z-index:200;display:grid;place-items:center;
+  padding:24px;background:var(--ground);color:#fff}
+.lock-card{width:100%;max-width:320px;text-align:center}
+.lock-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;
+  color:rgba(255,255,255,.45);margin:0 0 12px}
+.lock-title{font-family:var(--font-display);font-size:22px;font-weight:600;margin:0 0 6px}
+.lock-who{font-size:14px;color:rgba(255,255,255,.62);margin:0 0 24px;line-height:1.6}
+.lock-input{width:100%;height:var(--tap);padding:0 14px;font-family:var(--font-ui);
+  font-size:17px;color:#fff;background:rgba(255,255,255,.08);
+  border:1.5px solid rgba(255,255,255,.2);border-radius:var(--r-sm);text-align:center}
+.lock-input:focus{outline:none;border-color:#fff;background:rgba(255,255,255,.14)}
+.lock-btn{width:100%;height:var(--tap);margin-top:10px;font-family:var(--font-display);
+  font-size:16px;font-weight:600;color:var(--ground);background:#fff;border:none;
+  border-radius:var(--r-sm);cursor:pointer}
+.lock-btn:disabled{opacity:.5;cursor:not-allowed}
+.lock-error{font-size:14px;color:#F2A9AF;margin:14px 0 0;min-height:20px}
+.lock-exit{margin-top:20px;font-size:13px;color:rgba(255,255,255,.5);background:none;
+  border:none;text-decoration:underline;cursor:pointer;font-family:var(--font-ui)}
+
+/* ═══ الدخول ═══ */
+.counter{min-height:100dvh;display:grid;place-items:center;padding:24px 16px;
+  background:var(--surface)}
+.counter-card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);
+  border-top:none;padding:30px 26px 26px;border-radius:0 0 var(--r) var(--r);
+  box-shadow:0 20px 50px -30px rgba(14,42,51,.55)}
+.receipt-edge{width:100%;max-width:400px;height:11px;display:block;color:var(--card)}
+.counter-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;
+  color:var(--ink-faint);margin:0 0 6px;direction:ltr;text-align:right}
+.counter-title{font-family:var(--font-display);font-size:26px;font-weight:700;
+  letter-spacing:-.01em;margin:0 0 4px}
+.counter-sub{font-size:14px;color:var(--ink-soft);margin:0 0 24px;line-height:1.6}
+.counter-foot{display:flex;justify-content:space-between;margin-top:22px;padding-top:15px;
+  border-top:1px dashed var(--line);font-family:var(--font-mono);font-size:11px;
+  color:var(--ink-faint);direction:ltr}
+
+.vault{min-height:100dvh;display:grid;place-items:center;padding:24px;background:#080B0D;
+  color:#B9C4C7}
+.vault-card{width:100%;max-width:330px}
+.vault-field{margin-bottom:13px}
+.vault-input{width:100%;height:50px;padding:0 14px;font-family:var(--font-mono);font-size:15px;
+  letter-spacing:.05em;color:#B9C4C7;background:#0F1417;border:1px solid #1C2529;
+  border-radius:3px;transition:border-color .15s}
+.vault-input::placeholder{color:#4C5A5F;letter-spacing:.12em}
+.vault-input:focus{border-color:#B9C4C7;outline:none}
+.vault-btn{width:100%;height:50px;margin-top:6px;font-family:var(--font-mono);font-size:14px;
+  letter-spacing:.1em;color:#080B0D;background:#B9C4C7;border:none;border-radius:3px;
+  cursor:pointer}
+.vault-btn:disabled{color:#4C5A5F;background:#1C2529;cursor:not-allowed}
+.vault-error{font-family:var(--font-mono);font-size:12px;color:#C97B7B;margin:0 0 13px;
+  min-height:16px}
+
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+@media (max-width:360px){.tiles{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 `;
