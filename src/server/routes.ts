@@ -38,8 +38,21 @@ import {
   recordMovement,
   reviewMovement,
 } from '../application/use-cases/treasury';
-import { MoneyError, parseMoneyToPiastres } from '../domain/money';
-import type { MovementType } from '../application/ports';
+import {
+  createProduct,
+  listProducts,
+  listSellableProducts,
+  restockProduct,
+  updateProduct,
+} from '../application/use-cases/products';
+import { createSale, getSale, listSales } from '../application/use-cases/sales';
+import {
+  MoneyError,
+  parseCostToPiastres,
+  parseCount,
+  parseMoneyToPiastres,
+} from '../domain/money';
+import type { ManualMovementType, SaleLineInput } from '../application/ports';
 import {
   buildContainer,
   clearAuthCookies,
@@ -490,7 +503,18 @@ userRoutes.post(
 
 export const treasuryRoutes = new Hono<AppBindings>();
 
-const MOVEMENT_TYPES: MovementType[] = [
+/**
+ * ⚠ لاحظ `ManualMovementType` مش `MovementType`.
+ *
+ * نوع البيع (SALE) موجود في النظام لكنه **مش** في القائمة دي،
+ * ومستحيل يتضاف لها: النوع نفسه بيستبعده. لو حد حاول يبعت
+ * type: "SALE" للمسار ده، الفحص تحت هيرفضه — والمترجم كان هيرفض
+ * حتى محاولة كتابته هنا من الأساس.
+ *
+ * السبب: حركة البيع بتتولّد مع الفاتورة وخصم المخزون في عملية
+ * واحدة. لو اتسجّلت لوحدها، هتبقى فلوس داخلة بلا بضاعة خرجت.
+ */
+const MOVEMENT_TYPES: ManualMovementType[] = [
   'DEPOSIT',
   'WITHDRAWAL',
   'EXPENSE',
@@ -512,7 +536,7 @@ treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE
   const body = await readJson<MovementBody>(c);
 
   if (!body.treasuryId) throw Errors.validation('اختار الخزينة.');
-  if (!MOVEMENT_TYPES.includes(body.type as MovementType)) {
+  if (!MOVEMENT_TYPES.includes(body.type as ManualMovementType)) {
     throw Errors.validation('نوع الحركة غير معروف.');
   }
 
@@ -528,7 +552,7 @@ treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE
   const container = buildContainer(c.env);
   const result = await recordMovement(container.treasury, c.get('user'), {
     treasuryId: body.treasuryId,
-    type: body.type as MovementType,
+    type: body.type as ManualMovementType,
     amountPiastres,
     expenseReasonId: body.expenseReasonId ?? null,
     relatedUserId: body.relatedUserId ?? null,
@@ -596,5 +620,238 @@ treasuryRoutes.get(
     const statement = await getSalaryStatement(container.treasury, c.get('user'), userId, from, to);
 
     return c.json({ ok: true, statement });
+  },
+);
+
+
+// ═══════════════════ 6) المنتجات ═══════════════════
+
+export const productRoutes = new Hono<AppBindings>();
+
+/**
+ * قائمة المنتجات.
+ *
+ * ⚠ التكلفة بتتحدّد في حالة الاستخدام من صلاحية `profit.view_real`،
+ * والحجب بيحصل في طبقة قاعدة البيانات. المسار ده ما بيعملش أي
+ * فلترة على الحقول — لو عمل، هيبقى عندنا مكانين للحقيقة.
+ */
+productRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listProducts(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+/** قائمة شاشة الكاشير: المفعّل واللي فيه كمية بس */
+productRoutes.get(
+  '/sellable',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listSellableProducts(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+interface ProductBody {
+  name?: string;
+  price?: string;
+  cost?: string;
+  quantity?: string;
+  branchId?: string | null;
+  isActive?: boolean;
+}
+
+productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }), async (c) => {
+  const body = await readJson<ProductBody>(c);
+
+  // التحويل من كلام المستخدم لأرقام بيحصل هنا، في نقطة واحدة.
+  // حالة الاستخدام بتستلم قروش وأعداد صحيحة وخلاص.
+  let pricePiastres: number;
+  let costPiastres: number;
+  let quantity: number;
+
+  try {
+    pricePiastres = parseMoneyToPiastres(body.price ?? '');
+    costPiastres = parseCostToPiastres(body.cost);
+    quantity = body.quantity === undefined || body.quantity === null || body.quantity === ''
+      ? 0
+      : parseCount(body.quantity);
+  } catch (error) {
+    throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
+  }
+
+  const container = buildContainer(c.env);
+  const created = await createProduct(container.products, c.get('user'), {
+    name: body.name ?? '',
+    pricePiastres,
+    costPiastres,
+    quantityOnHand: quantity,
+    branchId: body.branchId ?? null,
+  });
+
+  return c.json({ ok: true, id: created.id }, 201);
+});
+
+/** تعديل منتج — الحقول اللي مش مبعوتة بتفضل زي ما هي */
+productRoutes.post(
+  '/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المنتج مفقود.');
+
+    const body = await readJson<ProductBody>(c);
+    const patch: {
+      name?: string;
+      pricePiastres?: number;
+      costPiastres?: number;
+      isActive?: boolean;
+    } = {};
+
+    try {
+      if (typeof body.name === 'string') patch.name = body.name;
+      if (typeof body.price === 'string' && body.price.trim()) {
+        patch.pricePiastres = parseMoneyToPiastres(body.price);
+      }
+      if (typeof body.cost === 'string') {
+        patch.costPiastres = parseCostToPiastres(body.cost);
+      }
+      if (typeof body.isActive === 'boolean') patch.isActive = body.isActive;
+    } catch (error) {
+      throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
+    }
+
+    const container = buildContainer(c.env);
+    await updateProduct(container.products, c.get('user'), id, patch);
+
+    return c.json({ ok: true });
+  },
+);
+
+/** توريد أو خصم كمية — بفرق مش برقم نهائي */
+productRoutes.post(
+  '/:id/stock',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المنتج مفقود.');
+
+    const body = await readJson<{ delta?: string }>(c);
+
+    let delta: number;
+    try {
+      delta = parseCount(body.delta, { allowNegative: true });
+    } catch (error) {
+      throw Errors.validation(error instanceof MoneyError ? error.message : 'الكمية غير صالحة.');
+    }
+
+    const container = buildContainer(c.env);
+    const result = await restockProduct(container.products, c.get('user'), id, delta);
+
+    return c.json({ ok: true, quantityOnHand: result.quantityOnHand });
+  },
+);
+
+
+// ═══════════════════ 7) البيع ═══════════════════
+
+export const saleRoutes = new Hono<AppBindings>();
+
+interface SaleBody {
+  treasuryId?: string;
+  items?: Array<{ productId?: string; quantity?: number | string }>;
+  customerName?: string | null;
+  customerPhone?: string | null;
+}
+
+/**
+ * إنشاء بيع.
+ *
+ * ⚠ مفيش حقل staffId في الجسم عن قصد. الموظّف بيتاخد من الجلسة
+ * جوّه حالة الاستخدام. لو قبلناه من الطلب، أي حد يقدر يسجّل بيع
+ * باسم زميله.
+ */
+saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), async (c) => {
+  const body = await readJson<SaleBody>(c);
+
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    throw Errors.validation('السلة فاضية.');
+  }
+
+  let items: SaleLineInput[];
+  try {
+    items = body.items.map((line) => ({
+      productId: typeof line?.productId === 'string' ? line.productId : '',
+      quantity: parseCount(line?.quantity),
+    }));
+  } catch (error) {
+    throw Errors.validation(error instanceof MoneyError ? error.message : 'السلة غير صالحة.');
+  }
+
+  const container = buildContainer(c.env);
+  const result = await createSale(container.sales, c.get('user'), {
+    treasuryId: body.treasuryId ?? '',
+    items,
+    customerName: body.customerName ?? null,
+    customerPhone: body.customerPhone ?? null,
+  });
+
+  return c.json(
+    {
+      ok: true,
+      saleId: result.saleId,
+      totalPiastres: result.totalPiastres,
+      itemCount: result.itemCount,
+      message: 'تم البيع.',
+    },
+    201,
+  );
+});
+
+/**
+ * قائمة الفواتير.
+ *
+ * تلات درجات رؤية: كل الفروع · الفرع · فواتيري أنا.
+ * `requireAny` معناها إن أي واحدة من التلاتة بتفتح الباب، وحالة
+ * الاستخدام هي اللي بتحدّد بعد كده إنت تشوف قد إيه.
+ */
+saleRoutes.get(
+  '/',
+  requireAuth({
+    requireAny: [
+      PERMISSIONS.SALES_VIEW_OWN,
+      PERMISSIONS.SALES_VIEW_BRANCH,
+      PERMISSIONS.SALES_VIEW_ALL,
+    ],
+    touchActivity: false,
+  }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listSales(container.sales, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+saleRoutes.get(
+  '/:id',
+  requireAuth({
+    requireAny: [
+      PERMISSIONS.SALES_VIEW_OWN,
+      PERMISSIONS.SALES_VIEW_BRANCH,
+      PERMISSIONS.SALES_VIEW_ALL,
+    ],
+    touchActivity: false,
+  }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const container = buildContainer(c.env);
+    const sale = await getSale(container.sales, c.get('user'), id);
+    return c.json({ ok: true, sale });
   },
 );
