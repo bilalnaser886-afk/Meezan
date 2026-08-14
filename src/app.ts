@@ -138,19 +138,36 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
 
   // نجيبهم هنا على الخادم بدل fetch من المتصفح: أسرع (رحلة واحدة
   // بدل تلاتة) وأبسط للقوائم اللي محتاجة تتعرض فوراً
-  const [team, branchOptions, allBranches] = await Promise.all([
+  const canApproveExpenses = user.permissions.includes(PERMISSIONS.EXPENSE_APPROVE);
+
+  const [team, branchOptions, allBranches, pending] = await Promise.all([
     canViewUsers ? listTeam(container.users, user) : Promise.resolve([]),
     canCreateUsers ? listBranchesForActor(container.users, user) : Promise.resolve([]),
     canManageBranches ? listBranches(container.branchOps, user) : Promise.resolve([]),
+    canApproveExpenses
+      ? listMovements(container.treasury, user, 'PENDING')
+      : Promise.resolve([]),
   ]);
+
+  // اسم الفرع للعرض في القائمة.
+  // ⚠ الموظّف مالوش صلاحية branch.view، فالنداء هيرمي خطأ عنده.
+  // بنمسكه ونرجّع null، والقائمة بتخفي السطر بدل ما تعرض شرطة.
+  const branchLabel =
+    user.roleKey === 'SUPER_ADMIN'
+      ? 'كل الفروع'
+      : ((await listBranches(container.branchOps, user).catch(() => []))[0]?.name ?? null);
 
   return c.html(
     dashboardPage({
       currentUserId: user.id,
       fullName: user.fullName,
+      username: user.username,
+      branchLabel,
       roleKey: user.roleKey,
       roleLabel: ROLE_LABELS[user.roleKey] ?? user.roleKey,
       permissions: user.permissions,
+      pendingApprovals: pending.length,
+      canApproveExpenses,
       canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
       canViewUsers,
       canCreateUsers,
@@ -181,6 +198,12 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const canApprove = user.permissions.includes(PERMISSIONS.EXPENSE_APPROVE);
 
+  // نفس الحكاية: الموظّف مالوش branch.view فبنمسك الخطأ
+  const branchName =
+    user.roleKey === 'SUPER_ADMIN'
+      ? 'كل الفروع'
+      : ((await listBranches(container.branchOps, user).catch(() => []))[0]?.name ?? null);
+
   const [balances, movements, reasons, team, pending] = await Promise.all([
     listBalances(container.treasury, user),
     listMovements(container.treasury, user),
@@ -195,6 +218,8 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
     treasuryPage({
       currentUserId: user.id,
       fullName: user.fullName,
+      username: user.username,
+      branchLabel: branchName,
       roleKey: user.roleKey,
       canApprove,
       balances,
