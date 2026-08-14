@@ -18,6 +18,8 @@ import type { AnnouncementDeps } from '../application/use-cases/announcements';
 import type { UserDeps } from '../application/use-cases/users';
 import type { BranchDeps } from '../application/use-cases/branches';
 import type { TreasuryDeps } from '../application/use-cases/treasury';
+import type { ProductDeps } from '../application/use-cases/products';
+import type { SaleDeps } from '../application/use-cases/sales';
 import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
@@ -30,7 +32,9 @@ import {
   createDb,
   createExpenseReasonRepository,
   createMovementRepository,
+  createProductRepository,
   createRateLimiter,
+  createSaleRepository,
   createSessionRepository,
   createTreasuryRepository,
   createUserRepository,
@@ -45,6 +49,8 @@ export interface Container {
   users: UserDeps;
   branchOps: BranchDeps;
   treasury: TreasuryDeps;
+  products: ProductDeps;
+  sales: SaleDeps;
   branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
@@ -57,6 +63,7 @@ export function buildContainer(env: Env): Container {
   const userRepo = createUserRepository(db);
   const branchRepo = createBranchRepository(db);
   const sessionRepo = createSessionRepository(db);
+  const treasuryRepo = createTreasuryRepository(db);
 
   return {
     db,
@@ -89,9 +96,22 @@ export function buildContainer(env: Env): Container {
       audit,
     },
     treasury: {
-      treasuries: createTreasuryRepository(db),
+      treasuries: treasuryRepo,
       movements: createMovementRepository(db),
       expenseReasons: createExpenseReasonRepository(db),
+      users: userRepo,
+      clock: systemClock,
+      audit,
+    },
+    products: {
+      products: createProductRepository(db),
+      branches: branchRepo,
+      clock: systemClock,
+      audit,
+    },
+    sales: {
+      sales: createSaleRepository(db),
+      treasuries: treasuryRepo,
       users: userRepo,
       clock: systemClock,
       audit,
