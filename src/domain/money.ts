@@ -21,12 +21,18 @@
 /** أقصى مبلغ مسموح في حركة واحدة: 100 مليون جنيه. حارس ضد صفر زيادة بالغلط. */
 const MAX_PIASTRES = 10_000_000_000;
 
+/** أقصى عدد وحدات في خانة واحدة. حارس زي اللي فوق بالظبط. */
+const MAX_COUNT = 1_000_000;
+
 /**
  * تحويل الأرقام العربية الهندية (٠١٢٣) لأرقام إنجليزية.
  * لوحة المفاتيح العربية على الموبايل بتكتب بيها افتراضيًا، ولو
  * مرجّعناهاش المستخدم هيكتب رقم صح والنظام يقوله "غير صالح".
+ *
+ * ⚠ مُصدَّرة عشان أي حقل رقمي في النظام يستخدم نفس التطبيع.
+ * لو اتكررت في مكان تاني، هيبقى عندنا شاشة بتقبل ٥ وشاشة بترفضها.
  */
-function normalizeDigits(input: string): string {
+export function normalizeDigits(input: string): string {
   return input
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
@@ -71,6 +77,63 @@ export function parseMoneyToPiastres(raw: string): number {
   if (total > MAX_PIASTRES) throw new MoneyError('المبلغ أكبر من الحد المسموح.');
 
   return total;
+}
+
+/**
+ * التكلفة — زي المبلغ بالظبط، بس **الصفر مقبول**.
+ *
+ * ══ ليه دالة منفصلة؟ ══
+ * `parseMoneyToPiastres` بترفض الصفر عن قصد، لأنها متعمّلة
+ * للحركات المالية اللي مبلغها لازم يكون موجب (مفيش مصروف بصفر).
+ *
+ * لكن تكلفة المنتج ممكن تكون صفر فعلاً: عيّنة، هدية من المورّد،
+ * أو حاجة لسه ما اتسعّرتش. ولو أجبرنا المستخدم يكتب رقم موجب،
+ * هيكتب قرش واحد عشان يعدّي — وده تلويث للبيانات أسوأ من الصفر.
+ *
+ * تشبيه: خانة "المبلغ المدفوع" في إيصال لازم تكون موجبة.
+ * خانة "الخصم" ممكن تكون صفر بشكل طبيعي تمامًا.
+ */
+export function parseCostToPiastres(raw: string | null | undefined): number {
+  const text = String(raw ?? '').trim();
+  if (!text) return 0; // فاضية = صفر، من غير ما نزعّق للمستخدم
+
+  const cleaned = normalizeDigits(text)
+    .replace(/[\s,_]/g, '')
+    .trim();
+
+  // بنمسك الصفر بكل أشكاله (0 · 0.0 · 00.00) قبل الدالة العامة
+  if (/^0*(?:\.0{1,2})?$/.test(cleaned)) return 0;
+
+  return parseMoneyToPiastres(text);
+}
+
+/**
+ * قراءة عدد صحيح من مدخل المستخدم (كمية، عدد وحدات).
+ *
+ * `allowNegative` بتتفتح للجرد بس: المدير ممكن يخصم كمية تالفة،
+ * لكن الكاشير عمره ما يبيع كمية سالبة.
+ */
+export function parseCount(raw: unknown, options: { allowNegative?: boolean } = {}): number {
+  const cleaned = normalizeDigits(String(raw ?? ''))
+    .replace(/[\s,_]/g, '')
+    .trim();
+
+  if (!cleaned) throw new MoneyError('اكتب الكمية.');
+
+  const pattern = options.allowNegative ? /^-?\d+$/ : /^\d+$/;
+  if (!pattern.test(cleaned)) {
+    throw new MoneyError(
+      options.allowNegative
+        ? 'الكمية لازم تكون رقم صحيح (سالب للخصم).'
+        : 'الكمية لازم تكون رقم صحيح مش سالب.',
+    );
+  }
+
+  const value = Number.parseInt(cleaned, 10);
+  if (!Number.isSafeInteger(value)) throw new MoneyError('الكمية غير صالحة.');
+  if (Math.abs(value) > MAX_COUNT) throw new MoneyError('الكمية أكبر من الحد المسموح.');
+
+  return value;
 }
 
 /** عرض القروش كنص للمستخدم: 15075 → "150.75" */
