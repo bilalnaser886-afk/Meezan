@@ -154,5 +154,64 @@ select.field-input{appearance:none}
 .btn-mini[data-danger="true"]:hover:not(:disabled){color:var(--alert);border-color:var(--alert)}
 .btn-mini:disabled{opacity:.5;cursor:not-allowed}
 
+/* ═══ قفل الشاشة ═══
+   شاشة كاملة معتمة فوق الصفحة — **مش** انتقال لصفحة تانية.
+   ده مقصود: سلة البيع بتفضل في مكانها في الـ DOM ورا القفل.
+   تشبيه: ستارة بتتسحب على الكاونتر، مش قفل المحل. */
+.lock-screen{position:fixed;inset:0;z-index:200;display:grid;place-items:center;
+  padding:24px;background:var(--ink);color:#fff}
+.lock-card{width:100%;max-width:320px;text-align:center}
+.lock-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;
+  color:rgba(255,255,255,.5);margin:0 0 12px}
+.lock-title{font-size:22px;font-weight:700;margin:0 0 6px}
+.lock-who{font-size:14px;color:rgba(255,255,255,.65);margin:0 0 24px}
+.lock-input{width:100%;height:var(--tap);padding:0 14px;font-family:var(--font-ui);
+  font-size:17px;color:#fff;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.18);border-radius:var(--radius);text-align:center}
+.lock-input:focus{outline:none;border-color:#fff;background:rgba(255,255,255,.13)}
+.lock-btn{width:100%;height:var(--tap);margin-top:10px;font-family:var(--font-ui);
+  font-size:17px;font-weight:600;color:var(--ink);background:#fff;border:none;
+  border-radius:var(--radius);cursor:pointer}
+.lock-btn:disabled{opacity:.5;cursor:not-allowed}
+.lock-error{font-size:14px;color:#f2a29b;margin:14px 0 0;min-height:20px}
+.lock-exit{margin-top:20px;font-size:13px;color:rgba(255,255,255,.5);
+  background:none;border:none;text-decoration:underline;cursor:pointer;
+  font-family:var(--font-ui)}
+
+/* ═══ الخزينة ═══
+   الرصيد بيتعرض بخط الآلة الكاتبة (tabular) عشان الأرقام تتصفّ
+   تحت بعضها في عمود — زي كشف حساب بنكي بالظبط. الخط العادي
+   بيدّي كل رقم عرض مختلف والعمود يطلع مكسور. */
+.balances{display:grid;gap:10px;margin-bottom:4px}
+.bal-card{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  padding:14px 16px;background:var(--field);border:1px solid var(--line);
+  border-radius:var(--radius)}
+.bal-name{font-size:14px;font-weight:600}
+.bal-meta{display:block;font-family:var(--font-mono);font-size:11px;
+  color:var(--ink-soft);margin-top:2px;direction:ltr;text-align:right}
+.bal-amount{font-family:var(--font-mono);font-size:20px;font-weight:500;
+  font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}
+.bal-amount[data-negative="true"]{color:var(--alert)}
+
+.mv-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:12px 0;border-bottom:1px solid var(--line)}
+.mv-main{min-width:0;flex:1}
+.mv-title{font-size:14px;font-weight:600;line-height:1.5}
+.mv-sub{display:block;font-size:12px;color:var(--ink-soft);margin-top:3px;line-height:1.6}
+.mv-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.mv-amount{font-family:var(--font-mono);font-size:15px;font-weight:500;
+  font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}
+.mv-amount[data-dir="IN"]{color:var(--till)}
+.mv-amount[data-dir="OUT"]{color:var(--alert)}
+.mv-row[data-status="PENDING"]{background:#fdfaf3}
+.mv-row[data-status="REJECTED"] .mv-title{text-decoration:line-through;color:var(--ink-soft)}
+.mv-actions{display:flex;gap:6px}
+
+.nav-links{display:flex;gap:8px;padding:12px 16px;background:var(--paper);
+  border-bottom:1px solid var(--line);overflow-x:auto}
+.nav-links a{padding:8px 14px;font-size:14px;font-weight:600;color:var(--ink-soft);
+  text-decoration:none;border-radius:var(--radius);white-space:nowrap}
+.nav-links a[aria-current="page"]{color:var(--paper);background:var(--ink)}
+
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 `;
