@@ -14,13 +14,14 @@
  */
 
 import { Errors } from '../../domain/errors';
-import { LOGIN_POLICY, SESSION_POLICY } from '../../domain/config';
+import { LOGIN_POLICY, SESSION_POLICY, idleRuleFor } from '../../domain/config';
 import type {
   AuditLogger,
   AuthenticatedUser,
   Clock,
   PasswordHasher,
   RateLimiter,
+  SessionRecord,
   SessionRepository,
   TokenService,
   UserRecord,
@@ -240,24 +241,15 @@ export async function refreshSession(
     throw Errors.sessionExpired();
   }
 
-  const idleSeconds = (now.getTime() - session.lastSeenAt.getTime()) / 1000;
-  if (idleSeconds > SESSION_POLICY.IDLE_TIMEOUT_SECONDS) {
-    await sessions.revoke(session.id, 'idle_timeout', now);
-    await audit.record({
-      actorId: session.userId,
-      action: 'auth.session.idle_timeout',
-      entity: 'Session',
-      entityId: session.id,
-      metadata: { idleSeconds: Math.round(idleSeconds) },
-    });
-    throw Errors.idleTimeout();
-  }
-
+  // ترتيب مقصود: بنجيب المستخدم **قبل** تقييم الخمول، لأن القاعدة
+  // نفسها بتعتمد على دوره (10 دقايق للمدير، 30 وقفل للموظف).
   const user = await users.findById(session.userId);
   if (!user || !user.isActive || user.deletedAt) {
     await sessions.revoke(session.id, 'user_disabled', now);
     throw Errors.sessionExpired();
   }
+
+  await enforceIdlePolicy(deps, session, user.roleKey, now);
 
   const { raw: newRefresh, digest: newDigest } = await tokens.createRefreshToken();
   await sessions.rotate(session.id, newDigest, now);
@@ -303,21 +295,125 @@ export async function checkSession(
     throw Errors.sessionExpired();
   }
 
-  const idleSeconds = (now.getTime() - session.lastSeenAt.getTime()) / 1000;
-  if (idleSeconds > SESSION_POLICY.IDLE_TIMEOUT_SECONDS) {
-    await sessions.revoke(session.id, 'idle_timeout', now);
-    throw Errors.idleTimeout();
-  }
-
   const user = await users.findById(userId);
   if (!user || !user.isActive || user.deletedAt) {
     await sessions.revoke(session.id, 'user_disabled', now);
     throw Errors.sessionExpired();
   }
 
+  await enforceIdlePolicy(deps, session, user.roleKey, now);
+
   if (touch) await sessions.touch(session.id, now);
 
   return toAuthenticatedUser(user);
+}
+
+/**
+ * قفل الشاشة يدويًا.
+ * بينادها المتصفح لما مؤقّت الخمول يوصل للحد عند الموظّف، عشان
+ * الخادم يعرف بالقفل فورًا مش يستنى الطلب الجاي.
+ */
+export async function lockSession(deps: AuthDeps, sessionId: string): Promise<void> {
+  const now = deps.clock.now();
+  const session = await deps.sessions.findActiveById(sessionId);
+  if (!session) throw Errors.sessionExpired();
+  if (session.lockedAt) return; // مقفولة أصلاً — عملية متسامحة
+
+  await deps.sessions.lock(session.id, now);
+  await deps.audit.record({
+    actorId: session.userId,
+    action: 'auth.session.locked_manual',
+    entity: 'Session',
+    entityId: session.id,
+  });
+}
+
+/**
+ * فكّ القفل بكلمة المرور.
+ *
+ * ══ ليه بيشتغل بتوكن التحديث مش ببطاقة الدخول؟ ══
+ * بطاقة الدخول عمرها 5 دقايق. الشاشة ممكن تفضل مقفولة نص ساعة.
+ * فالبطاقة أكيد منتهية وقت فكّ القفل. توكن التحديث (12 ساعة)
+ * هو اللي لسه صالح، وهو المرسل تلقائيًا لمسارات /api/auth.
+ *
+ * بننفّذ حدّ محاولات هنا كمان — من غيره الشاشة المقفولة بتبقى
+ * لوحة تخمين مفتوحة لأي حد ماسك الجهاز.
+ */
+export async function unlockSession(
+  deps: AuthDeps,
+  rawRefreshToken: string,
+  password: string,
+  ctx: RequestContext,
+): Promise<LoginResult> {
+  const { users, sessions, hasher, tokens, clock, audit, rateLimiter } = deps;
+  const now = clock.now();
+
+  const digest = await tokens.digestRefreshToken(rawRefreshToken);
+  const session = await sessions.findActiveByDigest(digest);
+  if (!session) throw Errors.sessionExpired();
+
+  if (session.expiresAt <= now) {
+    await sessions.revoke(session.id, 'absolute_expiry', now);
+    throw Errors.sessionExpired();
+  }
+
+  const rateKey = `unlock:${session.id}`;
+  const retryAfter = await rateLimiter.check(rateKey, 5, 5 * 60);
+  if (retryAfter !== null) throw Errors.rateLimited(retryAfter);
+
+  const user = await users.findById(session.userId);
+  if (!user || !user.isActive || user.deletedAt) {
+    await sessions.revoke(session.id, 'user_disabled', now);
+    throw Errors.sessionExpired();
+  }
+
+  if (!(await hasher.verify(user.passwordHash, password))) {
+    await audit.record({
+      actorId: user.id,
+      action: 'auth.unlock.failed',
+      entity: 'Session',
+      entityId: session.id,
+      ipAddress: ctx.ipAddress,
+    });
+    throw Errors.invalidCredentials('bad unlock password');
+  }
+
+  // فك القفل + تصفير عدّاد الخمول في عملية واحدة
+  await sessions.unlock(session.id, now);
+  await rateLimiter.reset(rateKey);
+
+  const { raw: newRefresh, digest: newDigest } = await tokens.createRefreshToken();
+  await sessions.rotate(session.id, newDigest, now);
+
+  const authUser = toAuthenticatedUser(user);
+  const accessToken = await tokens.signAccessToken(
+    {
+      sub: user.id,
+      sid: session.id,
+      role: user.roleKey,
+      branchId: user.branchId,
+      perms: authUser.permissions,
+      ver: 1,
+    },
+    SESSION_POLICY.ACCESS_TOKEN_TTL_SECONDS,
+    deps.jwtSecret,
+  );
+
+  await audit.record({
+    actorId: user.id,
+    action: 'auth.unlock.success',
+    entity: 'Session',
+    entityId: session.id,
+    ipAddress: ctx.ipAddress,
+  });
+
+  return {
+    user: authUser,
+    accessToken,
+    refreshToken: newRefresh,
+    accessTokenExpiresAt: new Date(now.getTime() + SESSION_POLICY.ACCESS_TOKEN_TTL_SECONDS * 1000),
+    refreshTokenExpiresAt: session.expiresAt,
+  };
 }
 
 /** الخروج عملية متسامحة: ما بتفشلش أبداً من وجهة نظر المستخدم */
@@ -340,6 +436,54 @@ export async function logout(
 }
 
 // ─────────── مساعدات داخلية ───────────
+
+/**
+ * تقييم الخمول حسب دور المستخدم.
+ *
+ * الدالة دي هي **المكان الوحيد** اللي بيقرر إيه اللي يحصل لجلسة
+ * خاملة. refreshSession و checkSession الاتنين بينادوها، فمستحيل
+ * يختلفوا في السلوك — وده بالظبط نوع الاختلاف اللي بيعمل ثغرات.
+ *
+ * بترمي الخطأ المناسب وبتنفّذ الأثر (إلغاء أو قفل)، أو بترجع بهدوء
+ * لو الجلسة سليمة.
+ */
+async function enforceIdlePolicy(
+  deps: AuthDeps,
+  session: SessionRecord,
+  roleKey: string,
+  now: Date,
+): Promise<void> {
+  // الجلسة مقفولة من قبل؟ ما نلمسش حاجة — نقول مقفولة وخلاص.
+  // مهم: **مش** بنلغيها، عشان فكّ القفل يفضل ممكن.
+  if (session.lockedAt) throw Errors.sessionLocked();
+
+  const rule = idleRuleFor(roleKey);
+  const idleSeconds = (now.getTime() - session.lastSeenAt.getTime()) / 1000;
+
+  if (idleSeconds <= rule.seconds) return;
+
+  if (rule.action === 'LOCK') {
+    await deps.sessions.lock(session.id, now);
+    await deps.audit.record({
+      actorId: session.userId,
+      action: 'auth.session.locked',
+      entity: 'Session',
+      entityId: session.id,
+      metadata: { idleSeconds: Math.round(idleSeconds), roleKey },
+    });
+    throw Errors.sessionLocked();
+  }
+
+  await deps.sessions.revoke(session.id, 'idle_timeout', now);
+  await deps.audit.record({
+    actorId: session.userId,
+    action: 'auth.session.idle_timeout',
+    entity: 'Session',
+    entityId: session.id,
+    metadata: { idleSeconds: Math.round(idleSeconds), roleKey },
+  });
+  throw Errors.idleTimeout();
+}
 
 /** هاش وهمي بنفس تكلفة الهاش الحقيقي — لتثبيت زمن الرد */
 const DUMMY_HASH =
