@@ -20,6 +20,148 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { BASE_CSS } from './styles';
+import { formatPiastres } from '../domain/money';
+
+
+/**
+ * كود الخمول وقفل الشاشة — مشترك بين لوحة التحكم والخزينة.
+ *
+ * ليه مستخرج؟ لأنه كان هيتكرر في صفحتين. ولو اتكرر، أول تعديل
+ * على واحدة وهنسيان التانية بيعمل سلوك مختلف بين شاشتين في نفس
+ * النظام — وده أسوأ من كود أطول.
+ *
+ * العلامات __IDLE__ و __WARN__ و __ACTION__ بتتبدّل وقت التوليد.
+ */
+const IDLE_SHARED_JS = `
+(function () {
+  var IDLE = __IDLE__, WARN = __WARN__, ACTION = '__ACTION__';
+  var lastActivity = Date.now();
+  var locked = false;
+  var lockRoot = document.getElementById('lock-root');
+
+  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (evt) {
+    window.addEventListener(evt, function () {
+      lastActivity = Date.now();
+      if (!locked && idleRoot && idleRoot.innerHTML) idleRoot.innerHTML = '';
+    }, { passive: true });
+  });
+
+  async function endSession() {
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) {}
+    window.location.href = '/login?expired=1';
+  }
+
+  function showLock() {
+    if (locked || !lockRoot) return;
+    locked = true;
+    document.body.style.overflow = 'hidden';
+
+    lockRoot.innerHTML =
+      '<div class="lock-screen"><div class="lock-card">' +
+        '<p class="lock-eyebrow">SCREEN LOCKED</p>' +
+        '<h1 class="lock-title">الشاشة مقفولة</h1>' +
+        '<p class="lock-who">شغلك محفوظ. اكتب كلمة المرور للمتابعة.</p>' +
+        '<form id="lkf"><input class="lock-input" id="lkpw" type="password" dir="ltr" ' +
+          'autocomplete="current-password" required>' +
+          '<button class="lock-btn" id="lkbtn" type="submit">فتح</button></form>' +
+        '<p class="lock-error" id="lkerr" role="alert" aria-live="assertive"></p>' +
+        '<button class="lock-exit" id="lkout" type="button">تسجيل خروج بدل كده</button>' +
+      '</div></div>';
+
+    var pw = document.getElementById('lkpw');
+    if (pw) pw.focus();
+
+    document.getElementById('lkf').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var b = document.getElementById('lkbtn');
+      var er = document.getElementById('lkerr');
+      er.textContent = '';
+      b.disabled = true;
+      b.textContent = 'جارٍ الفتح…';
+
+      try {
+        var res = await fetch('/api/auth/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ password: pw.value })
+        });
+        var data = await res.json().catch(function () { return null; });
+
+        if (res.ok) {
+          // الستارة بتتشال والصفحة زي ما هي — مفيش reload
+          locked = false;
+          lockRoot.innerHTML = '';
+          document.body.style.overflow = '';
+          lastActivity = Date.now();
+          return;
+        }
+        er.textContent = (data && data.error && data.error.message) || 'كلمة المرور غير صحيحة.';
+        pw.value = '';
+        pw.focus();
+      } catch (err) {
+        er.textContent = 'تعذّر الاتصال بالخادم.';
+      } finally {
+        b.disabled = false;
+        b.textContent = 'فتح';
+      }
+    });
+
+    document.getElementById('lkout').addEventListener('click', endSession);
+  }
+
+  async function lockScreen() {
+    try { await fetch('/api/auth/lock', { method: 'POST', credentials: 'same-origin' }); } catch (e) {}
+    showLock();
+  }
+
+  setInterval(function () {
+    if (locked) return;
+    var remaining = Math.ceil(IDLE - (Date.now() - lastActivity) / 1000);
+
+    if (remaining <= 0) {
+      if (ACTION === 'LOCK') lockScreen(); else endSession();
+      return;
+    }
+
+    if (!idleRoot) return;
+    if (remaining <= WARN) {
+      idleRoot.innerHTML =
+        '<div class="idle-bar" role="alert" aria-live="assertive">' +
+          '<span>' + (ACTION === 'LOCK' ? 'الشاشة هتتقفل خلال' : 'هيتم تسجيل خروجك خلال') + '</span>' +
+          '<span class="idle-count">' + remaining + '</span><span>ثانية</span>' +
+          '<button class="idle-btn" id="stay" type="button">أنا هنا</button>' +
+        '</div>';
+      var stay = document.getElementById('stay');
+      if (stay) stay.addEventListener('click', function () {
+        lastActivity = Date.now();
+        idleRoot.innerHTML = '';
+        fetch('/api/auth/session', { credentials: 'same-origin' });
+      });
+    } else if (idleRoot.innerHTML) {
+      idleRoot.innerHTML = '';
+    }
+  }, 1000);
+
+  setInterval(async function () {
+    if (locked) return;
+    if ((Date.now() - lastActivity) / 1000 > IDLE / 2) return;
+
+    try {
+      var res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+      if (res.status === 423) { showLock(); return; }
+      if (res.status === 401) {
+        var again = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' });
+        if (!again.ok) window.location.href = '/login?expired=1';
+      }
+    } catch (e) {}
+  }, 60000);
+
+  var out = document.getElementById('logout');
+  if (out) out.addEventListener('click', endSession);
+})();
+`;
+
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap';
@@ -369,7 +511,83 @@ export interface DashboardData {
   allBranches: DashboardBranchFull[];
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
+  /** LOGOUT = خروج كامل · LOCK = قفل شاشة والجلسة تفضل حيّة */
+  idleAction: 'LOGOUT' | 'LOCK';
 }
+
+/**
+ * صفحة القفل المستقلة.
+ *
+ * دي مسار احتياطي: بتظهر لو المستخدم فتح رابط محمي وجلسته مقفولة
+ * أصلاً. المسار الأساسي هو الغطاء اللي بيظهر فوق اللوحة من غير
+ * انتقال — لأن الانتقال بيضيّع حالة الصفحة (والسلة لما نبنيها).
+ */
+export function lockedPage(): Html {
+  return shell({
+    title: 'الشاشة مقفولة',
+    noIndex: true,
+    script: LOCKED_PAGE_SCRIPT,
+    body: html`<main class="lock-screen">
+  <div class="lock-card">
+    <p class="lock-eyebrow">SCREEN LOCKED</p>
+    <h1 class="lock-title">الشاشة مقفولة</h1>
+    <p class="lock-who">جلستك لسه شغّالة. اكتب كلمة المرور للمتابعة.</p>
+
+    <form id="lf" novalidate>
+      <label class="sr-only" for="lpw">كلمة المرور</label>
+      <input class="lock-input" id="lpw" type="password" dir="ltr"
+        autocomplete="current-password" required autofocus>
+      <button class="lock-btn" id="lbtn" type="submit">فتح</button>
+    </form>
+
+    <p class="lock-error" id="lerr" role="alert" aria-live="assertive"></p>
+    <button class="lock-exit" id="lout" type="button">تسجيل خروج بدل كده</button>
+  </div>
+</main>`,
+  });
+}
+
+const LOCKED_PAGE_SCRIPT = `
+(function () {
+  var form = document.getElementById('lf');
+  var btn = document.getElementById('lbtn');
+  var err = document.getElementById('lerr');
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    err.textContent = '';
+    btn.disabled = true;
+    btn.textContent = 'جارٍ الفتح…';
+
+    try {
+      var res = await fetch('/api/auth/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ password: document.getElementById('lpw').value })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      if (res.ok) { window.location.href = '/app'; return; }
+
+      // 401 هنا معناه كلمة مرور غلط، مش انتهاء جلسة
+      err.textContent = (data && data.error && data.error.message) || 'كلمة المرور غير صحيحة.';
+      document.getElementById('lpw').value = '';
+      document.getElementById('lpw').focus();
+    } catch (e) {
+      err.textContent = 'تعذّر الاتصال بالخادم.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'فتح';
+    }
+  });
+
+  document.getElementById('lout').addEventListener('click', async function () {
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) {}
+    window.location.href = '/login';
+  });
+})();
+`;
 
 const BROADCAST_FORM = `
 <section class="card">
@@ -599,7 +817,7 @@ export function dashboardPage(data: DashboardData): Html {
 
   return shell({
     title: 'لوحة التحكم',
-    script: dashboardScript(data.idleTimeoutSeconds, data.idleWarningSeconds),
+    script: dashboardScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`<header class="topbar">
   <div><strong>${data.fullName}</strong><span>${data.roleKey}</span></div>
   <button class="idle-btn" id="logout" type="button">خروج</button>
@@ -621,7 +839,8 @@ export function dashboardPage(data: DashboardData): Html {
 </main>
 
 <div id="gate-root"></div>
-<div id="idle-root"></div>`,
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
   });
 }
 
@@ -633,17 +852,20 @@ export function dashboardPage(data: DashboardData): Html {
  * ختم last_seen_at. تشبيه: ساعة الحيطة بتنبّهك إن الجولة قربت
  * تخلص، لكن **الحكم** هو اللي بيوقف النزال.
  */
-function dashboardScript(idleTimeout: number, warnAt: number): string {
+function dashboardScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
   return `
+${shared}
+
 (function () {
-  var IDLE = ${idleTimeout}, WARN = ${warnAt};
-  var lastActivity = Date.now();
   var queue = [];
   var busy = false;
 
   var LABEL = { INFO: 'تعميم', WARNING: 'تنبيه', CRITICAL: 'عاجل' };
   var gateRoot = document.getElementById('gate-root');
-  var idleRoot = document.getElementById('idle-root');
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (ch) {
@@ -709,53 +931,7 @@ function dashboardScript(idleTimeout: number, warnAt: number): string {
   });
 
   // ── مراقب الخمول ──
-  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (evt) {
-    window.addEventListener(evt, function () {
-      lastActivity = Date.now();
-      if (idleRoot.innerHTML) idleRoot.innerHTML = '';
-    }, { passive: true });
-  });
 
-  async function endSession() {
-    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) {}
-    window.location.href = '/login?expired=1';
-  }
-
-  setInterval(function () {
-    var remaining = Math.ceil(IDLE - (Date.now() - lastActivity) / 1000);
-    if (remaining <= 0) { endSession(); return; }
-
-    if (remaining <= WARN) {
-      idleRoot.innerHTML =
-        '<div class="idle-bar" role="alert" aria-live="assertive">' +
-          '<span>الشاشة هتتقفل خلال</span>' +
-          '<span class="idle-count">' + remaining + '</span><span>ثانية</span>' +
-          '<button class="idle-btn" id="stay" type="button">أنا هنا</button>' +
-        '</div>';
-      var stay = document.getElementById('stay');
-      if (stay) stay.addEventListener('click', function () {
-        lastActivity = Date.now();
-        idleRoot.innerHTML = '';
-        fetch('/api/auth/session', { credentials: 'same-origin' });
-      });
-    } else if (idleRoot.innerHTML) {
-      idleRoot.innerHTML = '';
-    }
-  }, 1000);
-
-  // نبضة تجديد كل دقيقة ما دام المستخدم نشط
-  setInterval(async function () {
-    if ((Date.now() - lastActivity) / 1000 > IDLE / 2) return;
-    try {
-      var res = await fetch('/api/auth/session', { credentials: 'same-origin' });
-      if (res.status === 401) {
-        var again = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' });
-        if (!again.ok) window.location.href = '/login?expired=1';
-      }
-    } catch (e) {} // انقطاع مؤقت للشبكة — ما نخرّجش المستخدم بسببه
-  }, 60000);
-
-  document.getElementById('logout').addEventListener('click', endSession);
 
   // ── البثّ ──
   var bf = document.getElementById('bf');
@@ -948,6 +1124,342 @@ function dashboardScript(idleTimeout: number, warnAt: number): string {
       }
     });
   }
+})();
+`;
+}
+
+// ═══════════════════ 5) الخزينة ═══════════════════
+
+export interface TreasuryPageData {
+  currentUserId: string;
+  fullName: string;
+  roleKey: string;
+  canApprove: boolean;
+  balances: Array<{
+    treasuryId: string;
+    name: string;
+    type: string;
+    balancePiastres: number;
+    movementCount: number;
+  }>;
+  movements: TreasuryMovementView[];
+  pending: TreasuryMovementView[];
+  reasons: Array<{ id: string; name: string; isAdvance: boolean }>;
+  team: Array<{ id: string; fullName: string }>;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+export interface TreasuryMovementView {
+  id: string;
+  type: string;
+  direction: string;
+  status: string;
+  amountPiastres: number;
+  treasuryName: string;
+  reasonName: string | null;
+  relatedUserName: string | null;
+  createdByName: string | null;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+}
+
+const TYPE_LABEL: Record<string, string> = {
+  DEPOSIT: 'إيداع',
+  WITHDRAWAL: 'سحب',
+  EXPENSE: 'مصروف',
+  ADVANCE: 'سُلفة',
+  ADJUSTMENT: 'تسوية',
+};
+
+const TREASURY_TYPE_LABEL: Record<string, string> = {
+  CASH: 'كاش',
+  VISA: 'فيزا',
+  INSTAPAY: 'إنستاباي',
+};
+
+function movementRowsHtml(items: TreasuryMovementView[], currentUserId: string, canApprove: boolean): Html {
+  if (items.length === 0) return html`<p class="muted">مفيش حركات.</p>`;
+
+  return html`${items.map((m) => {
+    // زرار المراجعة بيظهر بس لو معلّقة، وعندك صلاحية، ومش إنت
+    // اللي كتبتها. الخادم بيرفض التلاتة برضه — الإخفاء راحة مش حماية.
+    const canReview = canApprove && m.status === 'PENDING' && m.createdById !== currentUserId;
+
+    const subParts = [
+      m.treasuryName,
+      m.reasonName,
+      m.relatedUserName ? `لـ ${m.relatedUserName}` : null,
+      m.createdByName ? `بواسطة ${m.createdByName}` : null,
+      m.note,
+    ].filter(Boolean);
+
+    return html`<div class="mv-row" data-status="${m.status}">
+      <div class="mv-main">
+        <span class="mv-title">${TYPE_LABEL[m.type] ?? m.type}</span>
+        <span class="mv-sub">${subParts.join(' · ')}</span>
+      </div>
+      <div class="mv-side">
+        <span class="mv-amount" data-dir="${m.direction}">
+          ${m.direction === 'IN' ? '+' : '−'}${formatPiastres(m.amountPiastres)}
+        </span>
+        ${m.status === 'PENDING' ? html`<span class="tag">في انتظار الاعتماد</span>` : ''}
+        ${m.status === 'REJECTED' ? html`<span class="tag" data-variant="off">مرفوضة</span>` : ''}
+        ${canReview
+          ? html`<div class="mv-actions">
+              <button class="btn-mini" type="button" data-review="${m.id}" data-decision="APPROVED">اعتماد</button>
+              <button class="btn-mini" type="button" data-danger="true" data-review="${m.id}" data-decision="REJECTED">رفض</button>
+            </div>`
+          : ''}
+      </div>
+    </div>`;
+  })}`;
+}
+
+export function treasuryPage(data: TreasuryPageData): Html {
+  const total = data.balances.reduce((sum, b) => sum + b.balancePiastres, 0);
+
+  const balancesHtml =
+    data.balances.length === 0
+      ? html`<p class="muted">مفيش خزائن. المالك بيضيفها من قاعدة البيانات حاليًا.</p>`
+      : html`<div class="balances">
+          ${data.balances.map(
+            (b) => html`<div class="bal-card">
+              <div>
+                <span class="bal-name">${b.name}</span>
+                <span class="bal-meta">${TREASURY_TYPE_LABEL[b.type] ?? b.type} · ${b.movementCount} حركة</span>
+              </div>
+              <span class="bal-amount" data-negative="${b.balancePiastres < 0 ? 'true' : 'false'}">
+                ${formatPiastres(b.balancePiastres)}
+              </span>
+            </div>`,
+          )}
+        </div>`;
+
+  return shell({
+    title: 'الخزينة',
+    script: treasuryScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    body: html`<header class="topbar">
+  <div><strong>${data.fullName}</strong><span>الخزينة</span></div>
+  <button class="idle-btn" id="logout" type="button">خروج</button>
+</header>
+
+<nav class="nav-links">
+  <a href="/app">لوحة التحكم</a>
+  <a href="/treasury" aria-current="page">الخزينة</a>
+</nav>
+
+<main class="shell">
+  <section class="card">
+    <h2>الأرصدة</h2>
+    <p class="muted">
+      الرصيد محسوب من الحركات المعتمدة. الطلبات المعلّقة مش داخلة فيه لحد ما تتعتمد.
+    </p>
+    ${balancesHtml}
+    ${data.balances.length > 1
+      ? html`<div class="bal-card" style="margin-top:10px;background:var(--paper);border-style:dashed">
+          <span class="bal-name">الإجمالي</span>
+          <span class="bal-amount" data-negative="${total < 0 ? 'true' : 'false'}">${formatPiastres(total)}</span>
+        </div>`
+      : ''}
+  </section>
+
+  <section class="card">
+    <h2>تسجيل حركة</h2>
+    <p class="muted">
+      ${data.canApprove
+        ? 'حركتك بتتعتمد فورًا وبتأثّر على الرصيد على طول.'
+        : 'حركتك بتتسجّل كطلب معلّق، وما بتأثّرش على الرصيد قبل اعتماد المدير.'}
+    </p>
+
+    <div class="alert-box" id="mvmsg" role="alert" hidden><span id="mvmsg-text"></span></div>
+
+    <form id="mvf" novalidate>
+      <div class="field">
+        <label class="field-label" for="mv-treasury">الخزينة</label>
+        <select class="field-input" id="mv-treasury" required>
+          ${data.balances.map((b) => html`<option value="${b.treasuryId}">${b.name}</option>`)}
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="mv-type">نوع الحركة</label>
+        <select class="field-input" id="mv-type">
+          <option value="EXPENSE">مصروف</option>
+          <option value="ADVANCE">سُلفة موظّف</option>
+          ${data.canApprove
+            ? html`<option value="DEPOSIT">إيداع</option>
+                <option value="WITHDRAWAL">سحب</option>
+                <option value="ADJUSTMENT">تسوية جرد</option>`
+            : ''}
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="mv-amount">المبلغ</label>
+        <input class="field-input" id="mv-amount" type="text" inputmode="decimal"
+          dir="ltr" autocomplete="off" required>
+        <p class="field-hint">بالجنيه. مثال: 150 أو 150.75</p>
+      </div>
+
+      <div class="field" id="mv-reason-field">
+        <label class="field-label" for="mv-reason">سبب الصرف</label>
+        <select class="field-input" id="mv-reason">
+          ${data.reasons.map((r) => html`<option value="${r.id}">${r.name}</option>`)}
+        </select>
+      </div>
+
+      <div class="field" id="mv-user-field" hidden>
+        <label class="field-label" for="mv-user">الموظّف صاحب السُلفة</label>
+        <select class="field-input" id="mv-user">
+          ${data.team.map((t) => html`<option value="${t.id}">${t.fullName}</option>`)}
+        </select>
+      </div>
+
+      <div class="field" id="mv-dir-field" hidden>
+        <label class="field-label" for="mv-dir">اتجاه التسوية</label>
+        <select class="field-input" id="mv-dir">
+          <option value="IN">زيادة في الخزينة</option>
+          <option value="OUT">نقص في الخزينة</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="mv-note">ملاحظة (اختياري)</label>
+        <input class="field-input" id="mv-note" type="text" maxlength="500">
+      </div>
+
+      <button class="btn-primary" id="mvbtn" type="submit">تسجيل</button>
+    </form>
+  </section>
+
+  ${data.canApprove && data.pending.length > 0
+    ? html`<section class="card">
+        <h2>في انتظار اعتمادك (${data.pending.length})</h2>
+        <p class="muted">الطلبات دي مش داخلة في الرصيد لحد ما تعتمدها.</p>
+        <div class="alert-box" id="rvmsg" role="alert" hidden><span id="rvmsg-text"></span></div>
+        ${movementRowsHtml(data.pending, data.currentUserId, data.canApprove)}
+      </section>`
+    : ''}
+
+  <section class="card">
+    <h2>آخر الحركات</h2>
+    ${movementRowsHtml(data.movements, data.currentUserId, data.canApprove)}
+  </section>
+</main>
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function treasuryScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  return `
+${IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+  .replace('__WARN__', String(warnAt))
+  .replace('__ACTION__', action)}
+
+(function () {
+  // ── إظهار الحقول حسب نوع الحركة ──
+  // الحقل اللي ملوش لازمة بيختفي بدل ما يفضل معروض ومربك
+  var typeEl = document.getElementById('mv-type');
+  var reasonField = document.getElementById('mv-reason-field');
+  var userField = document.getElementById('mv-user-field');
+  var dirField = document.getElementById('mv-dir-field');
+
+  function syncFields() {
+    var t = typeEl.value;
+    reasonField.hidden = !(t === 'EXPENSE' || t === 'ADVANCE');
+    userField.hidden = t !== 'ADVANCE';
+    dirField.hidden = t !== 'ADJUSTMENT';
+  }
+  typeEl.addEventListener('change', syncFields);
+  syncFields();
+
+  // ── تسجيل حركة ──
+  document.getElementById('mvf').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('mvbtn');
+    var box = document.getElementById('mvmsg');
+    var text = document.getElementById('mvmsg-text');
+    var t = typeEl.value;
+
+    btn.disabled = true;
+    btn.textContent = 'جارٍ التسجيل…';
+
+    try {
+      var res = await fetch('/api/treasury/movements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          treasuryId: document.getElementById('mv-treasury').value,
+          type: t,
+          amount: document.getElementById('mv-amount').value,
+          expenseReasonId: (t === 'EXPENSE' || t === 'ADVANCE') ? document.getElementById('mv-reason').value : null,
+          relatedUserId: t === 'ADVANCE' ? document.getElementById('mv-user').value : null,
+          adjustmentDirection: t === 'ADJUSTMENT' ? document.getElementById('mv-dir').value : null,
+          note: document.getElementById('mv-note').value || null
+        })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      box.hidden = false;
+      if (res.ok) {
+        box.setAttribute('data-tone', 'ok');
+        text.textContent = (data && data.message) || 'تم التسجيل.';
+        setTimeout(function () { window.location.reload(); }, 1200);
+      } else {
+        box.removeAttribute('data-tone');
+        text.textContent = (data && data.error && data.error.message) || 'فشل التسجيل.';
+        btn.disabled = false;
+        btn.textContent = 'تسجيل';
+      }
+    } catch (err) {
+      box.hidden = false;
+      box.removeAttribute('data-tone');
+      text.textContent = 'تعذّر الاتصال بالخادم.';
+      btn.disabled = false;
+      btn.textContent = 'تسجيل';
+    }
+  });
+
+  // ── اعتماد / رفض ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-review]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-review');
+    var decision = btn.getAttribute('data-decision');
+    var box = document.getElementById('rvmsg');
+    var text = document.getElementById('rvmsg-text');
+
+    if (decision === 'REJECTED' && !confirm('رفض الطلب ده؟')) return;
+
+    btn.disabled = true;
+    try {
+      var res = await fetch('/api/treasury/movements/' + encodeURIComponent(id) + '/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ decision: decision })
+      });
+      if (res.ok) { window.location.reload(); return; }
+
+      var data = await res.json().catch(function () { return null; });
+      if (box) {
+        box.hidden = false;
+        box.removeAttribute('data-tone');
+        text.textContent = (data && data.error && data.error.message) || 'فشل التنفيذ.';
+      }
+    } catch (err) {
+      if (box) { box.hidden = false; text.textContent = 'تعذّر الاتصال بالخادم.'; }
+    } finally {
+      btn.disabled = false;
+    }
+  });
 })();
 `;
 }
