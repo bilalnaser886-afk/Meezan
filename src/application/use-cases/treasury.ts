@@ -19,10 +19,10 @@ import type {
   Clock,
   EnrichedMovement,
   ExpenseReasonRepository,
+  ManualMovementType,
   MovementDirection,
   MovementRepository,
   MovementStatus,
-  MovementType,
   SalaryStatement,
   TreasuryBalance,
   TreasuryRepository,
@@ -43,8 +43,16 @@ export interface TreasuryDeps {
  *
  * ليه؟ عشان "مصروف بيزوّد الرصيد" يبقى مستحيل. الاتجاه صفة
  * ملازمة للنوع، مش حقل حرّ حد ممكن يغلط فيه أو يتلاعب بيه.
+ *
+ * ⚠ لاحظ `ManualMovementType` مش `MovementType`.
+ * نوع البيع (SALE) **مش** في الجدول ده عن قصد — البيع بيتولّد من
+ * دالة البيع الذرية مع الفاتورة وخصم المخزون، وعمره ما بيتسجّل
+ * من شاشة الخزينة.
+ *
+ * لو حد جه بكرة وحاول يضيف SALE هنا عشان "يكمّل الجدول"، لازم
+ * يقرا السطور دي الأول ويفهم إن النقص مقصود.
  */
-const DIRECTION: Record<MovementType, MovementDirection> = {
+const DIRECTION: Record<ManualMovementType, MovementDirection> = {
   DEPOSIT: 'IN',
   WITHDRAWAL: 'OUT',
   EXPENSE: 'OUT',
@@ -53,11 +61,12 @@ const DIRECTION: Record<MovementType, MovementDirection> = {
 };
 
 /** الأنواع اللي محتاجة صلاحية اعتماد عشان تتسجّل أصلاً */
-const RESTRICTED_TYPES: MovementType[] = ['DEPOSIT', 'WITHDRAWAL', 'ADJUSTMENT'];
+const RESTRICTED_TYPES: ManualMovementType[] = ['DEPOSIT', 'WITHDRAWAL', 'ADJUSTMENT'];
 
 export interface RecordMovementInput {
   treasuryId: string;
-  type: MovementType;
+  /** البيع مستبعد بالنوع نفسه — مفيش طريقة تمرّره من هنا */
+  type: ManualMovementType;
   amountPiastres: number;
   expenseReasonId?: string | null;
   relatedUserId?: string | null;
@@ -192,6 +201,14 @@ export async function reviewMovement(
 
   if (movement.status !== 'PENDING') {
     throw Errors.validation('الحركة دي اتراجعت قبل كده.');
+  }
+
+  // ⚠ حركة البيع معتمدة من لحظة إنشائها ومربوطة بفاتورة.
+  // الشرط اللي فوق بيمنعها أصلاً (حالتها APPROVED مش PENDING)،
+  // لكن الحارس ده صريح عشان أي تغيير مستقبلي في قواعد الاعتماد
+  // ما يفتحش باب "رفض" فاتورة مباعة والفلوس في الدرج.
+  if (movement.type === 'SALE') {
+    throw Errors.validation('حركة البيع مش بتتراجع. استخدم المرتجع.');
   }
 
   // فصل المهام: اللي كتب الطلب مش هو اللي يمضيه.
