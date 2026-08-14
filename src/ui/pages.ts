@@ -164,7 +164,7 @@ const IDLE_SHARED_JS = `
 
 
 const FONTS =
-  'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap';
+  'https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap';
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
@@ -195,6 +195,94 @@ function receiptEdge(): string {
 
   return `<svg class="receipt-edge" viewBox="0 0 420 12" preserveAspectRatio="none" aria-hidden="true"><path d="${path}" fill="currentColor"/></svg>`;
 }
+
+
+// ═══════════════════ مكوّنات مشتركة ═══════════════════
+
+const ROLE_STAMP: Record<string, string> = {
+  SUPER_ADMIN: 'المالك',
+  BRANCH_MANAGER: 'مدير فرع',
+  STAFF: 'موظّف',
+};
+
+/**
+ * الشريط العلوي + قائمة النقط الثلاث.
+ *
+ * القائمة مبنية على <details> — بتفتح وتقفل بالكيبورد ومن غير
+ * أي JavaScript. أبسط حاجة ممكن تقع.
+ */
+function appBar(opts: {
+  fullName: string;
+  username: string;
+  roleKey: string;
+  branchLabel: string | null;
+}): Html {
+  return html`<header class="app-bar">
+  <div class="who">
+    <span class="who-name">${opts.fullName}</span>
+    <span class="stamp" data-role="${opts.roleKey}">${ROLE_STAMP[opts.roleKey] ?? opts.roleKey}</span>
+  </div>
+
+  <details class="menu" id="menu">
+    <summary aria-label="القائمة" title="القائمة">⋮</summary>
+    <div class="menu-sheet">
+      <div class="menu-info">
+        <div class="menu-row"><span>اسم المستخدم</span><b>${opts.username}</b></div>
+        ${opts.branchLabel
+          ? html`<div class="menu-row"><span>الفرع</span><b>${opts.branchLabel}</b></div>`
+          : ''}
+      </div>
+      <button class="menu-item" type="button" data-action="lock">قفل الشاشة</button>
+      <button class="menu-item" type="button" data-action="logout" data-danger>تسجيل الخروج</button>
+    </div>
+  </details>
+</header>`;
+}
+
+/** الشريط السفلي — إبهامك بيوصله من غير ما تمد إيدك */
+function tabBar(active: 'app' | 'treasury', showTreasury: boolean): Html {
+  return html`<nav class="tabbar">
+  <a href="/app" ${active === 'app' ? raw('aria-current="page"') : ''}>
+    <span class="tabbar-icon" aria-hidden="true">▣</span>الرئيسية
+  </a>
+  ${showTreasury
+    ? html`<a href="/treasury" ${active === 'treasury' ? raw('aria-current="page"') : ''}>
+        <span class="tabbar-icon" aria-hidden="true">₤</span>الخزينة
+      </a>`
+    : ''}
+</nav>`;
+}
+
+/** سكربت القائمة: قفلها لما تدوس بره + أزرار القفل والخروج */
+const MENU_JS = `
+(function () {
+  var menu = document.getElementById('menu');
+  if (!menu) return;
+
+  document.addEventListener('click', function (e) {
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && menu.open) menu.open = false;
+  });
+
+  menu.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!btn) return;
+    menu.open = false;
+
+    if (btn.getAttribute('data-action') === 'logout') {
+      try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (err) {}
+      window.location.href = '/login';
+      return;
+    }
+
+    // قفل يدوي — نفس مسار القفل التلقائي بالظبط
+    try { await fetch('/api/auth/lock', { method: 'POST', credentials: 'same-origin' }); } catch (err) {}
+    window.location.href = '/locked';
+  });
+})();
+`;
 
 // ═══════════════════ 1) دخول الموظفين ═══════════════════
 
@@ -498,9 +586,13 @@ export interface DashboardBranchFull {
 export interface DashboardData {
   currentUserId: string;
   fullName: string;
+  username: string;
+  branchLabel: string | null;
   roleLabel: string;
   roleKey: string;
   permissions: string[];
+  pendingApprovals: number;
+  canApproveExpenses: boolean;
   canBroadcast: boolean;
   canViewUsers: boolean;
   canCreateUsers: boolean;
@@ -589,9 +681,10 @@ const LOCKED_PAGE_SCRIPT = `
 })();
 `;
 
-const BROADCAST_FORM = `
-<section class="card">
-  <h2>بثّ إعلان</h2>
+const BROADCAST_PANEL = `
+<details class="panel" id="broadcast">
+  <summary>بثّ إعلان</summary>
+  <div class="panel-body">
   <p class="muted">
     هيظهر كنافذة إلزامية لكل من يخصّه عند أول دخول، ومش هيقدر يكمّل
     قبل ما يضغط «قرأت وفهمت» — والضغطة بتتسجّل باسمه ووقتها.
@@ -622,9 +715,10 @@ const BROADCAST_FORM = `
         <option value="CRITICAL">عاجل</option>
       </select>
     </div>
-    <button class="btn-primary" id="bbtn" type="submit">إرسال</button>
+    <button class="btn-primary" id="bbtn" type="submit">إرسال الإعلان</button>
   </form>
-</section>`;
+  </div>
+</details>`;
 
 const ROLE_BADGE: Record<string, string> = {
   SUPER_ADMIN: 'مالك',
@@ -637,7 +731,7 @@ const ROLE_BADGE: Record<string, string> = {
  *
  * كل اسم و username بييجي من قاعدة البيانات، وممكن يحتوي حروف
  * حسّاسة لو كتبها حد بسوء نية. لهذا بنستخدم html`` (بتهرّب تلقائيًا)
- * مش raw() هنا — على عكس BROADCAST_FORM اللي هو HTML ثابت كتبناه إحنا.
+ * مش raw() هنا — على عكس BROADCAST_PANEL اللي هو HTML ثابت كتبناه إحنا.
  *
  * زرار التعطيل بيختفي في تلات حالات، وكلها منطقية:
  *   - حسابك إنت (منع القفل الذاتي)
@@ -680,16 +774,18 @@ function teamListHtml(data: DashboardData): Html {
   return html`<ul class="roster">${rows}</ul>`;
 }
 
-function teamCardHtml(data: DashboardData): Html {
-  return html`<section class="card">
-    <h2>الفريق</h2>
-    <p class="muted">
-      ${data.roleKey === 'SUPER_ADMIN' ? 'كل الحسابات في كل الفروع.' : 'حسابات فرعك.'}
-      التعطيل بيقطع جلسة الموظّف فورًا ويمنعه من الدخول، وبيحتفظ بكل سجلّه ومبيعاته.
-    </p>
-    <div class="alert-box" id="tmsg" role="alert" hidden><span id="tmsg-text"></span></div>
-    ${teamListHtml(data)}
-  </section>`;
+function teamPanel(data: DashboardData): Html {
+  return html`<details class="panel" id="team" open>
+    <summary>الفريق</summary>
+    <div class="panel-body">
+      <p class="muted">
+        ${data.roleKey === 'SUPER_ADMIN' ? 'كل الحسابات في كل الفروع.' : 'حسابات فرعك.'}
+        التعطيل بيقطع جلسة الموظّف فورًا ويمنعه من الدخول، وبيحتفظ بكل سجلّه ومبيعاته.
+      </p>
+      <div class="alert-box" id="tmsg" role="alert" hidden><span id="tmsg-text"></span></div>
+      ${teamListHtml(data)}
+    </div>
+  </details>`;
 }
 
 /**
@@ -698,7 +794,7 @@ function teamCardHtml(data: DashboardData): Html {
  * كود الفرع بيتعرض بخط الآلة الكاتبة لأنه معرّف بيتكتب في الفواتير
  * والتقارير، مش اسم بشري.
  */
-function branchesCardHtml(data: DashboardData): Html {
+function branchesPanel(data: DashboardData): Html {
   const list =
     data.allBranches.length === 0
       ? html`<p class="muted">مفيش فروع لسه.</p>`
@@ -716,8 +812,9 @@ function branchesCardHtml(data: DashboardData): Html {
           )}
         </ul>`;
 
-  return html`<section class="card">
-    <h2>الفروع</h2>
+  return html`<details class="panel" id="branches">
+    <summary>الفروع</summary>
+    <div class="panel-body">
     <p class="muted">
       الفرع لازم يتعمل قبل ما تقدر تضيف حسابات ليه. الكود بيظهر في الفواتير
       والتقارير، فخلّيه قصير وثابت.
@@ -748,7 +845,8 @@ function branchesCardHtml(data: DashboardData): Html {
     </form>
 
     <div style="margin-top:22px">${list}</div>
-  </section>`;
+    </div>
+  </details>`;
 }
 
 /**
@@ -759,7 +857,7 @@ function branchesCardHtml(data: DashboardData): Html {
  * application/use-cases/users.ts). مدير الفرع مش بيشوف الحقل ده
  * خالص، لأن فرعه مفروض تلقائياً من هويته في الخادم، مش من الفورم.
  */
-function createUserFormHtml(data: DashboardData): Html {
+function createUserPanel(data: DashboardData): Html {
   const isOwner = data.roleKey === 'SUPER_ADMIN';
 
   const branchField =
@@ -772,8 +870,9 @@ function createUserFormHtml(data: DashboardData): Html {
         </div>`
       : '';
 
-  return html`<section class="card">
-    <h2>إضافة حساب</h2>
+  return html`<details class="panel">
+    <summary>إضافة حساب</summary>
+    <div class="panel-body">
     <p class="muted">
       ${isOwner
         ? 'اختَر الفرع والدور. الحساب هيدخل بنفس اسم المستخدم وكلمة المرور اللي هتكتبها.'
@@ -808,35 +907,92 @@ function createUserFormHtml(data: DashboardData): Html {
       ${branchField}
       <button class="btn-primary" id="ubtn" type="submit">إنشاء الحساب</button>
     </form>
-  </section>`;
+    </div>
+  </details>`;
 }
 
 export function dashboardPage(data: DashboardData): Html {
-  // الصلاحيات بتتهرّب تلقائياً جوّه html`` — آمنة للعرض
-  const chips = data.permissions.map((p) => html`<li>${p}</li>`);
+  const canUseTreasury = data.permissions.includes('expense.create');
+  const isStaff = data.roleKey === 'STAFF';
+
+  // ── شريط الانتباه: حاجة واحدة محتاجة قرارك دلوقتي ──
+  const strip =
+    data.pendingApprovals > 0
+      ? html`<section class="strip" data-tone="wait">
+          <span class="strip-count">${String(data.pendingApprovals)}</span>
+          <span class="strip-text"><b>طلبات صرف مستنية اعتمادك.</b> مش داخلة في الرصيد لحد ما تعتمدها.</span>
+          <a class="strip-go" href="/treasury">راجعها</a>
+        </section>`
+      : html`<section class="strip" data-tone="calm">
+          <span class="strip-text">مفيش حاجة مستنية قرارك دلوقتي.</span>
+        </section>`;
+
+  // ── البلاطات: اللي تقدر تعمله، بكلام مفهوم مش أكواد نظام ──
+  const tiles: Html[] = [];
+
+  if (canUseTreasury) {
+    tiles.push(html`<a class="tile" href="/treasury">
+      <span class="tile-label">الخزينة</span>
+      <span class="tile-note">${data.canApproveExpenses ? 'مصروفات وسُلف وأرصدة' : 'سجّل مصروف أو سُلفة'}</span>
+    </a>`);
+  }
+
+  if (data.canViewUsers) {
+    tiles.push(html`<a class="tile" href="#team">
+      <span class="tile-label">الفريق</span>
+      <span class="tile-num">${String(data.team.length)}</span>
+    </a>`);
+  }
+
+  if (data.canManageBranches) {
+    tiles.push(html`<a class="tile" href="#branches">
+      <span class="tile-label">الفروع</span>
+      <span class="tile-num">${String(data.allBranches.length)}</span>
+    </a>`);
+  }
+
+  if (data.canBroadcast) {
+    tiles.push(html`<a class="tile" data-wide href="#broadcast">
+      <span class="tile-label">بثّ إعلان</span>
+      <span class="tile-note">نافذة إلزامية لكل من يخصّه</span>
+    </a>`);
+  }
+
+  // ── شاشة الموظّف: بتقول له إيه اللي جاي بدل ما تسيبه في فراغ ──
+  const staffEmpty = html`<section class="panel" open>
+    <div class="empty">
+      <p class="empty-title">شاشة البيع لسه بتتبني</p>
+      <p class="empty-note">
+        دلوقتي تقدر تسجّل مصروف أو سُلفة من الخزينة.<br>
+        فواتير البيع وتسجيل العملاء هيتفتحوا في تحديث جاي.
+      </p>
+    </div>
+  </section>`;
 
   return shell({
-    title: 'لوحة التحكم',
+    title: 'الرئيسية',
     script: dashboardScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
-    body: html`<header class="topbar">
-  <div><strong>${data.fullName}</strong><span>${data.roleKey}</span></div>
-  <button class="idle-btn" id="logout" type="button">خروج</button>
-</header>
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+    })}
 
 <main class="shell">
-  <section class="card">
-    <h2>${data.roleLabel}</h2>
-    <p class="muted">
-      الوحدة الأولى شغّالة. الصلاحيات اللي تحت جاية من قاعدة البيانات مباشرة،
-      مش مكتوبة في الشاشة — لو غيّرت دورك، هتتغيّر لوحدها.
-    </p>
-    <ul class="chips">${chips}</ul>
-  </section>
-  ${data.canBroadcast ? raw(BROADCAST_FORM) : ''}
-  ${data.canManageBranches ? branchesCardHtml(data) : ''}
-  ${data.canCreateUsers ? createUserFormHtml(data) : ''}
-  ${data.canViewUsers ? teamCardHtml(data) : ''}
+  ${strip}
+
+  ${tiles.length > 0 ? html`<div class="tiles">${tiles}</div>` : ''}
+
+  ${isStaff && !data.canViewUsers ? staffEmpty : ''}
+
+  ${data.canBroadcast ? raw(BROADCAST_PANEL) : ''}
+  ${data.canManageBranches ? branchesPanel(data) : ''}
+  ${data.canCreateUsers ? createUserPanel(data) : ''}
+  ${data.canViewUsers ? teamPanel(data) : ''}
 </main>
+
+${tabBar('app', canUseTreasury)}
 
 <div id="gate-root"></div>
 <div id="idle-root"></div>
@@ -859,6 +1015,7 @@ function dashboardScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' |
 
   return `
 ${shared}
+${MENU_JS}
 
 (function () {
   var queue = [];
@@ -1133,6 +1290,8 @@ ${shared}
 export interface TreasuryPageData {
   currentUserId: string;
   fullName: string;
+  username: string;
+  branchLabel: string | null;
   roleKey: string;
   canApprove: boolean;
   balances: Array<{
@@ -1227,12 +1386,10 @@ export function treasuryPage(data: TreasuryPageData): Html {
       : html`<div class="balances">
           ${data.balances.map(
             (b) => html`<div class="bal-card">
-              <div>
-                <span class="bal-name">${b.name}</span>
-                <span class="bal-meta">${TREASURY_TYPE_LABEL[b.type] ?? b.type} · ${b.movementCount} حركة</span>
-              </div>
+              <span class="bal-name">${b.name}</span>
+              <span class="bal-meta">${TREASURY_TYPE_LABEL[b.type] ?? b.type} · ${b.movementCount} حركة</span>
               <span class="bal-amount" data-negative="${b.balancePiastres < 0 ? 'true' : 'false'}">
-                ${formatPiastres(b.balancePiastres)}
+                ${formatPiastres(b.balancePiastres)}<span class="bal-cur">ج.م</span>
               </span>
             </div>`,
           )}
@@ -1241,33 +1398,27 @@ export function treasuryPage(data: TreasuryPageData): Html {
   return shell({
     title: 'الخزينة',
     script: treasuryScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
-    body: html`<header class="topbar">
-  <div><strong>${data.fullName}</strong><span>الخزينة</span></div>
-  <button class="idle-btn" id="logout" type="button">خروج</button>
-</header>
-
-<nav class="nav-links">
-  <a href="/app">لوحة التحكم</a>
-  <a href="/treasury" aria-current="page">الخزينة</a>
-</nav>
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+    })}
 
 <main class="shell">
-  <section class="card">
-    <h2>الأرصدة</h2>
-    <p class="muted">
-      الرصيد محسوب من الحركات المعتمدة. الطلبات المعلّقة مش داخلة فيه لحد ما تتعتمد.
-    </p>
+  <div class="balances" style="margin-bottom:18px">
     ${balancesHtml}
     ${data.balances.length > 1
-      ? html`<div class="bal-card" style="margin-top:10px;background:var(--paper);border-style:dashed">
+      ? html`<div class="bal-card bal-total">
           <span class="bal-name">الإجمالي</span>
-          <span class="bal-amount" data-negative="${total < 0 ? 'true' : 'false'}">${formatPiastres(total)}</span>
+          <span class="bal-amount" data-negative="${total < 0 ? 'true' : 'false'}">${formatPiastres(total)}<span class="bal-cur">ج.م</span></span>
         </div>`
       : ''}
-  </section>
+  </div>
 
-  <section class="card">
-    <h2>تسجيل حركة</h2>
+  <details class="panel" open>
+    <summary>تسجيل حركة</summary>
+    <div class="panel-body">
     <p class="muted">
       ${data.canApprove
         ? 'حركتك بتتعتمد فورًا وبتأثّر على الرصيد على طول.'
@@ -1331,24 +1482,31 @@ export function treasuryPage(data: TreasuryPageData): Html {
         <input class="field-input" id="mv-note" type="text" maxlength="500">
       </div>
 
-      <button class="btn-primary" id="mvbtn" type="submit">تسجيل</button>
+      <button class="btn-primary" id="mvbtn" type="submit">تسجيل الحركة</button>
     </form>
-  </section>
+    </div>
+  </details>
 
   ${data.canApprove && data.pending.length > 0
-    ? html`<section class="card">
-        <h2>في انتظار اعتمادك (${data.pending.length})</h2>
-        <p class="muted">الطلبات دي مش داخلة في الرصيد لحد ما تعتمدها.</p>
-        <div class="alert-box" id="rvmsg" role="alert" hidden><span id="rvmsg-text"></span></div>
-        ${movementRowsHtml(data.pending, data.currentUserId, data.canApprove)}
-      </section>`
+    ? html`<details class="panel" open>
+        <summary>في انتظار اعتمادك (${String(data.pending.length)})</summary>
+        <div class="panel-body">
+          <p class="muted">الطلبات دي مش داخلة في الرصيد لحد ما تعتمدها.</p>
+          <div class="alert-box" id="rvmsg" role="alert" hidden><span id="rvmsg-text"></span></div>
+          ${movementRowsHtml(data.pending, data.currentUserId, data.canApprove)}
+        </div>
+      </details>`
     : ''}
 
-  <section class="card">
-    <h2>آخر الحركات</h2>
-    ${movementRowsHtml(data.movements, data.currentUserId, data.canApprove)}
-  </section>
+  <details class="panel" open>
+    <summary>آخر الحركات</summary>
+    <div class="panel-body">
+      ${movementRowsHtml(data.movements, data.currentUserId, data.canApprove)}
+    </div>
+  </details>
 </main>
+
+${tabBar('treasury', true)}
 
 <div id="idle-root"></div>
 <div id="lock-root"></div>`,
@@ -1356,10 +1514,13 @@ export function treasuryPage(data: TreasuryPageData): Html {
 }
 
 function treasuryScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
   return `
-${IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
-  .replace('__WARN__', String(warnAt))
-  .replace('__ACTION__', action)}
+${shared}
+${MENU_JS}
 
 (function () {
   // ── إظهار الحقول حسب نوع الحركة ──
