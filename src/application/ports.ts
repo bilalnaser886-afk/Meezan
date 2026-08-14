@@ -157,9 +157,34 @@ export interface BranchRepository {
 
 export type MovementDirection = 'IN' | 'OUT';
 
-/** الأنواع المدعومة حاليًا. التحويلات (TRANSFER_*) موجودة في
- *  قاعدة البيانات لكن لسه مش مفعّلة في التطبيق. */
-export type MovementType = 'DEPOSIT' | 'WITHDRAWAL' | 'EXPENSE' | 'ADVANCE' | 'ADJUSTMENT';
+/**
+ * كل أنواع الحركة الموجودة في قاعدة البيانات.
+ *
+ * ⚠ التحويلات (TRANSFER_*) موجودة في القاعدة لكن لسه مش مفعّلة
+ * في التطبيق، فمش مدرجة هنا.
+ */
+export type MovementType =
+  | 'DEPOSIT'
+  | 'WITHDRAWAL'
+  | 'EXPENSE'
+  | 'ADVANCE'
+  | 'ADJUSTMENT'
+  | 'SALE';
+
+/**
+ * الأنواع اللي المستخدم يقدر يسجّلها **بإيده** من شاشة الخزينة.
+ *
+ * ══ ليه البيع مستثنى بنوع منفصل؟ ══
+ * حركة البيع مش بتتكتب من شاشة الخزينة أبدًا — بتتولّد جوّه دالة
+ * البيع الذرية مع الفاتورة وخصم المخزون في نفس اللحظة.
+ *
+ * لو سمحنا بتسجيلها يدويًا، هيبقى ممكن تدخل فلوس على إنها "بيع"
+ * من غير فاتورة ولا خصم مخزون — يعني إيراد من غير بضاعة خرجت.
+ *
+ * `Exclude` هنا بتخلّي ده **خطأ في وقت البناء** مش خطأ وقت التشغيل.
+ * تشبيه: مش لافتة مكتوب عليها "ممنوع الدخول"، ده حيط.
+ */
+export type ManualMovementType = Exclude<MovementType, 'SALE'>;
 
 export type MovementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -211,6 +236,7 @@ export interface CreateMovementInput {
   treasuryId: string;
   branchId: string | null;
   direction: MovementDirection;
+  /** المستودع بيقدر يكتب أي نوع — الحراسة فوق في حالة الاستخدام */
   type: MovementType;
   amountPiastres: number;
   status: MovementStatus;
@@ -261,6 +287,143 @@ export interface ExpenseReasonRepository {
   /** أسباب الفرع + الأسباب العامة (branch_id = null) */
   listForBranch(branchId: string | null): Promise<ExpenseReason[]>;
   findById(id: string): Promise<ExpenseReason | null>;
+}
+
+// ═══════════════════ المنتجات ═══════════════════
+
+/**
+ * ⚠ لاحظ إن `costPiastres` **اختياري** في النوع ده، وده مقصود
+ * ومركزي في التصميم.
+ *
+ * التكلفة مش بتتخفي في الواجهة — بتتشال من الكائن نفسه في طبقة
+ * قاعدة البيانات قبل ما يرجع. اللي مالوش `profit.view_real`
+ * بيوصله كائن **مفيهوش الحقل أصلاً**، مش كائن فيه الحقل مخفي.
+ *
+ * تشبيه: الفرق بين إنك تدّي حد ملف وتقوله "متبصّش على الصفحة
+ * التالتة"، وبين إنك تشيل الصفحة التالتة قبل ما تديله الملف.
+ * الأولى شرف، والتانية أمان.
+ *
+ * علامة `?` هنا هي اللي بتخلّي تايب سكريبت يفكّرك إن الحقل ممكن
+ * ما يكونش موجود، فما تكتبش كود بيفترض وجوده.
+ */
+export interface ProductRecord {
+  id: string;
+  branchId: string;
+  name: string;
+  pricePiastres: number;
+  costPiastres?: number;
+  quantityOnHand: number;
+  isActive: boolean;
+}
+
+export interface CreateProductInput {
+  branchId: string;
+  name: string;
+  pricePiastres: number;
+  costPiastres: number;
+  quantityOnHand: number;
+  createdById: string;
+}
+
+export interface UpdateProductInput {
+  name?: string;
+  pricePiastres?: number;
+  costPiastres?: number;
+  isActive?: boolean;
+}
+
+export interface ProductListOptions {
+  /** بيتحدّد من صلاحية `profit.view_real` بس. مفيش مصدر تاني. */
+  includeCost: boolean;
+  /** المنتجات المفعّلة بس — لشاشة الكاشير */
+  activeOnly?: boolean;
+}
+
+export interface ProductRepository {
+  list(scope: ListScope, options: ProductListOptions): Promise<ProductRecord[]>;
+  findById(id: string, options: { includeCost: boolean }): Promise<ProductRecord | null>;
+  create(data: CreateProductInput): Promise<{ id: string }>;
+  update(id: string, data: UpdateProductInput): Promise<void>;
+  /**
+   * تعديل الكمية بفرق (زيادة أو نقص) وبترجع الكمية الجديدة.
+   *
+   * ⚠ التنفيذ لازم يكون آمن ضد التزامن: لو الموظّف باع في نفس
+   * اللحظة اللي المدير بيورّد فيها، البيع ما يضيعش.
+   */
+  adjustQuantity(id: string, delta: number): Promise<number>;
+}
+
+// ═══════════════════ المبيعات ═══════════════════
+
+export interface SaleLineInput {
+  productId: string;
+  quantity: number;
+}
+
+export interface CreateSaleInput {
+  staffId: string;
+  treasuryId: string;
+  items: SaleLineInput[];
+  customerName: string | null;
+  customerPhone: string | null;
+}
+
+export interface CreateSaleResult {
+  saleId: string;
+  totalPiastres: number;
+  movementId: string;
+  itemCount: number;
+}
+
+export interface SaleSummary {
+  id: string;
+  branchId: string;
+  staffId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  totalPiastres: number;
+  treasuryId: string;
+  createdAt: Date;
+}
+
+/** صف الفاتورة بعد إضافة اسم الموظّف — نفس نمط EnrichedMovement */
+export interface EnrichedSale extends SaleSummary {
+  staffName: string | null;
+  treasuryName: string | null;
+}
+
+export interface SaleItemLine {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPricePiastres: number;
+  /** محجوب عن غير `profit.view_real` — نفس قاعدة المنتجات */
+  unitCostPiastres?: number;
+  lineTotalPiastres: number;
+}
+
+export interface SaleDetail extends SaleSummary {
+  items: SaleItemLine[];
+}
+
+export interface SaleFilter {
+  scope: ListScope;
+  /** لو موجود، بيحصر النتيجة في فواتير موظّف واحد (`sales.view_own`) */
+  staffId?: string;
+  limit: number;
+}
+
+export interface SaleRepository {
+  /**
+   * إنشاء بيع كامل في عملية واحدة لا تتجزّأ.
+   *
+   * التنفيذ بينادي دالة في قاعدة البيانات بتعمل الأربع خطوات
+   * (فحص الكمية، الخصم، الفاتورة، حركة الخزينة) مع بعض:
+   * يا كلها تنجح يا مفيش حاجة فيها تحصل.
+   */
+  create(input: CreateSaleInput): Promise<CreateSaleResult>;
+  list(filter: SaleFilter): Promise<SaleSummary[]>;
+  findById(id: string, options: { includeCost: boolean }): Promise<SaleDetail | null>;
 }
 
 export interface SessionRecord {
