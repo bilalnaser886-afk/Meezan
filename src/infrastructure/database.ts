@@ -28,8 +28,15 @@ import type {
   MovementRepository,
   MovementStatus,
   MovementType,
+  ProductListOptions,
+  ProductRecord,
+  ProductRepository,
   RateLimiter,
   RoleKey,
+  SaleDetail,
+  SaleItemLine,
+  SaleRepository,
+  SaleSummary,
   SessionRecord,
   SessionRepository,
   TeamMember,
@@ -563,6 +570,376 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 
       if (error) throw Errors.internal(`expense reason findById: ${error.message}`);
       return data ? map(data) : null;
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  المنتجات
+//
+//  ⚠ أهم فقرة أمنية في الملف كله.
+//
+//  عمود `cost_piastres` بيتحطّ في قائمة الأعمدة المطلوبة **بس لو**
+//  اللي بيقرا عنده صلاحية رؤية التكلفة. لو مالوش، العمود مش
+//  بيتطلب من قاعدة البيانات أصلاً — يعني مش موجود في الرد الخام،
+//  مش موجود وفاضي.
+//
+//  تشبيه: مش بتصوّر الملف كامل وتغطّي صفحة بشريط أسود. بتصوّر
+//  الصفحات اللي المفروض يشوفها بس.
+//
+//  وكل مسار بيرجّع منتج بيمر على الدالتين دول. صفر استثناءات —
+//  ولو حد ضاف مسار جديد بكرة، لازم يعدّي من هنا.
+// ═══════════════════════════════════════════════════════════
+
+const PRODUCT_BASE_COLUMNS = 'id, branch_id, name, price_piastres, quantity_on_hand, is_active';
+
+function productColumns(includeCost: boolean): string {
+  return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
+}
+
+interface RawProduct {
+  id: string;
+  branch_id: string;
+  name: string;
+  price_piastres: number | string;
+  quantity_on_hand: number | string;
+  is_active: boolean;
+  cost_piastres?: number | string;
+}
+
+function toProduct(raw: RawProduct): ProductRecord {
+  const record: ProductRecord = {
+    id: raw.id,
+    branchId: raw.branch_id,
+    name: raw.name,
+    // bigint ممكن يرجع كنص من PostgREST — بنوحّده لرقم
+    pricePiastres: Number(raw.price_piastres),
+    quantityOnHand: Number(raw.quantity_on_hand),
+    isActive: raw.is_active,
+  };
+
+  // الحقل بيتضاف **بس** لو رجع فعلاً من القاعدة. مفيش
+  // `costPiastres: 0` كقيمة افتراضية — ده كان هيبقى كذب مهذّب.
+  if (raw.cost_piastres !== undefined && raw.cost_piastres !== null) {
+    record.costPiastres = Number(raw.cost_piastres);
+  }
+
+  return record;
+}
+
+export function createProductRepository(db: SupabaseClient): ProductRepository {
+  return {
+    async list(scope, options: ProductListOptions) {
+      let query = db
+        .from('products')
+        .select(productColumns(options.includeCost))
+        .is('deleted_at', null)
+        .order('name')
+        .limit(500);
+
+      // نفس نمط المستخدمين: النوع بيجبرنا نتعامل مع الحالتين
+      // صراحةً. مفيش "لو نسيت الفلتر هيعرض الكل".
+      if (!('allBranches' in scope)) {
+        query = query.eq('branch_id', scope.branchId);
+      }
+      if (options.activeOnly) {
+        query = query.eq('is_active', true);
+      }
+
+      const { data, error } = await query;
+      if (error) throw Errors.internal(`products list: ${error.message}`);
+
+      return ((data ?? []) as unknown as RawProduct[]).map(toProduct);
+    },
+
+    async findById(id, options) {
+      const { data, error } = await db
+        .from('products')
+        .select(productColumns(options.includeCost))
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`product findById: ${error.message}`);
+      return data ? toProduct(data as unknown as RawProduct) : null;
+    },
+
+    async create(data) {
+      const { data: row, error } = await db
+        .from('products')
+        .insert({
+          branch_id: data.branchId,
+          name: data.name,
+          price_piastres: data.pricePiastres,
+          cost_piastres: data.costPiastres,
+          quantity_on_hand: data.quantityOnHand,
+          is_active: true,
+          created_by_id: data.createdById,
+        })
+        .select('id')
+        .single();
+
+      if (error || !row) {
+        // 23505 = unique violation — نفس الاسم في نفس الفرع
+        if (error?.code === '23505') {
+          throw Errors.validation('فيه منتج بنفس الاسم في الفرع ده.');
+        }
+        throw Errors.internal(`product insert: ${error?.message}`);
+      }
+
+      return { id: row.id as string };
+    },
+
+    async update(id, data) {
+      const patch: Record<string, unknown> = {};
+      if (data.name !== undefined) patch.name = data.name;
+      if (data.pricePiastres !== undefined) patch.price_piastres = data.pricePiastres;
+      if (data.costPiastres !== undefined) patch.cost_piastres = data.costPiastres;
+      if (data.isActive !== undefined) patch.is_active = data.isActive;
+
+      const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') {
+          throw Errors.validation('فيه منتج بنفس الاسم في الفرع ده.');
+        }
+        throw Errors.internal(`product update: ${error.message}`);
+      }
+    },
+
+    /**
+     * تعديل الكمية بأمان ضد التزامن.
+     *
+     * ══ المشكلة اللي بتحلّها ══
+     * المدير بيورّد 5 والموظّف بيبيع 1 في نفس الثانية:
+     *   المدير يقرا 10 → الموظّف يبيع فتبقى 9 → المدير يكتب 15
+     * النتيجة 15 والصح 14. البيعة اتمسحت من المخزون.
+     *
+     * ══ الحل ══
+     * بنكتب بشرط: "غيّرها لـ 15 **بس لو** لسه 10". لو حد سبقنا،
+     * التحديث ما بيأثّرش على أي صف، فبنقرا من جديد ونعيد.
+     *
+     * تشبيه: بتوقّع على استمارة وتقول "ده صحيح طالما الرصيد لسه
+     * زي ما شفته". لو اتغيّر، الاستمارة بتترفض وبتعيد من الأول
+     * بدل ما تدهس شغل حد.
+     *
+     * (البيع نفسه ما بيمرّش من هنا خالص — بيقفل السطر في قاعدة
+     * البيانات جوّه المعاملة. ده للتوريد والجرد بس.)
+     */
+    async adjustQuantity(id, delta) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { data: current, error: readError } = await db
+          .from('products')
+          .select('quantity_on_hand')
+          .eq('id', id)
+          .is('deleted_at', null)
+          .maybeSingle();
+
+        if (readError) throw Errors.internal(`product read qty: ${readError.message}`);
+        if (!current) throw Errors.notFound('المنتج');
+
+        const before = Number(current.quantity_on_hand);
+        const after = before + delta;
+
+        if (after < 0) {
+          throw Errors.validation(`الكمية المتاحة ${before} بس، مش كفاية للخصم ده.`);
+        }
+
+        const { data: rows, error } = await db
+          .from('products')
+          .update({ quantity_on_hand: after })
+          .eq('id', id)
+          .eq('quantity_on_hand', before) // ← الشرط اللي بيمنع الدهس
+          .is('deleted_at', null)
+          .select('quantity_on_hand');
+
+        if (error) {
+          // 23514 = القيد في القاعدة رفض كمية سالبة
+          if (error.code === '23514') {
+            throw Errors.validation('الكمية مش كفاية للخصم ده.');
+          }
+          throw Errors.internal(`product adjust qty: ${error.message}`);
+        }
+
+        if (rows && rows.length > 0) return Number(rows[0].quantity_on_hand);
+        // صفر صفوف = حد غيّرها بينا. نعيد بالقيمة الجديدة.
+      }
+
+      throw Errors.validation('المخزون بيتغيّر دلوقتي. حاول تاني بعد لحظة.');
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  المبيعات
+// ═══════════════════════════════════════════════════════════
+
+const SALE_COLUMNS =
+  'id, branch_id, staff_id, customer_name, customer_phone, total_piastres, treasury_id, created_at';
+
+interface RawSale {
+  id: string;
+  branch_id: string;
+  staff_id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  total_piastres: number | string;
+  treasury_id: string;
+  created_at: string;
+}
+
+function toSale(raw: RawSale): SaleSummary {
+  return {
+    id: raw.id,
+    branchId: raw.branch_id,
+    staffId: raw.staff_id,
+    customerName: raw.customer_name,
+    customerPhone: raw.customer_phone,
+    totalPiastres: Number(raw.total_piastres),
+    treasuryId: raw.treasury_id,
+    createdAt: new Date(raw.created_at),
+  };
+}
+
+/**
+ * ترجمة أخطاء دالة البيع لأخطاء التطبيق.
+ *
+ * الدالة في قاعدة البيانات بترمي أكواد على وزن أكواد HTTP عشان
+ * الترجمة تبقى واضحة ومفيش تخمين:
+ *   MZ400 مدخلات غلط · MZ403 بره نطاقك
+ *   MZ404 مش موجود   · MZ409 الكمية مش كافية
+ *
+ * الرسائل نفسها مكتوبة بالعربي جوّه الدالة، فبنمرّرها زي ما هي —
+ * هي مكتوبة أصلاً عشان الموظّف يقراها قدّام الزبون.
+ */
+function raiseSaleError(error: { code?: string; message?: string }): never {
+  const message = error.message?.trim() || 'تعذّر إتمام البيع.';
+
+  switch (error.code) {
+    case 'MZ409':
+    case 'MZ400':
+      throw Errors.validation(message);
+    case 'MZ403':
+      throw Errors.forbidden(`sale scope: ${message}`);
+    case 'MZ404':
+      throw Errors.notFound('العنصر المطلوب');
+    default:
+      // 23514 = قيد في القاعدة رفض السجل (مخزون سالب مثلاً)
+      if (error.code === '23514') throw Errors.validation('الكمية مش كافية.');
+      throw Errors.internal(`fn_create_sale: ${error.message}`);
+  }
+}
+
+export function createSaleRepository(db: SupabaseClient): SaleRepository {
+  return {
+    /**
+     * نداء واحد بيعمل كل حاجة.
+     *
+     * مفيش هنا "اخصم المخزون" وبعدين "اكتب الفاتورة" — دي كانت
+     * هتبقى رحلتين شبكة، ولو التانية فشلت المخزون يبقى اتخصم بلا
+     * فاتورة. الأربع خطوات جوّه معاملة واحدة في القاعدة.
+     */
+    async create(input) {
+      const { data, error } = await db.rpc('fn_create_sale', {
+        p_staff_id: input.staffId,
+        p_treasury_id: input.treasuryId,
+        p_items: input.items.map((line) => ({
+          product_id: line.productId,
+          quantity: line.quantity,
+        })),
+        p_customer_name: input.customerName,
+        p_customer_phone: input.customerPhone,
+      });
+
+      if (error) raiseSaleError(error);
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_create_sale: مفيش نتيجة');
+
+      return {
+        saleId: String(row.sale_id),
+        totalPiastres: Number(row.total_piastres),
+        movementId: String(row.movement_id),
+        itemCount: Number(row.item_count),
+      };
+    },
+
+    async list(filter) {
+      let query = db
+        .from('sales')
+        .select(SALE_COLUMNS)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(filter.limit);
+
+      if (!('allBranches' in filter.scope)) {
+        query = query.eq('branch_id', filter.scope.branchId);
+      }
+      // الموظّف بيشوف فواتيره هو بس
+      if (filter.staffId) {
+        query = query.eq('staff_id', filter.staffId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw Errors.internal(`sales list: ${error.message}`);
+
+      return ((data ?? []) as RawSale[]).map(toSale);
+    },
+
+    async findById(id, options) {
+      const { data: head, error: headError } = await db
+        .from('sales')
+        .select(SALE_COLUMNS)
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (headError) throw Errors.internal(`sale findById: ${headError.message}`);
+      if (!head) return null;
+
+      // نفس قاعدة التكلفة بالظبط: العمود بيتطلب بس لصاحب الصلاحية
+      const itemColumns = options.includeCost
+        ? 'product_id, quantity, unit_price_piastres, unit_cost_piastres, product:products(name)'
+        : 'product_id, quantity, unit_price_piastres, product:products(name)';
+
+      const { data: rows, error } = await db
+        .from('sale_items')
+        .select(itemColumns)
+        .eq('sale_id', id);
+
+      if (error) throw Errors.internal(`sale items: ${error.message}`);
+
+      const items: SaleItemLine[] = ((rows ?? []) as unknown as Array<{
+        product_id: string;
+        quantity: number | string;
+        unit_price_piastres: number | string;
+        unit_cost_piastres?: number | string;
+        product: { name: string } | { name: string }[] | null;
+      }>).map((r) => {
+        // العلاقة ممكن ترجع كائن أو مصفوفة حسب استنتاج PostgREST
+        const product = Array.isArray(r.product) ? r.product[0] : r.product;
+        const quantity = Number(r.quantity);
+        const unitPricePiastres = Number(r.unit_price_piastres);
+
+        const line: SaleItemLine = {
+          productId: r.product_id,
+          // المنتج ممكن يكون اتحذف ناعمًا بعد البيع — الفاتورة
+          // بتفضل صحيحة والاسم بيفضل مكتوب
+          productName: product?.name ?? 'منتج محذوف',
+          quantity,
+          unitPricePiastres,
+          lineTotalPiastres: unitPricePiastres * quantity,
+        };
+
+        if (r.unit_cost_piastres !== undefined && r.unit_cost_piastres !== null) {
+          line.unitCostPiastres = Number(r.unit_cost_piastres);
+        }
+
+        return line;
+      });
+
+      const detail: SaleDetail = { ...toSale(head as RawSale), items };
+      return detail;
     },
   };
 }
