@@ -20,6 +20,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { BASE_CSS } from './styles';
+import { formatDate } from '../domain/dates';
 import { formatPiastres } from '../domain/money';
 
 
@@ -283,6 +284,7 @@ function appBar(opts: {
           ? html`<div class="menu-row"><span>الفرع</span><b>${opts.branchLabel}</b></div>`
           : ''}
       </div>
+      <a class="menu-item" href="/customers">بيانات العملاء</a>
       <button class="menu-item" type="button" data-action="lock">قفل الشاشة</button>
       <button class="menu-item" type="button" data-action="logout" data-danger>تسجيل الخروج</button>
     </div>
@@ -1776,14 +1778,27 @@ export interface PosPageData {
   canViewProducts: boolean;
   canUseTreasury: boolean;
   treasuries: Array<{ treasuryId: string; name: string; type: string }>;
-  products: Array<{ id: string; name: string; pricePiastres: number; quantityOnHand: number }>;
+  products: Array<{
+    id: string;
+    name: string;
+    productType: 'device' | 'accessory';
+    serialNumber: string | null;
+    /** null = يطلب النظام السعر يدويًا وقت البيع */
+    pricePiastres: number | null;
+    quantityOnHand: number;
+  }>;
   recentSales: Array<{
     id: string;
     totalPiastres: number;
     customerName: string | null;
     staffName: string | null;
     createdAt: Date;
+    exitDate: string;
+    /** بيتحسب على الخادم: صاحب الفاتورة أو المالك */
+    canEditExit: boolean;
   }>;
+  /** تاريخ النهاردة بتوقيت القاهرة — افتراضي حقل تاريخ الخروج */
+  today: string;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
   idleAction: 'LOGOUT' | 'LOCK';
@@ -1827,11 +1842,17 @@ export function posPage(data: PosPageData): Html {
           (p) => html`<button class="prod-btn" type="button"
             data-add="${p.id}"
             data-name="${p.name}"
-            data-price="${String(p.pricePiastres)}"
+            data-price="${p.pricePiastres === null ? '' : String(p.pricePiastres)}"
             data-max="${String(p.quantityOnHand)}">
             <span class="prod-btn-name">${p.name}</span>
-            <span class="prod-btn-price">${formatPiastres(p.pricePiastres)}</span>
-            <span class="prod-btn-qty">متاح ${String(p.quantityOnHand)}</span>
+            <span class="prod-btn-price">
+              ${p.pricePiastres === null ? 'السعر عند البيع' : formatPiastres(p.pricePiastres)}
+            </span>
+            <span class="prod-btn-qty">
+              ${p.productType === 'device'
+                ? (p.serialNumber ? `SN ${p.serialNumber}` : 'جهاز')
+                : `متاح ${String(p.quantityOnHand)}`}
+            </span>
           </button>`,
         )}
       </div>`;
@@ -1898,6 +1919,16 @@ export function posPage(data: PosPageData): Html {
           dir="ltr" maxlength="32" autocomplete="off">
       </div>
 
+      <div class="field">
+        <label class="field-label" for="pos-exit">تاريخ الخروج</label>
+        <input class="field-input" id="pos-exit" type="date" dir="ltr"
+          value="${data.today}" max="${data.today}">
+        <p class="field-hint">
+          يوم اليوم افتراضيًا. غيّره لتسجيل بيع تم في يوم سابق —
+          ولا يتأثّر وقت تسجيل الفاتورة نفسه.
+        </p>
+      </div>
+
       <button class="btn-primary" id="pos-submit" type="button" disabled>تم البيع</button>
     </div>
   </details>
@@ -1924,12 +1955,28 @@ export function posPage(data: PosPageData): Html {
               <div class="mv-main">
                 <span class="mv-title">${s.customerName ?? 'بيع'}</span>
                 <span class="mv-sub">
-                  ${s.staffName ? `${s.staffName} · ` : ''}<span data-time="${s.createdAt.toISOString()}"></span>
+                  ${s.staffName ? `${s.staffName} · ` : ''}خروج ${formatDate(s.exitDate)}
                 </span>
               </div>
               <div class="mv-side">
                 <span class="mv-amount" data-dir="IN">+${formatPiastres(s.totalPiastres)}</span>
+                ${s.canEditExit
+                  ? html`<button class="btn-mini" type="button" data-exit-open="${s.id}">
+                      تاريخ الخروج
+                    </button>`
+                  : ''}
               </div>
+
+              ${s.canEditExit
+                ? html`<div class="exit-edit" id="exit-${s.id}" hidden>
+                    <input class="field-input" id="exit-in-${s.id}" type="date" dir="ltr"
+                      value="${s.exitDate}" max="${data.today}">
+                    <button class="btn-mini" type="button" data-exit-save="${s.id}">حفظ</button>
+                    <p class="field-hint">
+                      يغيّر تاريخ خروج البضاعة فقط. وقت تسجيل الفاتورة يبقى كما هو.
+                    </p>
+                  </div>`
+                : ''}
             </div>`,
           )}
         </div>
@@ -1980,10 +2027,36 @@ ${TIME_JS}
     return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' + String(rest).padStart(2, '0');
   }
 
+  // بيرجّع { sum, missing } — missing = عدد البنود اللي لسه بلا سعر.
+  // الإجمالي ما بيعدّش الناقص، عشان ما يوريش الكاشير رقم أقل من
+  // الحقيقة ويقوله للزبون.
   function total() {
     var sum = 0;
-    for (var id in cart) sum += cart[id].price * cart[id].qty;
-    return sum;
+    var missing = 0;
+    for (var id in cart) {
+      var line = cart[id];
+      var price = line.price !== null ? line.price : manualPrice(line.manual);
+      if (price === null) { missing++; continue; }
+      sum += price * line.qty;
+    }
+    return { sum: sum, missing: missing };
+  }
+
+  // قراءة السعر المكتوب بالإيد وتحويله لقروش.
+  // بترجّع null لو فاضي أو غلط — والزرار بيفضل مقفول.
+  function manualPrice(raw) {
+    var text = String(raw || '')
+      .replace(/[٠-٩]/g, function (d) { return String(d.charCodeAt(0) - 0x0660); })
+      .replace(/[٫،]/g, '.')
+      .replace(/[\s,_]/g, '')
+      .trim();
+    if (!text) return null;
+
+    var m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(text);
+    if (!m) return null;
+
+    var piastres = parseInt(m[1], 10) * 100 + parseInt((m[2] || '0').padEnd(2, '0'), 10);
+    return piastres > 0 ? piastres : null;
   }
 
   function count() {
@@ -2017,12 +2090,38 @@ ${TIME_JS}
       main.appendChild(name);
       main.appendChild(sub);
 
+      // ⚠ المنتج اللي مالوش سعر بيتحطّ له خانة إدخال في السلة
+      // نفسها — مش نافذة منفصلة ولا شاشة تانية. الكاشير واقف
+      // قدّام الزبون، فأقل عدد خطوات هو الأصح.
+      if (line.price === null) {
+        var priceWrap = document.createElement('div');
+        priceWrap.className = 'cart-price';
+
+        var priceInput = document.createElement('input');
+        priceInput.className = 'cart-price-input';
+        priceInput.type = 'text';
+        priceInput.inputMode = 'decimal';
+        priceInput.dir = 'ltr';
+        priceInput.placeholder = 'السعر';
+        priceInput.value = line.manual || '';
+        priceInput.setAttribute('data-price-for', id);
+        priceInput.setAttribute('aria-label', 'سعر ' + line.name);
+
+        var priceNote = document.createElement('span');
+        priceNote.className = 'cart-price-note';
+        priceNote.textContent = 'اكتب سعر البيع';
+
+        priceWrap.appendChild(priceInput);
+        priceWrap.appendChild(priceNote);
+        main.appendChild(priceWrap);
+      }
+
       var side = document.createElement('div');
       side.className = 'cart-line-side';
 
       var amount = document.createElement('span');
       amount.className = 'cart-line-amount';
-      amount.textContent = money(line.price * line.qty);
+      amount.textContent = line.price === null ? '—' : money(line.price * line.qty);
 
       var steps = document.createElement('div');
       steps.className = 'qty-steps';
@@ -2060,13 +2159,18 @@ ${TIME_JS}
     }
 
     var isEmpty = ids.length === 0;
+    var t = total();
+
     emptyEl.hidden = !isEmpty;
     clearEl.hidden = isEmpty;
-    totalEl.innerHTML = money(total()) + '<span class="bal-cur">ج.م</span>';
+    totalEl.innerHTML = money(t.sum) + '<span class="bal-cur">ج.م</span>';
 
     var treasury = document.getElementById('pos-treasury');
-    submitEl.disabled = isEmpty || !treasury || !treasury.value;
-    submitEl.textContent = isEmpty ? 'تم البيع' : 'تم البيع · ' + money(total()) + ' ج.م';
+    submitEl.disabled = isEmpty || t.missing > 0 || !treasury || !treasury.value;
+
+    if (isEmpty) submitEl.textContent = 'تم البيع';
+    else if (t.missing > 0) submitEl.textContent = 'اكتب سعر ' + t.missing + ' صنف';
+    else submitEl.textContent = 'تم البيع · ' + money(t.sum) + ' ج.م';
   }
 
   function add(btn) {
@@ -2075,9 +2179,12 @@ ${TIME_JS}
     if (max <= 0) return;
 
     if (!cart[id]) {
+      var rawPrice = btn.getAttribute('data-price');
       cart[id] = {
         name: btn.getAttribute('data-name'),
-        price: parseInt(btn.getAttribute('data-price'), 10) || 0,
+        // فاضي = المنتج مالوش سعر مسجّل، والكاشير هيكتبه
+        price: rawPrice ? parseInt(rawPrice, 10) : null,
+        manual: '',
         qty: 0,
         max: max
       };
@@ -2113,6 +2220,35 @@ ${TIME_JS}
     }
   });
 
+  // ⚠ ما بنعملش render() هنا: إعادة البناء بتفقد التركيز من
+  // الخانة والكاشير بيلاقي نفسه بيكتب في الفراغ. بنحدّث الرقم
+  // والزرار بس.
+  document.addEventListener('input', function (e) {
+    var input = e.target;
+    if (!input || !input.getAttribute) return;
+
+    var id = input.getAttribute('data-price-for');
+    if (!id || !cart[id]) return;
+
+    cart[id].manual = input.value;
+
+    var t = total();
+    totalEl.innerHTML = money(t.sum) + '<span class="bal-cur">ج.م</span>';
+
+    var treasury = document.getElementById('pos-treasury');
+    submitEl.disabled = t.missing > 0 || !treasury || !treasury.value;
+    submitEl.textContent = t.missing > 0
+      ? 'اكتب سعر ' + t.missing + ' صنف'
+      : 'تم البيع · ' + money(t.sum) + ' ج.م';
+
+    var row = input.closest ? input.closest('.cart-line') : null;
+    var amountEl = row ? row.querySelector('.cart-line-amount') : null;
+    if (amountEl) {
+      var p = manualPrice(cart[id].manual);
+      amountEl.textContent = p === null ? '—' : money(p * cart[id].qty);
+    }
+  });
+
   clearEl.addEventListener('click', function () {
     if (!confirm('تفريغ السلة بالكامل؟')) return;
     cart = {};
@@ -2139,7 +2275,12 @@ ${TIME_JS}
 
     var items = [];
     for (var i = 0; i < ids.length; i++) {
-      items.push({ productId: ids[i], quantity: cart[ids[i]].qty });
+      var line = cart[ids[i]];
+      var entry = { productId: ids[i], quantity: line.qty };
+      // السعر اليدوي بيتبعت للمنتجات اللي مالهاش سعر بس.
+      // الخادم بيتجاهله لو المنتج له سعر مسجّل.
+      if (line.price === null) entry.unitPrice = line.manual;
+      items.push(entry);
     }
 
     submitEl.disabled = true;
@@ -2154,7 +2295,8 @@ ${TIME_JS}
           treasuryId: document.getElementById('pos-treasury').value,
           items: items,
           customerName: document.getElementById('pos-cname').value || null,
-          customerPhone: document.getElementById('pos-cphone').value || null
+          customerPhone: document.getElementById('pos-cphone').value || null,
+          exitDate: document.getElementById('pos-exit').value || null
         })
       });
       var data = await res.json().catch(function () { return null; });
@@ -2184,6 +2326,55 @@ ${TIME_JS}
     }
   });
 
+  // ── تعديل تاريخ الخروج بعد البيع ──
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-exit-open]') : null;
+    if (!btn) return;
+
+    var panel = document.getElementById('exit-' + btn.getAttribute('data-exit-open'));
+    if (panel) panel.hidden = !panel.hidden;
+  });
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-exit-save]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-exit-save');
+    var input = document.getElementById('exit-in-' + id);
+    if (!input || !input.value) return;
+
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+      var res = await fetch('/api/sales/' + encodeURIComponent(id) + '/exit-date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ exitDate: input.value })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      boxEl.hidden = false;
+      if (res.ok) {
+        boxEl.setAttribute('data-tone', 'ok');
+        textEl.textContent = 'تم تعديل تاريخ الخروج.';
+        setTimeout(function () { window.location.reload(); }, 900);
+        return;
+      }
+      boxEl.removeAttribute('data-tone');
+      textEl.textContent = (data && data.error && data.error.message) || 'تعذّر التعديل.';
+    } catch (err) {
+      boxEl.hidden = false;
+      boxEl.removeAttribute('data-tone');
+      textEl.textContent = 'تعذّر الاتصال بالخادم.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
   render();
 })();
 `;
@@ -2208,11 +2399,17 @@ export interface ProductsPageData {
   products: Array<{
     id: string;
     name: string;
-    pricePiastres: number;
+    productType: 'device' | 'accessory';
+    serialNumber: string | null;
+    source: string | null;
+    entryDate: string;
+    pricePiastres: number | null;
     costPiastres?: number;
     quantityOnHand: number;
     isActive: boolean;
   }>;
+  /** تاريخ النهاردة بتوقيت القاهرة — قيمة افتراضية لحقل التاريخ */
+  today: string;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
   idleAction: 'LOGOUT' | 'LOCK';
@@ -2240,20 +2437,36 @@ export function productsPage(data: ProductsPageData): Html {
               : 'يضيف المديرُ المنتجاتِ.'}
           </p>
         </div>`
-      : html`${data.products.map(
-          (p) => html`<div class="prod-row" data-row="${p.id}">
+      : html`${data.products.map((p) => {
+          const isDevice = p.productType === 'device';
+          const priceLabel =
+            p.pricePiastres === null ? 'بلا سعر' : `${formatPiastres(p.pricePiastres)} ج.م`;
+
+          return html`<div class="prod-row" data-row="${p.id}">
             <div class="prod-row-main">
-              <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">${p.name}</span>
-              <span class="prod-row-sub">
-                ${formatPiastres(p.pricePiastres)} ج.م${p.costPiastres !== undefined
-                  ? ` · تكلفة ${formatPiastres(p.costPiastres)}`
-                  : ''}${p.isActive ? '' : ' · موقوف'}
+              <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">
+                ${p.name}
+                <span class="type-tag" data-type="${p.productType}">
+                  ${isDevice ? 'جهاز' : 'إكسسوار'}
+                </span>
               </span>
+
+              <span class="prod-row-sub">
+                ${priceLabel}${p.costPiastres !== undefined
+                  ? ` · تكلفة ${formatPiastres(p.costPiastres)}`
+                  : ''}${p.source ? ` · من ${p.source}` : ''} · دخل ${formatDate(p.entryDate)}${p.isActive
+                  ? ''
+                  : ' · موقوف'}
+              </span>
+
+              ${isDevice && p.serialNumber
+                ? html`<span class="serial">SN: ${p.serialNumber}</span>`
+                : ''}
             </div>
 
             <div class="prod-row-side">
               <span class="prod-row-qty" data-zero="${p.quantityOnHand === 0 ? 'true' : 'false'}">
-                ${String(p.quantityOnHand)}
+                ${isDevice ? (p.quantityOnHand > 0 ? 'متاح' : 'انباع') : String(p.quantityOnHand)}
               </span>
               ${data.canEdit
                 ? html`<button class="btn-mini" type="button" data-edit="${p.id}">تعديل</button>`
@@ -2262,11 +2475,24 @@ export function productsPage(data: ProductsPageData): Html {
 
             ${data.canEdit
               ? html`<div class="prod-edit" id="edit-${p.id}" hidden>
-                  <div class="prod-edit-grid">
+
+                  <div class="price-now">
+                    <span class="price-now-label">سعر البيع الحالي</span>
+                    <span class="price-now-value" data-empty="${p.pricePiastres === null ? 'true' : 'false'}">
+                      ${p.pricePiastres === null ? 'لم يُحدَّد بعد' : formatPiastres(p.pricePiastres)}
+                    </span>
+                  </div>
+
+                  <button class="btn-mini" type="button" data-price-open="${p.id}">
+                    تعديل سعر البيع
+                  </button>
+
+                  <div class="prod-edit-grid" id="price-box-${p.id}" hidden style="margin-top:10px">
                     <div class="field">
-                      <label class="field-label" for="price-${p.id}">سعر البيع</label>
+                      <label class="field-label" for="price-${p.id}">سعر البيع الجديد</label>
                       <input class="field-input" id="price-${p.id}" type="text"
-                        inputmode="decimal" dir="ltr" value="${formatPiastres(p.pricePiastres)}">
+                        inputmode="decimal" dir="ltr" autocomplete="off" placeholder="مثال: 150">
+                      <p class="field-hint">اتركه فارغًا واحفظ لإزالة السعر تمامًا.</p>
                     </div>
                     ${p.costPiastres !== undefined
                       ? html`<div class="field">
@@ -2275,28 +2501,65 @@ export function productsPage(data: ProductsPageData): Html {
                             inputmode="decimal" dir="ltr" value="${formatPiastres(p.costPiastres)}">
                         </div>`
                       : ''}
-                  </div>
-                  <button class="btn-mini" type="button" data-save-price="${p.id}">حفظ الأسعار</button>
-
-                  <div class="prod-edit-grid" style="margin-top:12px">
-                    <div class="field">
-                      <label class="field-label" for="stock-${p.id}">تعديل الكمية</label>
-                      <input class="field-input" id="stock-${p.id}" type="text"
-                        inputmode="numeric" dir="ltr" placeholder="5 أو -2">
-                      <p class="field-hint">اكتب الفرق لا الرقم النهائي. القيمة السالبة خصم لتلف أو جرد.</p>
+                    <div class="field" style="grid-column:1/-1">
+                      <button class="btn-mini" type="button" data-save-price="${p.id}">
+                        حفظ السعر الجديد
+                      </button>
                     </div>
                   </div>
+
+                  <div class="price-log" id="log-${p.id}" hidden>
+                    <p class="price-log-title">آخر تغييرات السعر</p>
+                    <div id="log-body-${p.id}"></div>
+                  </div>
+
+                  <div class="prod-edit-grid" style="margin-top:12px">
+                    ${isDevice
+                      ? html`<div class="field">
+                          <label class="field-label" for="serial-${p.id}">الرقم التسلسلي</label>
+                          <input class="field-input" id="serial-${p.id}" type="text"
+                            dir="ltr" value="${p.serialNumber ?? ''}">
+                        </div>`
+                      : html`<div class="field">
+                          <label class="field-label" for="stock-${p.id}">تعديل الكمية</label>
+                          <input class="field-input" id="stock-${p.id}" type="text"
+                            inputmode="numeric" dir="ltr" placeholder="5 أو -2">
+                          <p class="field-hint">اكتب الفرق لا الرقم النهائي.</p>
+                        </div>`}
+
+                    <div class="field">
+                      <label class="field-label" for="source-${p.id}">مصدر الشراء</label>
+                      <input class="field-input" id="source-${p.id}" type="text"
+                        maxlength="80" value="${p.source ?? ''}">
+                    </div>
+
+                    <div class="field">
+                      <label class="field-label" for="entry-${p.id}">تاريخ الدخول</label>
+                      <input class="field-input" id="entry-${p.id}" type="date"
+                        dir="ltr" value="${p.entryDate}" max="${data.today}">
+                    </div>
+                  </div>
+
                   <div class="prod-edit-actions">
-                    <button class="btn-mini" type="button" data-save-stock="${p.id}">تعديل الكمية</button>
-                    <button class="btn-mini" type="button" data-danger="${p.isActive ? 'true' : 'false'}"
-                      data-toggle="${p.id}" data-active="${p.isActive ? 'true' : 'false'}">
+                    ${isDevice
+                      ? html`<button class="btn-mini" type="button" data-save-details="${p.id}">
+                          حفظ البيانات
+                        </button>`
+                      : html`<button class="btn-mini" type="button" data-save-stock="${p.id}">
+                            تعديل الكمية
+                          </button>
+                          <button class="btn-mini" type="button" data-save-details="${p.id}">
+                            حفظ البيانات
+                          </button>`}
+                    <button class="btn-mini" data-danger="${p.isActive ? 'true' : 'false'}"
+                      type="button" data-toggle="${p.id}" data-active="${p.isActive ? 'true' : 'false'}">
                       ${p.isActive ? 'إيقاف المنتج' : 'إعادة تفعيل'}
                     </button>
                   </div>
                 </div>`
               : ''}
-          </div>`,
-        )}`;
+          </div>`;
+        })}`;
 
   const addPanel = !data.canEdit
     ? ''
@@ -2316,28 +2579,59 @@ export function productsPage(data: ProductsPageData): Html {
               : ''}
 
             <div class="field">
+              <label class="field-label" for="np-type">نوع المنتج</label>
+              <select class="field-input" id="np-type">
+                <option value="accessory">إكسسوار — صنف بكمية</option>
+                <option value="device">جهاز — قطعة برقم تسلسلي</option>
+              </select>
+              <p class="field-hint">
+                الجهاز قطعة واحدة لها رقم تسلسلي. كل وحدة تُضاف على حدة حتى لو كانت الطراز نفسه.
+              </p>
+            </div>
+
+            <div class="field">
               <label class="field-label" for="np-name">اسم المنتج</label>
               <input class="field-input" id="np-name" type="text" maxlength="80" required>
             </div>
 
+            <div class="field" id="np-serial-field" hidden>
+              <label class="field-label" for="np-serial">الرقم التسلسلي</label>
+              <input class="field-input" id="np-serial" type="text" dir="ltr"
+                autocomplete="off" maxlength="64">
+              <p class="field-hint">الكمية تُضبط على قطعة واحدة تلقائيًا.</p>
+            </div>
+
+            <div class="field" id="np-qty-field">
+              <label class="field-label" for="np-qty">الكمية الحالية</label>
+              <input class="field-input" id="np-qty" type="text" inputmode="numeric"
+                dir="ltr" value="0">
+            </div>
+
             <div class="field">
-              <label class="field-label" for="np-price">سعر البيع</label>
+              <label class="field-label" for="np-price">سعر البيع (اختياري)</label>
               <input class="field-input" id="np-price" type="text" inputmode="decimal"
-                dir="ltr" autocomplete="off" required>
-              <p class="field-hint">بالجنيه. مثال: 150 أو 150.75</p>
+                dir="ltr" autocomplete="off">
+              <p class="field-hint">
+                اتركه فارغًا إن لم يتحدّد بعد. يطلبه النظام عند البيع.
+              </p>
             </div>
 
             <div class="field">
               <label class="field-label" for="np-cost">التكلفة (اختياري)</label>
               <input class="field-input" id="np-cost" type="text" inputmode="decimal"
                 dir="ltr" autocomplete="off">
-              <p class="field-hint">اتركها فارغة إن كانت غير معروفة — تُسجَّل صفرًا.</p>
             </div>
 
             <div class="field">
-              <label class="field-label" for="np-qty">الكمية الحالية</label>
-              <input class="field-input" id="np-qty" type="text" inputmode="numeric"
-                dir="ltr" value="0">
+              <label class="field-label" for="np-source">مصدر الشراء (اختياري)</label>
+              <input class="field-input" id="np-source" type="text" maxlength="80">
+              <p class="field-hint">اسم التاجر أو المحل.</p>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="np-entry">تاريخ الدخول</label>
+              <input class="field-input" id="np-entry" type="date" dir="ltr"
+                value="${data.today}" max="${data.today}">
             </div>
 
             <button class="btn-primary" id="addbtn" type="submit">إضافة المنتج</button>
@@ -2400,6 +2694,12 @@ ${MENU_JS}
     box.scrollIntoView({ block: 'nearest' });
   }
 
+  function money(piastres) {
+    if (piastres === null || piastres === undefined) return 'بلا سعر';
+    var abs = Math.abs(Math.trunc(piastres));
+    return Math.floor(abs / 100).toLocaleString('en-US') + '.' + String(abs % 100).padStart(2, '0');
+  }
+
   async function send(url, body, btn, busyLabel) {
     var original = btn.textContent;
     btn.disabled = true;
@@ -2415,7 +2715,6 @@ ${MENU_JS}
       var data = await res.json().catch(function () { return null; });
 
       if (res.ok) return data || {};
-
       say((data && data.error && data.error.message) || 'فشل التنفيذ.', false);
       return null;
     } catch (err) {
@@ -2429,20 +2728,90 @@ ${MENU_JS}
 
   // ── فتح وقفل لوحة التعديل ──
   document.addEventListener('click', function (e) {
-    var t = e.target;
-    if (!t || !t.closest) return;
+    var toggle = e.target.closest ? e.target.closest('[data-edit]') : null;
+    if (!toggle) return;
 
-    var toggle = t.closest('[data-edit]');
-    if (toggle) {
-      var panel = document.getElementById('edit-' + toggle.getAttribute('data-edit'));
-      if (panel) {
-        panel.hidden = !panel.hidden;
-        toggle.textContent = panel.hidden ? 'تعديل' : 'إغلاق';
+    var id = toggle.getAttribute('data-edit');
+    var panel = document.getElementById('edit-' + id);
+    if (!panel) return;
+
+    panel.hidden = !panel.hidden;
+    toggle.textContent = panel.hidden ? 'تعديل' : 'إغلاق';
+    if (!panel.hidden) loadHistory(id);
+  });
+
+  // ── سجل الأسعار: بيتجاب عند فتح اللوحة بس ──
+  // لو جبناه لكل المنتجات مع الصفحة، هتبقى عشرين نداء زيادة
+  // عشان معلومة الموظّف غالبًا مش هيفتحها.
+  var loaded = {};
+  async function loadHistory(id) {
+    if (loaded[id]) return;
+    loaded[id] = true;
+
+    var wrap = document.getElementById('log-' + id);
+    var body = document.getElementById('log-body-' + id);
+    if (!wrap || !body) return;
+
+    try {
+      var res = await fetch('/api/products/' + encodeURIComponent(id) + '/price-history', {
+        credentials: 'same-origin'
+      });
+      if (!res.ok) return;
+      var data = await res.json();
+      var items = (data && data.items) || [];
+      if (items.length === 0) return;
+
+      body.innerHTML = '';
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+
+        var row = document.createElement('div');
+        row.className = 'price-log-row';
+
+        var move = document.createElement('span');
+        move.className = 'price-log-move';
+        move.textContent = money(it.oldPricePiastres) + ' ← ' + money(it.newPricePiastres);
+
+        var who = document.createElement('span');
+        who.className = 'price-log-who';
+        var when = '';
+        try {
+          when = new Date(it.changedAt).toLocaleDateString('ar-EG', {
+            day: 'numeric', month: 'short'
+          });
+        } catch (err) { when = ''; }
+        who.textContent = (it.changedByName || 'غير معروف') + (when ? ' · ' + when : '');
+
+        row.appendChild(move);
+        row.appendChild(who);
+        body.appendChild(row);
       }
+      wrap.hidden = false;
+    } catch (err) {
+      // فشل صامت: تعطّل السجل ما يصحّش يوقف تعديل السعر
+    }
+  }
+
+  // ── فتح خانة السعر الجديد ──
+  // الخانة **فاضية** مش متملية بالسعر القديم، عشان تكتب رقم جديد
+  // مش تصلّح في رقم موجود. ده اللي بيمنع غلطة "مسحت الصفر الأخير".
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-price-open]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-price-open');
+    var boxEl = document.getElementById('price-box-' + id);
+    if (!boxEl) return;
+
+    boxEl.hidden = !boxEl.hidden;
+    btn.textContent = boxEl.hidden ? 'تعديل سعر البيع' : 'إلغاء التعديل';
+    if (!boxEl.hidden) {
+      var input = document.getElementById('price-' + id);
+      if (input) { input.value = ''; input.focus(); }
     }
   });
 
-  // ── حفظ الأسعار ──
+  // ── حفظ السعر الجديد ──
   document.addEventListener('click', async function (e) {
     var btn = e.target.closest ? e.target.closest('[data-save-price]') : null;
     if (!btn) return;
@@ -2451,10 +2820,35 @@ ${MENU_JS}
     var priceEl = document.getElementById('price-' + id);
     var costEl = document.getElementById('cost-' + id);
 
-    var body = { price: priceEl ? priceEl.value : undefined };
-    // التكلفة بتتبعت بس لو الحقل موجود أصلاً في الصفحة.
-    // مفيش حقل = مفيش صلاحية = مفيش قيمة تتبعت.
+    var newPrice = priceEl ? priceEl.value.trim() : '';
+    if (!newPrice && !confirm('إزالة سعر البيع تمامًا؟ سيطلبه النظام يدويًا عند كل بيع.')) return;
+
+    var body = { price: newPrice };
+    // التكلفة تُرسل فقط إن كان حقلها موجودًا في الصفحة.
+    // لا حقل = لا صلاحية = لا قيمة تُرسل.
     if (costEl) body.cost = costEl.value;
+
+    var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
+    if (result) {
+      say('تم حفظ السعر. السعر السابق محفوظ في السجل.', true);
+      setTimeout(function () { window.location.reload(); }, 1000);
+    }
+  });
+
+  // ── حفظ باقي البيانات ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-save-details]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-save-details');
+    var serialEl = document.getElementById('serial-' + id);
+    var sourceEl = document.getElementById('source-' + id);
+    var entryEl = document.getElementById('entry-' + id);
+
+    var body = {};
+    if (serialEl) body.serialNumber = serialEl.value;
+    if (sourceEl) body.source = sourceEl.value;
+    if (entryEl && entryEl.value) body.entryDate = entryEl.value;
 
     var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
     if (result) {
@@ -2463,7 +2857,7 @@ ${MENU_JS}
     }
   });
 
-  // ── تعديل الكمية ──
+  // ── تعديل الكمية (الإكسسوارات فقط) ──
   document.addEventListener('click', async function (e) {
     var btn = e.target.closest ? e.target.closest('[data-save-stock]') : null;
     if (!btn) return;
@@ -2508,7 +2902,20 @@ ${MENU_JS}
     }
   });
 
-  // ── إضافة منتج ──
+  // ── نموذج الإضافة: الحقول بتتبدّل حسب النوع ──
+  var typeEl = document.getElementById('np-type');
+  var serialField = document.getElementById('np-serial-field');
+  var qtyField = document.getElementById('np-qty-field');
+
+  function syncType() {
+    if (!typeEl) return;
+    var isDevice = typeEl.value === 'device';
+    // الجهاز: سريال ظاهر، وخانة الكمية مختفية لأنها مقفولة على 1
+    if (serialField) serialField.hidden = !isDevice;
+    if (qtyField) qtyField.hidden = isDevice;
+  }
+  if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
+
   var form = document.getElementById('addf');
   if (form) {
     form.addEventListener('submit', async function (e) {
@@ -2517,6 +2924,7 @@ ${MENU_JS}
       var msg = document.getElementById('addmsg');
       var msgText = document.getElementById('addmsg-text');
       var branch = document.getElementById('np-branch');
+      var isDevice = typeEl && typeEl.value === 'device';
 
       btn.disabled = true;
       btn.textContent = 'جارٍ الإضافة…';
@@ -2528,9 +2936,15 @@ ${MENU_JS}
           credentials: 'same-origin',
           body: JSON.stringify({
             name: document.getElementById('np-name').value,
+            productType: typeEl ? typeEl.value : 'accessory',
+            serialNumber: isDevice ? document.getElementById('np-serial').value : null,
+            source: document.getElementById('np-source').value,
+            entryDate: document.getElementById('np-entry').value || null,
             price: document.getElementById('np-price').value,
             cost: document.getElementById('np-cost').value,
-            quantity: document.getElementById('np-qty').value,
+            // الجهاز كميته مقفولة على 1 في الخادم — بنبعت 1 عشان
+            // الرقم يبقى واضح في الطلب، والخادم بيفرضها برضه
+            quantity: isDevice ? '1' : document.getElementById('np-qty').value,
             branchId: branch ? branch.value : null
           })
         });
@@ -2553,6 +2967,333 @@ ${MENU_JS}
       } finally {
         btn.disabled = false;
         btn.textContent = 'إضافة المنتج';
+      }
+    });
+  }
+})();
+`;
+}
+
+
+// ═══════════════════ 7) شاشة العملاء ═══════════════════
+
+export interface CustomersPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  roleKey: string;
+  /** customer.create */
+  canAdd: boolean;
+  /** customer.edit */
+  canEdit: boolean;
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  /** للمالك بس */
+  branches: Array<{ id: string; name: string }>;
+  customers: Array<{
+    id: string;
+    name: string;
+    phone: string | null;
+    notes: string | null;
+  }>;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * شاشة العملاء.
+ *
+ * ══ إيه اللي مش هنا ══
+ * مفيش أوسمة (عميل مميّز / دائم)، ومفيش تاريخ مشتريات.
+ *
+ * الوسام اللي بيتحسب من غير بيانات كافية بيبقى كذب مهذّب: "عميل
+ * مميّز" بعد فاتورتين معناها لا حاجة، وبتخلّي الموظّف يبطّل يصدّق
+ * أي وسام تاني بعدها. لما يبقى فيه مبيعات تكفي، الوسام هيبقى له
+ * معنى — ووقتها نضيفه.
+ */
+export function customersPage(data: CustomersPageData): Html {
+  const rows =
+    data.customers.length === 0
+      ? html`<div class="empty">
+          <p class="empty-title">لا يوجد عملاء بعد</p>
+          <p class="empty-note">
+            ${data.canAdd
+              ? 'سجّل أول عميل من القسم أعلاه.'
+              : 'لا تملك صلاحية تسجيل العملاء.'}
+          </p>
+        </div>`
+      : html`${data.customers.map(
+          (cust) => html`<div class="prod-row" data-cust="${cust.id}">
+            <div class="prod-row-main">
+              <span class="prod-row-name">${cust.name}</span>
+              ${cust.phone ? html`<span class="serial">${cust.phone}</span>` : ''}
+              ${cust.notes ? html`<span class="cust-notes">${cust.notes}</span>` : ''}
+            </div>
+
+            <div class="prod-row-side">
+              ${data.canEdit
+                ? html`<button class="btn-mini" type="button" data-cedit="${cust.id}">تعديل</button>`
+                : ''}
+            </div>
+
+            ${data.canEdit
+              ? html`<div class="prod-edit" id="cedit-${cust.id}" hidden>
+                  <div class="field">
+                    <label class="field-label" for="cname-${cust.id}">الاسم</label>
+                    <input class="field-input" id="cname-${cust.id}" type="text"
+                      maxlength="80" value="${cust.name}">
+                  </div>
+
+                  <div class="field">
+                    <label class="field-label" for="cphone-${cust.id}">رقم الهاتف</label>
+                    <input class="field-input" id="cphone-${cust.id}" type="tel"
+                      inputmode="tel" dir="ltr" maxlength="32" value="${cust.phone ?? ''}">
+                  </div>
+
+                  <div class="field">
+                    <label class="field-label" for="cnotes-${cust.id}">ملاحظات</label>
+                    <textarea class="field-input" id="cnotes-${cust.id}" rows="3"
+                      maxlength="1000">${cust.notes ?? ''}</textarea>
+                  </div>
+
+                  <div class="prod-edit-actions">
+                    <button class="btn-mini" type="button" data-csave="${cust.id}">حفظ</button>
+                    <button class="btn-mini" data-danger="true" type="button"
+                      data-cdel="${cust.id}">حذف العميل</button>
+                  </div>
+                </div>`
+              : ''}
+          </div>`,
+        )}`;
+
+  const addPanel = !data.canAdd
+    ? ''
+    : html`<details class="panel">
+        <summary>تسجيل عميل</summary>
+        <div class="panel-body">
+          <div class="alert-box" id="caddmsg" role="alert" hidden><span id="caddmsg-text"></span></div>
+
+          <form id="caddf" novalidate>
+            ${data.branches.length > 0
+              ? html`<div class="field">
+                  <label class="field-label" for="nc-branch">الفرع</label>
+                  <select class="field-input" id="nc-branch">
+                    ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+                  </select>
+                </div>`
+              : ''}
+
+            <div class="field">
+              <label class="field-label" for="nc-name">اسم العميل</label>
+              <input class="field-input" id="nc-name" type="text" maxlength="80" required>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="nc-phone">رقم الهاتف (اختياري)</label>
+              <input class="field-input" id="nc-phone" type="tel" inputmode="tel"
+                dir="ltr" maxlength="32" autocomplete="off">
+              <p class="field-hint">اكتبه كما هو. الرقم الواحد لا يتكرّر داخل الفرع.</p>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="nc-notes">ملاحظات (اختياري)</label>
+              <textarea class="field-input" id="nc-notes" rows="3" maxlength="1000"></textarea>
+            </div>
+
+            <button class="btn-primary" id="caddbtn" type="submit">تسجيل العميل</button>
+          </form>
+        </div>
+      </details>`;
+
+  return shell({
+    title: 'العملاء',
+    script: customersScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="custmsg" role="alert" hidden><span id="custmsg-text"></span></div>
+
+  ${addPanel}
+
+  <details class="panel" open>
+    <summary>العملاء (${String(data.customers.length)})</summary>
+    <div class="panel-body">
+      <div class="field">
+        <input class="field-input" id="cust-search" type="search"
+          placeholder="ابحث بالاسم أو الرقم" autocomplete="off">
+      </div>
+      ${rows}
+    </div>
+  </details>
+</main>
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function customersScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+
+(function () {
+  var box = document.getElementById('custmsg');
+  var text = document.getElementById('custmsg-text');
+
+  function say(message, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    text.textContent = message;
+    box.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function send(url, body, btn, busyLabel) {
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyLabel;
+    try {
+      var res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (res.ok) return data || {};
+      say((data && data.error && data.error.message) || 'فشل التنفيذ.', false);
+      return null;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return null;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  // ── البحث: بيخفي الصفوف مش بيعيد بناءها ──
+  // الفلترة في المتصفح لأن القائمة محدودة أصلاً (200 صف)، فمفيش
+  // داعي لرحلة شبكة مع كل حرف.
+  var search = document.getElementById('cust-search');
+  if (search) {
+    search.addEventListener('input', function () {
+      var q = search.value.trim();
+      var rows = document.querySelectorAll('[data-cust]');
+      for (var i = 0; i < rows.length; i++) {
+        var t = rows[i].textContent || '';
+        rows[i].hidden = q.length > 0 && t.indexOf(q) === -1;
+      }
+    });
+  }
+
+  // ── فتح لوحة التعديل ──
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-cedit]') : null;
+    if (!btn) return;
+    var panel = document.getElementById('cedit-' + btn.getAttribute('data-cedit'));
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    btn.textContent = panel.hidden ? 'تعديل' : 'إغلاق';
+  });
+
+  // ── حفظ ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-csave]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-csave');
+    var result = await send('/api/customers/' + encodeURIComponent(id), {
+      name: document.getElementById('cname-' + id).value,
+      phone: document.getElementById('cphone-' + id).value,
+      notes: document.getElementById('cnotes-' + id).value
+    }, btn, 'جارٍ الحفظ…');
+
+    if (result) {
+      say('تم الحفظ.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── حذف ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-cdel]') : null;
+    if (!btn) return;
+
+    if (!confirm('حذف هذا العميل؟ الفواتير السابقة لا تتأثّر.')) return;
+
+    var id = btn.getAttribute('data-cdel');
+    var result = await send(
+      '/api/customers/' + encodeURIComponent(id) + '/delete', {}, btn, 'جارٍ الحذف…'
+    );
+
+    if (result) {
+      say('تم حذف العميل.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── تسجيل عميل ──
+  var form = document.getElementById('caddf');
+  if (form) {
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var btn = document.getElementById('caddbtn');
+      var msg = document.getElementById('caddmsg');
+      var msgText = document.getElementById('caddmsg-text');
+      var branch = document.getElementById('nc-branch');
+
+      btn.disabled = true;
+      btn.textContent = 'جارٍ التسجيل…';
+
+      try {
+        var res = await fetch('/api/customers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            name: document.getElementById('nc-name').value,
+            phone: document.getElementById('nc-phone').value,
+            notes: document.getElementById('nc-notes').value,
+            branchId: branch ? branch.value : null
+          })
+        });
+        var data = await res.json().catch(function () { return null; });
+
+        msg.hidden = false;
+        if (res.ok) {
+          msg.setAttribute('data-tone', 'ok');
+          msgText.textContent = 'تم تسجيل العميل.';
+          setTimeout(function () { window.location.reload(); }, 900);
+          return;
+        }
+        msg.removeAttribute('data-tone');
+        msgText.textContent = (data && data.error && data.error.message) || 'فشل التسجيل.';
+      } catch (err) {
+        msg.hidden = false;
+        msg.removeAttribute('data-tone');
+        msgText.textContent = 'تعذّر الاتصال بالخادم.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'تسجيل العميل';
       }
     });
   }
