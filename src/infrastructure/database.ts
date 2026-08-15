@@ -682,7 +682,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       if (error || !row) {
         // 23505 = unique violation — نفس الاسم في نفس الفرع
         if (error?.code === '23505') {
-          throw Errors.validation('فيه منتج بنفس الاسم في الفرع ده.');
+          throw Errors.validation('يوجد منتج بالاسم نفسه في هذا الفرع.');
         }
         throw Errors.internal(`product insert: ${error?.message}`);
       }
@@ -701,7 +701,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
 
       if (error) {
         if (error.code === '23505') {
-          throw Errors.validation('فيه منتج بنفس الاسم في الفرع ده.');
+          throw Errors.validation('يوجد منتج بالاسم نفسه في هذا الفرع.');
         }
         throw Errors.internal(`product update: ${error.message}`);
       }
@@ -742,7 +742,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
         const after = before + delta;
 
         if (after < 0) {
-          throw Errors.validation(`الكمية المتاحة ${before} بس، مش كفاية للخصم ده.`);
+          throw Errors.validation(`الكمية المتاحة ${before} فقط، وهي لا تكفي لهذا الخصم.`);
         }
 
         const { data: rows, error } = await db
@@ -756,7 +756,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
         if (error) {
           // 23514 = القيد في القاعدة رفض كمية سالبة
           if (error.code === '23514') {
-            throw Errors.validation('الكمية مش كفاية للخصم ده.');
+            throw Errors.validation('الكمية لا تكفي لهذا الخصم.');
           }
           throw Errors.internal(`product adjust qty: ${error.message}`);
         }
@@ -765,7 +765,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
         // صفر صفوف = حد غيّرها بينا. نعيد بالقيمة الجديدة.
       }
 
-      throw Errors.validation('المخزون بيتغيّر دلوقتي. حاول تاني بعد لحظة.');
+      throw Errors.validation('المخزون قيد التغيير الآن. أعد المحاولة بعد لحظة.');
     },
   };
 }
@@ -825,7 +825,7 @@ function raiseSaleError(error: { code?: string; message?: string }): never {
       throw Errors.notFound('العنصر المطلوب');
     default:
       // 23514 = قيد في القاعدة رفض السجل (مخزون سالب مثلاً)
-      if (error.code === '23514') throw Errors.validation('الكمية مش كافية.');
+      if (error.code === '23514') throw Errors.validation('الكمية غير كافية.');
       throw Errors.internal(`fn_create_sale: ${error.message}`);
   }
 }
