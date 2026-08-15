@@ -88,17 +88,14 @@ button{font:inherit}
   100%{transform:rotate(0deg)}
 }
 
-/* ═══ الشارة — ختم محفور مش مستطيل ═══
-   حد نحاسي واحد رفيع + تباعد حروف واسع + ميلة بسيطة.
-   الحد المزدوج القديم اتشال: الميلة والتباعد بيدّوا إحساس الختم
-   من غير ما نحتاج حدّين. */
-.stamp{display:inline-block;padding:3px 10px 4px;border:1px solid var(--brand-line);
-  border-radius:3px;color:var(--brand);background:transparent;
-  font-family:var(--font-display);font-size:10.5px;font-weight:600;
-  letter-spacing:.12em;line-height:1.5;transform:rotate(-1deg);white-space:nowrap}
-.stamp[data-role="SUPER_ADMIN"]{background:var(--brand-wash);border-color:var(--brand)}
-.stamp[data-role="BRANCH_MANAGER"]{border-color:var(--brand-line)}
-.stamp[data-role="STAFF"]{border-color:var(--brand-line)}
+/* ═══ الشارة — كلمة محفورة مش صندوق ═══
+   بلا إطار، مستقيمة، تخينة، بتباعد حروف واسع.
+   الإطار كان بيعمل صندوق صغير جنب الاسم فبياخد انتباه أكتر من
+   الاسم نفسه. الحرف التخين النحاسي بيقول نفس المعلومة بهدوء. */
+.stamp{display:inline-block;padding:0;border:none;background:none;
+  color:var(--brand);font-family:var(--font-display);font-size:11px;
+  font-weight:700;letter-spacing:.11em;line-height:1.5;
+  transform:none;white-space:nowrap}
 
 /* ═══ الشريط العلوي ═══
    الخط النحاسي تحته هو خيط الأمان في ورقة البنكنوت — أرفع تفصيلة
@@ -110,9 +107,7 @@ button{font:inherit}
 .who .brandmark{color:var(--brand-soft)}
 .who-name{font-family:var(--font-display);font-size:16px;font-weight:600;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.app-bar .stamp{color:var(--brand-soft);border-color:rgba(201,165,87,.5)}
-.app-bar .stamp[data-role="SUPER_ADMIN"]{background:rgba(201,165,87,.14);
-  border-color:var(--brand-soft)}
+.app-bar .stamp{color:var(--brand-soft)}
 
 /* ═══ قائمة النقط الثلاث ═══
    مبنية على <details> — بتشتغل بالكيبورد وبدون أي JavaScript. */
@@ -446,6 +441,61 @@ select.field-input{appearance:none;
 .prod-edit-grid .field{margin-bottom:0}
 .prod-edit-grid .field:only-child{grid-column:1/-1}
 .prod-edit-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+
+/* ═══ نوع المنتج ═══
+   الجهاز والإكسسوار قاعدتين مختلفتين، فبيتفرّقوا بالعين قبل
+   ما تقرا. الجهاز نحاسي (له سريال وقطعة واحدة)، الإكسسوار رمادي
+   هادي (صنف بكمية). */
+.type-tag{display:inline-block;padding:1px 7px 2px;border-radius:3px;
+  font-family:var(--font-mono);font-size:10px;font-weight:500;
+  letter-spacing:.04em;line-height:1.6;white-space:nowrap}
+.type-tag[data-type="device"]{color:var(--brand);background:var(--brand-wash)}
+.type-tag[data-type="accessory"]{color:var(--ink-soft);background:var(--surface)}
+
+/* السريال بخط أحادي المسافة: الأرقام والحروف بتتصفّ فبتقارن أسرع */
+.serial{font-family:var(--font-mono);font-size:11px;color:var(--ink-soft);
+  direction:ltr;unicode-bidi:embed}
+
+/* ═══ السعر الحالي في لوحة التعديل ═══
+   نص مش خانة إدخال، عشان يستحيل تدهسه وإنت بتكتب. */
+.price-now{display:flex;align-items:baseline;justify-content:space-between;
+  gap:12px;padding:10px 12px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r-sm);margin-bottom:10px}
+.price-now-label{font-size:12px;color:var(--ink-soft)}
+.price-now-value{font-family:var(--font-mono);font-size:16px;font-weight:500;
+  font-variant-numeric:tabular-nums;direction:ltr}
+.price-now-value[data-empty="true"]{color:var(--ink-faint);font-size:13px}
+
+/* ═══ سجل الأسعار ═══ */
+.price-log{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.price-log-title{font-size:12px;font-weight:600;color:var(--ink-soft);margin:0 0 7px}
+.price-log-row{display:flex;align-items:baseline;justify-content:space-between;
+  gap:10px;padding:4px 0;font-size:12px}
+.price-log-move{font-family:var(--font-mono);direction:ltr;font-variant-numeric:tabular-nums}
+.price-log-who{color:var(--ink-faint);font-size:11px}
+
+/* ═══ السعر اليدوي في السلة ═══
+   بيظهر بس للمنتجات اللي مالهاش سعر مسجّل. */
+.cart-price{display:flex;align-items:center;gap:6px;margin-top:6px}
+.cart-price-input{width:96px;height:34px;padding:0 9px;font-family:var(--font-mono);
+  font-size:14px;direction:ltr;text-align:center;color:var(--ink);
+  background:var(--card);border:1.5px solid var(--brand);border-radius:var(--r-sm)}
+.cart-price-input:focus{outline:none;border-color:var(--credit)}
+.cart-price-note{font-size:11px;color:var(--brand)}
+
+/* ملاحظات العميل: بتلتف على أكتر من سطر مش بتتقص */
+.cust-notes{display:block;font-size:12px;color:var(--ink-soft);
+  line-height:1.6;margin-top:4px;white-space:pre-wrap}
+
+/* لوحة تعديل تاريخ الخروج جوّه صف الفاتورة */
+.exit-edit{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  margin-top:10px;padding:11px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-sm)}
+.exit-edit[hidden]{display:none}
+.exit-edit .field-input{width:auto;flex:1;min-width:150px}
+.exit-edit .field-hint{flex-basis:100%;margin:0}
+
+textarea.field-input{height:auto;padding:10px 12px;line-height:1.7;resize:vertical}
 
 @media (max-width:360px){
   .prod-grid{grid-template-columns:1fr}
