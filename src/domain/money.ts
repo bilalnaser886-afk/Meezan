@@ -59,12 +59,12 @@ export function parseMoneyToPiastres(raw: string): number {
       // المبلغ السالب مرفوض عن قصد: الاتجاه (دخل/خرج) هو اللي
       // بيحمل الإشارة، مش المبلغ. ده بيمنع مصروف بمبلغ سالب
       // بيزوّد الرصيد بالغلط.
-      throw new MoneyError('المبلغ لازم يكون موجب. اختار نوع الحركة لتحديد دخل أو خرج.');
+      throw new MoneyError('يجب أن يكون المبلغ موجبًا. حدّد نوع الحركة لتعيين الدخل أو الخرج.');
     }
     if (/\.\d{3,}$/.test(cleaned)) {
-      throw new MoneyError('المبلغ بمنزلتين عشريتين كحد أقصى (مثال: 150.75).');
+      throw new MoneyError('المبلغ بمنزلتين عشريتين كحد أقصى. مثال: 150.75');
     }
-    throw new MoneyError('صيغة المبلغ غير صحيحة. اكتب رقم زي 150 أو 150.75');
+    throw new MoneyError('صيغة المبلغ غير صحيحة. اكتب رقمًا مثل 150 أو 150.75');
   }
 
   const pounds = Number.parseInt(match[1], 10);
@@ -73,7 +73,7 @@ export function parseMoneyToPiastres(raw: string): number {
 
   const total = pounds * 100 + piastres;
 
-  if (total <= 0) throw new MoneyError('المبلغ لازم يكون أكبر من صفر.');
+  if (total <= 0) throw new MoneyError('يجب أن يكون المبلغ أكبر من صفر.');
   if (total > MAX_PIASTRES) throw new MoneyError('المبلغ أكبر من الحد المسموح.');
 
   return total;
@@ -124,8 +124,8 @@ export function parseCount(raw: unknown, options: { allowNegative?: boolean } = 
   if (!pattern.test(cleaned)) {
     throw new MoneyError(
       options.allowNegative
-        ? 'الكمية لازم تكون رقم صحيح (سالب للخصم).'
-        : 'الكمية لازم تكون رقم صحيح مش سالب.',
+        ? 'يجب أن تكون الكمية رقمًا صحيحًا، والسالب للخصم.'
+        : 'يجب أن تكون الكمية رقمًا صحيحًا غير سالب.',
     );
   }
 
