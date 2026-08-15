@@ -11,12 +11,14 @@
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import { SESSION_POLICY, assertEnv, idleRuleFor, superAdminPath, type Env } from './domain/config';
+import { todayInCairo } from './domain/dates';
 import { AppError } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
 import {
   announcementRoutes,
   authRoutes,
   branchRoutes,
+  customerRoutes,
   productRoutes,
   saleRoutes,
   setupRoutes,
@@ -32,6 +34,7 @@ import {
 } from './application/use-cases/treasury';
 import { listProducts, listSellableProducts } from './application/use-cases/products';
 import { listSales } from './application/use-cases/sales';
+import { listCustomers } from './application/use-cases/customers';
 import type { AuthenticatedUser } from './application/ports';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
@@ -39,6 +42,7 @@ import {
   dashboardPage,
   lockedPage,
   loginPage,
+  customersPage,
   posPage,
   productsPage,
   setupPage,
@@ -98,6 +102,7 @@ app.route('/api/branches', branchRoutes);
 app.route('/api/treasury', treasuryRoutes);
 app.route('/api/products', productRoutes);
 app.route('/api/sales', saleRoutes);
+app.route('/api/customers', customerRoutes);
 app.route('/', setupRoutes);
 
 // ═══════════════════ الصفحات ═══════════════════
@@ -242,6 +247,8 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       products: products.map((p) => ({
         id: p.id,
         name: p.name,
+        productType: p.productType,
+        serialNumber: p.serialNumber,
         pricePiastres: p.pricePiastres,
         quantityOnHand: p.quantityOnHand,
       })),
@@ -251,7 +258,12 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         customerName: s.customerName,
         staffName: s.staffName,
         createdAt: s.createdAt,
+        exitDate: s.exitDate,
+        // ⚠ بيتحسب هنا على الخادم مش في المتصفح.
+        // إخفاء الزرار راحة؛ الحراسة الحقيقية في حالة الاستخدام.
+        canEditExit: s.staffId === user.id || user.roleKey === 'SUPER_ADMIN',
       })),
+      today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
@@ -299,6 +311,57 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       branches,
       products,
+      today: todayInCairo(),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * صفحة العملاء.
+ *
+ * بتتفتح من قائمة التلات نقط مش من الشريط السفلي: الشريط لليومي
+ * المتكرر (بيع، منتجات، خزينة)، والقائمة للي بتفتحه لما تحتاجه.
+ */
+app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.CUSTOMER_VIEW)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+  const canAdd = user.permissions.includes(PERMISSIONS.CUSTOMER_CREATE);
+
+  const [customers, branches, branchLabel] = await Promise.all([
+    listCustomers(container.customers, user),
+    user.roleKey === 'SUPER_ADMIN' && canAdd
+      ? listBranchesForActor(container.users, user).catch(() => [])
+      : Promise.resolve([]),
+    branchLabelFor(container, user),
+  ]);
+
+  return c.html(
+    customersPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel,
+      roleKey: user.roleKey,
+      canAdd,
+      canEdit: user.permissions.includes(PERMISSIONS.CUSTOMER_EDIT),
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      branches,
+      customers: customers.map((cst) => ({
+        id: cst.id,
+        name: cst.name,
+        phone: cst.phone,
+        notes: cst.notes,
+      })),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
