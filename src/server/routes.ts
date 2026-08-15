@@ -40,19 +40,31 @@ import {
 } from '../application/use-cases/treasury';
 import {
   createProduct,
+  getPriceHistory,
   listProducts,
   listSellableProducts,
   restockProduct,
   updateProduct,
 } from '../application/use-cases/products';
-import { createSale, getSale, listSales } from '../application/use-cases/sales';
+import {
+  createSale,
+  getSale,
+  listSales,
+  updateSaleExitDate,
+} from '../application/use-cases/sales';
+import {
+  createCustomer,
+  deleteCustomer,
+  listCustomers,
+  updateCustomer,
+} from '../application/use-cases/customers';
 import {
   MoneyError,
   parseCostToPiastres,
   parseCount,
   parseMoneyToPiastres,
 } from '../domain/money';
-import type { ManualMovementType, SaleLineInput } from '../application/ports';
+import type { ManualMovementType, ProductType, SaleLineInput } from '../application/ports';
 import {
   buildContainer,
   clearAuthCookies,
@@ -658,6 +670,10 @@ productRoutes.get(
 
 interface ProductBody {
   name?: string;
+  productType?: string;
+  serialNumber?: string | null;
+  source?: string | null;
+  entryDate?: string | null;
   price?: string;
   cost?: string;
   quantity?: string;
@@ -665,17 +681,29 @@ interface ProductBody {
   isActive?: boolean;
 }
 
+/**
+ * قراءة السعر من مدخل المستخدم.
+ *
+ * الفراغ **مش** غلط — معناه "المنتج لسه ما اتسعّرش".
+ * بنرجّع null، وده مختلف تمامًا عن صفر.
+ */
+function readOptionalPrice(raw: string | undefined | null): number | null {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+  return parseMoneyToPiastres(text);
+}
+
 productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }), async (c) => {
   const body = await readJson<ProductBody>(c);
 
   // التحويل من كلام المستخدم لأرقام بيحصل هنا، في نقطة واحدة.
   // حالة الاستخدام بتستلم قروش وأعداد صحيحة وخلاص.
-  let pricePiastres: number;
+  let pricePiastres: number | null;
   let costPiastres: number;
   let quantity: number;
 
   try {
-    pricePiastres = parseMoneyToPiastres(body.price ?? '');
+    pricePiastres = readOptionalPrice(body.price);
     costPiastres = parseCostToPiastres(body.cost);
     quantity = body.quantity === undefined || body.quantity === null || body.quantity === ''
       ? 0
@@ -687,6 +715,10 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
   const container = buildContainer(c.env);
   const created = await createProduct(container.products, c.get('user'), {
     name: body.name ?? '',
+    productType: (body.productType ?? 'accessory') as ProductType,
+    serialNumber: body.serialNumber ?? null,
+    source: body.source ?? null,
+    entryDate: body.entryDate ?? null,
     pricePiastres,
     costPiastres,
     quantityOnHand: quantity,
@@ -707,20 +739,29 @@ productRoutes.post(
     const body = await readJson<ProductBody>(c);
     const patch: {
       name?: string;
-      pricePiastres?: number;
+      pricePiastres?: number | null;
       costPiastres?: number;
       isActive?: boolean;
+      source?: string | null;
+      serialNumber?: string | null;
+      entryDate?: string | null;
     } = {};
 
     try {
       if (typeof body.name === 'string') patch.name = body.name;
-      if (typeof body.price === 'string' && body.price.trim()) {
-        patch.pricePiastres = parseMoneyToPiastres(body.price);
+      // ⚠ الفرق بين "الحقل مش مبعوت" و"الحقل مبعوت فاضي":
+      //   مش مبعوت  → ما نلمسش السعر
+      //   مبعوت فاضي → شيل السعر (المنتج بقى بلا سعر)
+      if (typeof body.price === 'string') {
+        patch.pricePiastres = readOptionalPrice(body.price);
       }
       if (typeof body.cost === 'string') {
         patch.costPiastres = parseCostToPiastres(body.cost);
       }
       if (typeof body.isActive === 'boolean') patch.isActive = body.isActive;
+      if (body.source !== undefined) patch.source = body.source;
+      if (body.serialNumber !== undefined) patch.serialNumber = body.serialNumber;
+      if (body.entryDate !== undefined) patch.entryDate = body.entryDate;
     } catch (error) {
       throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
     }
@@ -729,6 +770,20 @@ productRoutes.post(
     await updateProduct(container.products, c.get('user'), id, patch);
 
     return c.json({ ok: true });
+  },
+);
+
+/** سجل أسعار منتج — كان كام وبقى كام ومين غيّره */
+productRoutes.get(
+  '/:id/price-history',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المنتج مفقود.');
+
+    const container = buildContainer(c.env);
+    const items = await getPriceHistory(container.products, c.get('user'), id);
+    return c.json({ ok: true, items });
   },
 );
 
@@ -763,9 +818,14 @@ export const saleRoutes = new Hono<AppBindings>();
 
 interface SaleBody {
   treasuryId?: string;
-  items?: Array<{ productId?: string; quantity?: number | string }>;
+  items?: Array<{
+    productId?: string;
+    quantity?: number | string;
+    unitPrice?: string | null;
+  }>;
   customerName?: string | null;
   customerPhone?: string | null;
+  exitDate?: string | null;
 }
 
 /**
@@ -787,6 +847,9 @@ saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), as
     items = body.items.map((line) => ({
       productId: typeof line?.productId === 'string' ? line.productId : '',
       quantity: parseCount(line?.quantity),
+      // السعر اليدوي بيتبعت بس لو الكاشير كتبه — يعني المنتج
+      // مالوش سعر مسجّل
+      unitPricePiastres: readOptionalPrice(line?.unitPrice),
     }));
   } catch (error) {
     throw Errors.validation(error instanceof MoneyError ? error.message : 'السلة غير صالحة.');
@@ -798,6 +861,7 @@ saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), as
     items,
     customerName: body.customerName ?? null,
     customerPhone: body.customerPhone ?? null,
+    exitDate: body.exitDate ?? null,
   });
 
   return c.json(
@@ -853,5 +917,90 @@ saleRoutes.get(
     const container = buildContainer(c.env);
     const sale = await getSale(container.sales, c.get('user'), id);
     return c.json({ ok: true, sale });
+  },
+);
+
+
+/** تعديل تاريخ الخروج — اللي سجّل البيع، والمالك */
+saleRoutes.post(
+  '/:id/exit-date',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const body = await readJson<{ exitDate?: string }>(c);
+    if (!body.exitDate) throw Errors.validation('اكتب تاريخ الخروج.');
+
+    const container = buildContainer(c.env);
+    const result = await updateSaleExitDate(container.sales, c.get('user'), id, body.exitDate);
+
+    return c.json({ ok: true, exitDate: result.exitDate });
+  },
+);
+
+
+// ═══════════════════ 8) العملاء ═══════════════════
+
+export const customerRoutes = new Hono<AppBindings>();
+
+interface CustomerBody {
+  name?: string;
+  phone?: string | null;
+  notes?: string | null;
+  branchId?: string | null;
+}
+
+customerRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.CUSTOMER_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listCustomers(container.customers, c.get('user'), c.req.query('q') ?? null);
+    return c.json({ ok: true, items });
+  },
+);
+
+customerRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.CUSTOMER_CREATE] }), async (c) => {
+  const body = await readJson<CustomerBody>(c);
+
+  const container = buildContainer(c.env);
+  const created = await createCustomer(container.customers, c.get('user'), {
+    name: body.name ?? '',
+    phone: body.phone ?? null,
+    notes: body.notes ?? null,
+    branchId: body.branchId ?? null,
+  });
+
+  return c.json({ ok: true, id: created.id }, 201);
+});
+
+customerRoutes.post('/:id', requireAuth({ requireAll: [PERMISSIONS.CUSTOMER_EDIT] }), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف العميل مفقود.');
+
+  const body = await readJson<CustomerBody>(c);
+  const patch: { name?: string; phone?: string | null; notes?: string | null } = {};
+  if (typeof body.name === 'string') patch.name = body.name;
+  if (body.phone !== undefined) patch.phone = body.phone;
+  if (body.notes !== undefined) patch.notes = body.notes;
+
+  const container = buildContainer(c.env);
+  await updateCustomer(container.customers, c.get('user'), id, patch);
+
+  return c.json({ ok: true });
+});
+
+customerRoutes.post(
+  '/:id/delete',
+  requireAuth({ requireAll: [PERMISSIONS.CUSTOMER_EDIT] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف العميل مفقود.');
+
+    const container = buildContainer(c.env);
+    await deleteCustomer(container.customers, c.get('user'), id);
+
+    return c.json({ ok: true });
   },
 );
