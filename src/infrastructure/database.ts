@@ -28,9 +28,13 @@ import type {
   MovementRepository,
   MovementStatus,
   MovementType,
+  CustomerRecord,
+  CustomerRepository,
+  PriceChangeRecord,
   ProductListOptions,
   ProductRecord,
   ProductRepository,
+  ProductType,
   RateLimiter,
   RoleKey,
   SaleDetail,
@@ -591,7 +595,9 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 //  ولو حد ضاف مسار جديد بكرة، لازم يعدّي من هنا.
 // ═══════════════════════════════════════════════════════════
 
-const PRODUCT_BASE_COLUMNS = 'id, branch_id, name, price_piastres, quantity_on_hand, is_active';
+const PRODUCT_BASE_COLUMNS =
+  'id, branch_id, name, product_type, serial_number, source, entry_date, ' +
+  'price_piastres, quantity_on_hand, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -601,7 +607,11 @@ interface RawProduct {
   id: string;
   branch_id: string;
   name: string;
-  price_piastres: number | string;
+  product_type: string;
+  serial_number: string | null;
+  source: string | null;
+  entry_date: string;
+  price_piastres: number | string | null;
   quantity_on_hand: number | string;
   is_active: boolean;
   cost_piastres?: number | string;
@@ -612,8 +622,16 @@ function toProduct(raw: RawProduct): ProductRecord {
     id: raw.id,
     branchId: raw.branch_id,
     name: raw.name,
-    // bigint ممكن يرجع كنص من PostgREST — بنوحّده لرقم
-    pricePiastres: Number(raw.price_piastres),
+    productType: (raw.product_type === 'device' ? 'device' : 'accessory') as ProductType,
+    serialNumber: raw.serial_number,
+    source: raw.source,
+    // عمود date بيرجع نص زي "2026-08-15" — بنسيبه نص.
+    // تحويله لـ Date بيحطّ عليه وقت ومنطقة زمنية، وأول ما يترجع
+    // بيتزحلق يوم في اتجاه أو التاني.
+    entryDate: String(raw.entry_date).slice(0, 10),
+    // ⚠ null معناها "المنتج لسه ما اتسعّرش" — مش صفر.
+    // لو حوّلناها صفر، Number(null) هيدّي 0 والفرق يضيع.
+    pricePiastres: raw.price_piastres === null ? null : Number(raw.price_piastres),
     quantityOnHand: Number(raw.quantity_on_hand),
     isActive: raw.is_active,
   };
@@ -670,19 +688,35 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
         .insert({
           branch_id: data.branchId,
           name: data.name,
+          product_type: data.productType,
+          serial_number: data.serialNumber,
+          source: data.source,
+          // null = سيب افتراضي قاعدة البيانات يشتغل (تاريخ القاهرة)
+          ...(data.entryDate ? { entry_date: data.entryDate } : {}),
           price_piastres: data.pricePiastres,
           cost_piastres: data.costPiastres,
           quantity_on_hand: data.quantityOnHand,
           is_active: true,
           created_by_id: data.createdById,
+          updated_by_id: data.createdById,
         })
         .select('id')
         .single();
 
       if (error || !row) {
-        // 23505 = unique violation — نفس الاسم في نفس الفرع
+        // 23505 = تكرار. فيه فهرسين فريدين على الجدول دلوقتي،
+        // فبنقرا اسم الفهرس عشان نقول للمستخدم إيه بالظبط المتكرر
+        // بدل رسالة عامة تخليه يدوّر.
         if (error?.code === '23505') {
+          const detail = `${error.message} ${error.details ?? ''}`;
+          if (detail.includes('serial')) {
+            throw Errors.validation('الرقم التسلسلي ده مسجّل على منتج آخر.');
+          }
           throw Errors.validation('يوجد منتج بالاسم نفسه في هذا الفرع.');
+        }
+        // 23514 = قيد. الأشهر هنا: جهاز بلا سريال أو كميته أكبر من 1
+        if (error?.code === '23514') {
+          throw Errors.validation('بيانات المنتج لا تطابق نوعه. الجهاز قطعة واحدة برقم تسلسلي.');
         }
         throw Errors.internal(`product insert: ${error?.message}`);
       }
@@ -691,20 +725,62 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
     },
 
     async update(id, data) {
-      const patch: Record<string, unknown> = {};
+      // ⚠ updated_by_id بيتكتب دايمًا. المشغّل اللي بيسجّل تغيير
+      // السعر بيقرا منه مين عمل التغيير — من غيره السجل بيتكتب
+      // بلا اسم.
+      const patch: Record<string, unknown> = { updated_by_id: data.updatedById };
       if (data.name !== undefined) patch.name = data.name;
       if (data.pricePiastres !== undefined) patch.price_piastres = data.pricePiastres;
       if (data.costPiastres !== undefined) patch.cost_piastres = data.costPiastres;
       if (data.isActive !== undefined) patch.is_active = data.isActive;
+      if (data.source !== undefined) patch.source = data.source;
+      if (data.serialNumber !== undefined) patch.serial_number = data.serialNumber;
+      if (data.entryDate !== undefined) patch.entry_date = data.entryDate;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
       if (error) {
         if (error.code === '23505') {
+          const detail = `${error.message} ${error.details ?? ''}`;
+          if (detail.includes('serial')) {
+            throw Errors.validation('الرقم التسلسلي ده مسجّل على منتج آخر.');
+          }
           throw Errors.validation('يوجد منتج بالاسم نفسه في هذا الفرع.');
         }
         throw Errors.internal(`product update: ${error.message}`);
       }
+    },
+
+    /**
+     * قراءة سجل الأسعار.
+     *
+     * الجدول ده بتكتبه قاعدة البيانات بمشغّل، مش الكود. إحنا
+     * بنقرا بس — وده مقصود: لو الكتابة كانت من هنا، أي تعديل
+     * سعر من محرر سوبابيز مباشرةً كان هيعدّي من غير ما يتسجّل.
+     */
+    async listPriceHistory(productId, limit) {
+      const { data, error } = await db
+        .from('product_price_history')
+        .select('old_price_piastres, new_price_piastres, changed_by_id, changed_at')
+        .eq('product_id', productId)
+        .order('changed_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw Errors.internal(`price history: ${error.message}`);
+
+      return ((data ?? []) as Array<{
+        old_price_piastres: number | string | null;
+        new_price_piastres: number | string | null;
+        changed_by_id: string | null;
+        changed_at: string;
+      }>).map(
+        (r): PriceChangeRecord => ({
+          oldPricePiastres: r.old_price_piastres === null ? null : Number(r.old_price_piastres),
+          newPricePiastres: r.new_price_piastres === null ? null : Number(r.new_price_piastres),
+          changedById: r.changed_by_id,
+          changedAt: new Date(r.changed_at),
+        }),
+      );
     },
 
     /**
@@ -775,7 +851,8 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
 // ═══════════════════════════════════════════════════════════
 
 const SALE_COLUMNS =
-  'id, branch_id, staff_id, customer_name, customer_phone, total_piastres, treasury_id, created_at';
+  'id, branch_id, staff_id, customer_name, customer_phone, total_piastres, ' +
+  'treasury_id, created_at, exit_date';
 
 interface RawSale {
   id: string;
@@ -786,6 +863,7 @@ interface RawSale {
   total_piastres: number | string;
   treasury_id: string;
   created_at: string;
+  exit_date: string;
 }
 
 function toSale(raw: RawSale): SaleSummary {
@@ -798,6 +876,8 @@ function toSale(raw: RawSale): SaleSummary {
     totalPiastres: Number(raw.total_piastres),
     treasuryId: raw.treasury_id,
     createdAt: new Date(raw.created_at),
+    // نص زي ما هو — تحويله لـ Date بيزحلقه يوم بالتوقيت
+    exitDate: String(raw.exit_date).slice(0, 10),
   };
 }
 
@@ -846,9 +926,14 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
         p_items: input.items.map((line) => ({
           product_id: line.productId,
           quantity: line.quantity,
+          // بيتبعت بس لو موجود. الدالة بتتجاهله لو المنتج له سعر.
+          ...(line.unitPricePiastres != null
+            ? { unit_price_piastres: line.unitPricePiastres }
+            : {}),
         })),
         p_customer_name: input.customerName,
         p_customer_phone: input.customerPhone,
+        p_exit_date: input.exitDate,
       });
 
       if (error) raiseSaleError(error);
@@ -940,6 +1025,155 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
 
       const detail: SaleDetail = { ...toSale(head as RawSale), items };
       return detail;
+    },
+
+    /**
+     * تعديل تاريخ الخروج — وبس.
+     *
+     * ⚠ لاحظ إن الكائن المبعوت فيه مفتاح واحد. مفيش updated_at
+     * ولا أي حاجة تانية، و`created_at` **مش** في الاستعلام أصلاً.
+     *
+     * ده مش تقصير — ده الغرض. الختم التقني بيثبت إمتى الفاتورة
+     * اتكتبت، والتاريخ التجاري بيقول إمتى البضاعة خرجت. لو عدّلنا
+     * الاتنين مع بعض، مش هتعرف أبدًا إن فيه بيعة اتسجّلت متأخر.
+     */
+    async updateExitDate(id, exitDate) {
+      const { error } = await db
+        .from('sales')
+        .update({ exit_date: exitDate })
+        .eq('id', id)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`sale exit date: ${error.message}`);
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  العملاء
+// ═══════════════════════════════════════════════════════════
+
+const CUSTOMER_COLUMNS = 'id, branch_id, name, phone, notes, created_at';
+
+interface RawCustomer {
+  id: string;
+  branch_id: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+function toCustomer(raw: RawCustomer): CustomerRecord {
+  return {
+    id: raw.id,
+    branchId: raw.branch_id,
+    name: raw.name,
+    phone: raw.phone,
+    notes: raw.notes,
+    createdAt: new Date(raw.created_at),
+  };
+}
+
+export function createCustomerRepository(db: SupabaseClient): CustomerRepository {
+  return {
+    async list(scope, search, limit) {
+      let query = db
+        .from('customers')
+        .select(CUSTOMER_COLUMNS)
+        .is('deleted_at', null)
+        .order('name')
+        .limit(limit);
+
+      if (!('allBranches' in scope)) {
+        query = query.eq('branch_id', scope.branchId);
+      }
+
+      if (search) {
+        // بحث واحد في الاسم والرقم مع بعض: الموظّف بيدوّر بأي
+        // حاجة فاكرها، مش بيفكّر "ده اسم ولا رقم".
+        //
+        // ⚠ بنهرب % و _ عشان مايتفسّروش كرموز بحث. حد بيكتب "%"
+        // كان هيجيب كل العملاء بدل نتيجة فاضية.
+        const safe = search.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+        query = query.or(`name.ilike.%${safe}%,phone.ilike.%${safe}%`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw Errors.internal(`customers list: ${error.message}`);
+
+      return ((data ?? []) as RawCustomer[]).map(toCustomer);
+    },
+
+    async findById(id) {
+      const { data, error } = await db
+        .from('customers')
+        .select(CUSTOMER_COLUMNS)
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`customer findById: ${error.message}`);
+      return data ? toCustomer(data as RawCustomer) : null;
+    },
+
+    async create(data) {
+      const { data: row, error } = await db
+        .from('customers')
+        .insert({
+          branch_id: data.branchId,
+          name: data.name,
+          phone: data.phone,
+          notes: data.notes,
+          created_by_id: data.createdById,
+        })
+        .select('id')
+        .single();
+
+      if (error || !row) {
+        // 23505 = نفس الرقم مسجّل في الفرع. ده مفيد مش مزعج:
+        // بيمنع نفس الزبون يتسجّل مرتين بأشكال مختلفة للاسم.
+        if (error?.code === '23505') {
+          throw Errors.validation('هذا الرقم مسجّل لعميل آخر في الفرع.');
+        }
+        throw Errors.internal(`customer insert: ${error?.message}`);
+      }
+
+      return { id: row.id as string };
+    },
+
+    async update(id, data) {
+      const patch: Record<string, unknown> = {};
+      if (data.name !== undefined) patch.name = data.name;
+      if (data.phone !== undefined) patch.phone = data.phone;
+      if (data.notes !== undefined) patch.notes = data.notes;
+
+      const { error } = await db
+        .from('customers')
+        .update(patch)
+        .eq('id', id)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') {
+          throw Errors.validation('هذا الرقم مسجّل لعميل آخر في الفرع.');
+        }
+        throw Errors.internal(`customer update: ${error.message}`);
+      }
+    },
+
+    async softDelete(id, actorId, at) {
+      const { error } = await db
+        .from('customers')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة العملاء',
+        })
+        .eq('id', id)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`customer delete: ${error.message}`);
     },
   };
 }
