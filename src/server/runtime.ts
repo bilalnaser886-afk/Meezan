@@ -20,6 +20,7 @@ import type { BranchDeps } from '../application/use-cases/branches';
 import type { TreasuryDeps } from '../application/use-cases/treasury';
 import type { ProductDeps } from '../application/use-cases/products';
 import type { SaleDeps } from '../application/use-cases/sales';
+import type { CustomerDeps } from '../application/use-cases/customers';
 import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
@@ -29,6 +30,7 @@ import {
   createAnnouncementRepository,
   createAuditLogger,
   createBranchRepository,
+  createCustomerRepository,
   createDb,
   createExpenseReasonRepository,
   createMovementRepository,
@@ -51,6 +53,7 @@ export interface Container {
   treasury: TreasuryDeps;
   products: ProductDeps;
   sales: SaleDeps;
+  customers: CustomerDeps;
   branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
@@ -106,6 +109,7 @@ export function buildContainer(env: Env): Container {
     products: {
       products: createProductRepository(db),
       branches: branchRepo,
+      users: userRepo,
       clock: systemClock,
       audit,
     },
@@ -113,6 +117,12 @@ export function buildContainer(env: Env): Container {
       sales: createSaleRepository(db),
       treasuries: treasuryRepo,
       users: userRepo,
+      clock: systemClock,
+      audit,
+    },
+    customers: {
+      customers: createCustomerRepository(db),
+      branches: branchRepo,
       clock: systemClock,
       audit,
     },
