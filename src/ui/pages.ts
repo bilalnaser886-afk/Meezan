@@ -21,6 +21,7 @@ import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { BASE_CSS } from './styles';
 import { formatDate } from '../domain/dates';
+import { PWA_REGISTER_JS } from './icons';
 import { formatPiastres } from '../domain/money';
 
 
@@ -177,6 +178,21 @@ function shell(opts: { title: string; noIndex?: boolean; body: Html; script: str
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${opts.title}</title>
 ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive">') : ''}
+
+<!-- ═══ التثبيت كتطبيق ═══
+     البيان بيخدم أندرويد وويندوز وماك. سفاري على iOS ما بيقراش
+     البيان للأيقونة، فبيحتاج apple-touch-icon صراحةً. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#16211D">
+<link rel="icon" href="/favicon.png" type="image/png" sizes="64x64">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ميزان">
+<!-- black-translucent بيخلّي الهيدر الأخضر يمتد تحت شريط الحالة
+     في iPhone بدل الشريط الأبيض المقطوع -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="${FONTS}">
 <style>${raw(BASE_CSS)}</style>
@@ -184,6 +200,7 @@ ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive"
 <body>
 ${opts.body}
 <script>${raw(opts.script)}</script>
+<script>${raw(PWA_REGISTER_JS)}</script>
 </body>
 </html>`;
 }
@@ -2996,6 +3013,9 @@ export interface CustomersPageData {
     name: string;
     phone: string | null;
     notes: string | null;
+    deviceCount: number;
+    purchaseCount: number;
+    totalPiastres: number;
   }>;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
@@ -3029,10 +3049,19 @@ export function customersPage(data: CustomersPageData): Html {
             <div class="prod-row-main">
               <span class="prod-row-name">${cust.name}</span>
               ${cust.phone ? html`<span class="serial">${cust.phone}</span>` : ''}
+              <span class="prod-row-sub">
+                ${cust.purchaseCount > 0
+                  ? `${String(cust.purchaseCount)} فاتورة · ${formatPiastres(cust.totalPiastres)} ج.م`
+                  : 'لا مشتريات بعد'}
+              </span>
               ${cust.notes ? html`<span class="cust-notes">${cust.notes}</span>` : ''}
             </div>
 
             <div class="prod-row-side">
+              <span class="dev-count" data-zero="${cust.deviceCount === 0 ? 'true' : 'false'}">
+                <b>${String(cust.deviceCount)}</b>
+                <span>جهاز</span>
+              </span>
               ${data.canEdit
                 ? html`<button class="btn-mini" type="button" data-cedit="${cust.id}">تعديل</button>`
                 : ''}
@@ -3128,6 +3157,10 @@ export function customersPage(data: CustomersPageData): Html {
       <div class="field">
         <input class="field-input" id="cust-search" type="search"
           placeholder="ابحث بالاسم أو الرقم" autocomplete="off">
+        <p class="field-hint">
+          القائمة مرتّبة بعدد الأجهزة تنازليًا. يُسجَّل العميل تلقائيًا
+          عند أول بيع يُكتب فيه رقم هاتفه.
+        </p>
       </div>
       ${rows}
     </div>
