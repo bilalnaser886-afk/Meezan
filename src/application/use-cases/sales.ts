@@ -21,6 +21,7 @@
  * حاجة زي ما كانت لوحدها.
  */
 
+import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
@@ -50,6 +51,8 @@ export interface CreateSaleRequest {
   items: SaleLineInput[];
   customerName?: string | null;
   customerPhone?: string | null;
+  /** فاضي = تاريخ النهاردة بتوقيت القاهرة */
+  exitDate?: string | null;
 }
 
 /** سقف السلة — نفس الرقم الموجود في دالة قاعدة البيانات */
@@ -85,7 +88,21 @@ export async function createSale(
       throw Errors.validation('الكمية في البند أكبر من الحد المسموح.');
     }
 
-    return { productId, quantity };
+    // السعر اليدوي — للمنتجات اللي مالهاش سعر مسجّل.
+    //
+    // ⚠ الحراسة الحقيقية جوّه دالة قاعدة البيانات: لو المنتج له
+    // سعر، بتتجاهل القيمة دي تمامًا. الفحص هنا للشكل بس، عشان
+    // نطلّع رسالة عربية واضحة بدل خطأ من القاعدة.
+    let unitPricePiastres: number | null = null;
+    if (line?.unitPricePiastres != null) {
+      const price = Number(line.unitPricePiastres);
+      if (!Number.isInteger(price) || price <= 0) {
+        throw Errors.validation('السعر المكتوب غير صالح.');
+      }
+      unitPricePiastres = price;
+    }
+
+    return { productId, quantity, unitPricePiastres };
   });
 
   // ─── الخزينة ───
@@ -113,6 +130,15 @@ export async function createSale(
   const customerName = trimOrNull(input.customerName, 80, 'اسم العميل طويل جدًا.');
   const customerPhone = trimOrNull(input.customerPhone, 32, 'رقم الهاتف غير صالح.');
 
+  // ─── تاريخ الخروج ───
+  // فاضي = النهاردة. قيمة = بيع اتسجّل متأخر بتاريخه الحقيقي.
+  let exitDate: string | null;
+  try {
+    exitDate = parseDateInput(input.exitDate);
+  } catch (error) {
+    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
+  }
+
   // ─── التنفيذ ───
   // ⚠ أهم سطر في الملف: `staffId` بيتاخد من **الجلسة** مش من
   // جسم الطلب. لو أخدناه من الطلب، أي موظّف يقدر يسجّل بيع باسم
@@ -124,6 +150,7 @@ export async function createSale(
     items,
     customerName,
     customerPhone,
+    exitDate,
   });
 
   await deps.audit.record({
@@ -137,6 +164,7 @@ export async function createSale(
       treasuryId: input.treasuryId,
       branchId: scope.branchId,
       movementId: result.movementId,
+      exitDate,
     },
   });
 
@@ -228,6 +256,76 @@ export async function getSale(
   }
 
   return sale;
+}
+
+/**
+ * تعديل تاريخ الخروج بعد تسجيل البيع.
+ *
+ * ══ مين يقدر؟ ══
+ * اللي سجّل البيع، والمالك.
+ *
+ * ليه اللي سجّله؟ لأنه هو اللي عارف البضاعة خرجت إمتى فعلاً.
+ * ولو حصرناها في المدير، هيبقى لازم يسأله في كل تصحيح — والنتيجة
+ * إن التصحيح ما بيحصلش أصلاً والتاريخ يفضل غلط.
+ *
+ * ══ الحريّة معاها أثر ══
+ * تعديل التاريخ بينقل إيراد من شهر لشهر. فكل تعديل بيتسجّل في
+ * سجل التدقيق بالقيمة القديمة والجديدة ومين عمله.
+ *
+ * تشبيه محاسبي: القيد العكسي مسموح، بس بيتكتب في الدفتر بتوقيع.
+ * مش ممنوع — مكتوب.
+ */
+export async function updateSaleExitDate(
+  deps: SaleDeps,
+  actor: AuthenticatedUser,
+  saleId: string,
+  rawExitDate: string,
+): Promise<{ exitDate: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.SALES_CREATE)) {
+    throw Errors.forbidden(PERMISSIONS.SALES_CREATE);
+  }
+
+  const includeCost = actor.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL);
+  const sale = await deps.sales.findById(saleId, { includeCost });
+  if (!sale) throw Errors.notFound('الفاتورة');
+
+  const isOwner = actor.roleKey === 'SUPER_ADMIN';
+  if (!isOwner && sale.staffId !== actor.id) {
+    throw Errors.forbidden('يمكن تعديل تاريخ الفواتير التي سجّلتها فقط.');
+  }
+  if (!isOwner) {
+    if (!actor.branchId) throw Errors.forbidden('branch scope');
+    if (sale.branchId !== actor.branchId) throw Errors.forbidden('branch scope');
+  }
+
+  let exitDate: string | null;
+  try {
+    exitDate = parseDateInput(rawExitDate);
+  } catch (error) {
+    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
+  }
+  if (!exitDate) throw Errors.validation('اكتب تاريخ الخروج.');
+
+  if (exitDate === sale.exitDate) throw Errors.validation('التاريخ نفسه لم يتغيّر.');
+
+  await deps.sales.updateExitDate(saleId, exitDate);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'sale.exit_date.update',
+    entity: 'Sale',
+    entityId: saleId,
+    // ⚠ القيمة القديمة والجديدة مع بعض. من غير القديمة، السجل
+    // بيقول "اتغيّر" من غير ما يقول "من إيه" — وده مش سجل.
+    metadata: {
+      from: sale.exitDate,
+      to: exitDate,
+      totalPiastres: sale.totalPiastres,
+      staffId: sale.staffId,
+    },
+  });
+
+  return { exitDate };
 }
 
 // ─────────── أدوات ───────────
