@@ -27,6 +27,7 @@
  * ما اتعلمتش حاجة جديدة عن الرقم القديم.
  */
 
+import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
@@ -35,20 +36,30 @@ import type {
   BranchRepository,
   Clock,
   ListScope,
+  PriceChange,
   ProductRecord,
   ProductRepository,
+  ProductType,
+  UserRepository,
 } from '../ports';
 
 export interface ProductDeps {
   products: ProductRepository;
   branches: BranchRepository;
+  /** لتحويل معرّفات من غيّر السعر لأسماء */
+  users: UserRepository;
   clock: Clock;
   audit: AuditLogger;
 }
 
 export interface CreateProductRequest {
   name: string;
-  pricePiastres: number;
+  productType: ProductType;
+  serialNumber?: string | null;
+  source?: string | null;
+  entryDate?: string | null;
+  /** null = المنتج دخل من غير ما يتسعّر بعد */
+  pricePiastres: number | null;
   costPiastres: number;
   quantityOnHand: number;
   /** مطلوب من المالك بس — مدير الفرع مقفول على فرعه */
@@ -57,9 +68,12 @@ export interface CreateProductRequest {
 
 export interface UpdateProductRequest {
   name?: string;
-  pricePiastres?: number;
+  pricePiastres?: number | null;
   costPiastres?: number;
   isActive?: boolean;
+  source?: string | null;
+  serialNumber?: string | null;
+  entryDate?: string | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -123,6 +137,15 @@ export async function listSellableProducts(
 
 // ─────────── الكتابة ───────────
 
+/**
+ * إضافة منتج.
+ *
+ * ══ القسمة اللي بتحكم كل حاجة تحت ══
+ * الجهاز قطعة فعلية واحدة بسريال. الإكسسوار صنف بكمية.
+ * القاعدتين مختلفتين، والخلط بينهم بيدّي مخزون بيكذب:
+ * "عندي 3 آيفون" مفيدة، لكن لما واحد فيهم يترجع للصيانة مش
+ * هتعرف أنهي واحد.
+ */
 export async function createProduct(
   deps: ProductDeps,
   actor: AuthenticatedUser,
@@ -132,37 +155,56 @@ export async function createProduct(
     throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
   }
 
-  // نفس نمط إنشاء المستخدم بالظبط: الفرع بيتحدّد من هوية المنشئ،
-  // مش من جسم الطلب. مدير الفرع مالوش أي طريقة يمرّر فرع تاني
-  // حتى لو عدّل الطلب بإيده.
-  let targetBranchId: string;
-
-  if (actor.roleKey === 'SUPER_ADMIN') {
-    if (!input.branchId) throw Errors.validation('اختر الفرع.');
-    const exists = await deps.branches.exists(input.branchId);
-    if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
-    targetBranchId = input.branchId;
-  } else if (actor.roleKey === 'BRANCH_MANAGER') {
-    if (!actor.branchId) throw Errors.forbidden('branch scope');
-    targetBranchId = actor.branchId; // إجباري — أي قيمة في الطلب تُتجاهل
-  } else {
-    // الموظّف مالوش inventory.adjust في الأدوار الافتراضية، لكن
-    // بنفحص صراحةً تحسّبًا لاستثناء فردي اتمنح بالغلط
-    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
-  }
+  const targetBranchId = await resolveBranch(deps, actor, input.branchId);
 
   const name = input.name.trim();
   assertName(name);
-  assertPrice(input.pricePiastres);
+
+  const productType = input.productType;
+  if (productType !== 'device' && productType !== 'accessory') {
+    throw Errors.validation('اختر نوع المنتج: جهاز أو إكسسوار.');
+  }
+
+  // ─── قواعد النوع ───
+  let serialNumber: string | null = null;
+  let quantityOnHand: number;
+
+  if (productType === 'device') {
+    serialNumber = (input.serialNumber ?? '').trim();
+    if (!serialNumber) {
+      throw Errors.validation('اكتب الرقم التسلسلي للجهاز.');
+    }
+    assertSerial(serialNumber);
+
+    // الكمية مقفولة على واحد — مش بنسأل المستخدم أصلاً.
+    // لو سمحنا بغيرها، هيبقى عندنا "جهازين بنفس السريال" وده
+    // تناقض في نفسه.
+    quantityOnHand = 1;
+  } else {
+    if ((input.serialNumber ?? '').trim()) {
+      throw Errors.validation('الرقم التسلسلي للأجهزة فقط.');
+    }
+    assertQuantity(input.quantityOnHand);
+    quantityOnHand = input.quantityOnHand;
+  }
+
+  // ─── السعر اختياري ───
+  if (input.pricePiastres !== null) assertPrice(input.pricePiastres);
   assertCost(input.costPiastres);
-  assertQuantity(input.quantityOnHand);
+
+  const source = trimOrNull(input.source, 80, 'اسم المصدر طويل جدًا.');
+  const entryDate = readDate(input.entryDate);
 
   const created = await deps.products.create({
     branchId: targetBranchId,
     name,
+    productType,
+    serialNumber,
+    source,
+    entryDate,
     pricePiastres: input.pricePiastres,
     costPiastres: input.costPiastres,
-    quantityOnHand: input.quantityOnHand,
+    quantityOnHand,
     createdById: actor.id,
   });
 
@@ -173,13 +215,38 @@ export async function createProduct(
     entityId: created.id,
     metadata: {
       name,
+      productType,
       branchId: targetBranchId,
-      pricePiastres: input.pricePiastres,
-      quantityOnHand: input.quantityOnHand,
+      hasSerial: serialNumber !== null,
+      hasPrice: input.pricePiastres !== null,
+      quantityOnHand,
     },
   });
 
   return created;
+}
+
+/**
+ * تحديد الفرع المستهدف.
+ *
+ * نفس نمط إنشاء المستخدم: الفرع بيتاخد من هوية المنشئ مش من جسم
+ * الطلب. مندوب المبيعات ومدير الفرع الاتنين مقفولين على فرعهم،
+ * ومفيش طريقة يمرّروا فرع تاني حتى لو عدّلوا الطلب بإيدهم.
+ */
+async function resolveBranch(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  requested: string | null | undefined,
+): Promise<string> {
+  if (actor.roleKey === 'SUPER_ADMIN') {
+    if (!requested) throw Errors.validation('اختر الفرع.');
+    const exists = await deps.branches.exists(requested);
+    if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
+    return requested;
+  }
+
+  if (!actor.branchId) throw Errors.forbidden('branch scope');
+  return actor.branchId; // أي قيمة في الطلب تُتجاهل
 }
 
 export async function updateProduct(
@@ -192,32 +259,67 @@ export async function updateProduct(
     throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
   }
 
-  // بنقرا من غير تكلفة: إحنا محتاجين الفرع للحراسة بس، ومفيش
+  // بنقرا من غير تكلفة: محتاجين الفرع والنوع للحراسة بس، ومفيش
   // سبب نجيب حقل حسّاس مش هنستخدمه
   const existing = await deps.products.findById(productId, { includeCost: false });
   if (!existing) throw Errors.notFound('المنتج');
   assertBranchAccess(actor, existing.branchId);
 
-  const patch: UpdateProductRequest = {};
+  const patch: {
+    name?: string;
+    pricePiastres?: number | null;
+    costPiastres?: number;
+    isActive?: boolean;
+    source?: string | null;
+    serialNumber?: string | null;
+    entryDate?: string;
+    updatedById: string;
+  } = { updatedById: actor.id };
+
+  let changedPrice = false;
 
   if (input.name !== undefined) {
     const name = input.name.trim();
     assertName(name);
     patch.name = name;
   }
+
   if (input.pricePiastres !== undefined) {
-    assertPrice(input.pricePiastres);
+    if (input.pricePiastres !== null) assertPrice(input.pricePiastres);
     patch.pricePiastres = input.pricePiastres;
+    changedPrice = input.pricePiastres !== existing.pricePiastres;
   }
+
   if (input.costPiastres !== undefined) {
     assertCost(input.costPiastres);
     patch.costPiastres = input.costPiastres;
   }
-  if (input.isActive !== undefined) {
-    patch.isActive = input.isActive;
+
+  if (input.isActive !== undefined) patch.isActive = input.isActive;
+
+  if (input.source !== undefined) {
+    patch.source = trimOrNull(input.source, 80, 'اسم المصدر طويل جدًا.');
   }
 
-  if (Object.keys(patch).length === 0) {
+  if (input.entryDate !== undefined && input.entryDate !== null) {
+    const parsed = readDate(input.entryDate);
+    if (parsed) patch.entryDate = parsed;
+  }
+
+  // السريال يتعدّل للأجهزة بس، وما ينفعش يتفضّى.
+  // جهاز بلا سريال = صفّين متطابقين ومفيش طريقة تفرّق بينهم.
+  if (input.serialNumber !== undefined) {
+    if (existing.productType !== 'device') {
+      throw Errors.validation('الرقم التسلسلي للأجهزة فقط.');
+    }
+    const serial = (input.serialNumber ?? '').trim();
+    if (!serial) throw Errors.validation('الجهاز لازم يكون له رقم تسلسلي.');
+    assertSerial(serial);
+    patch.serialNumber = serial;
+  }
+
+  // مفتاح updatedById موجود دايمًا، فبنعدّ اللي غيره
+  if (Object.keys(patch).length <= 1) {
     throw Errors.validation('لم يتغيّر شيء.');
   }
 
@@ -230,11 +332,47 @@ export async function updateProduct(
     entityId: productId,
     // ⚠ بنسجّل **إن** التكلفة اتغيّرت، مش قيمتها. سجل التدقيق
     // بيتقرا بصلاحية تانية خالص، فما ينفعش يبقى باب خلفي للتكلفة.
+    //
+    // السعر مختلف: مش سرّ، وسجل الأسعار المستقل بيحفظ قيمه كاملة.
     metadata: {
-      changed: Object.keys(patch),
+      changed: Object.keys(patch).filter((k) => k !== 'updatedById'),
       costChanged: patch.costPiastres !== undefined,
+      priceChanged: changedPrice,
     },
   });
+}
+
+/**
+ * سجل أسعار المنتج — كان كام وبقى كام ومين غيّره.
+ *
+ * السجل نفسه بتكتبه قاعدة البيانات بمشغّل، مش الكود ده. الدالة
+ * بتقراه وبتركّب الأسماء فوق المعرّفات، نفس نمط حركات الخزينة.
+ */
+export async function getPriceHistory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  productId: string,
+  limit = 10,
+): Promise<PriceChange[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+
+  const product = await deps.products.findById(productId, { includeCost: false });
+  if (!product) throw Errors.notFound('المنتج');
+  assertBranchAccess(actor, product.branchId);
+
+  const [history, team] = await Promise.all([
+    deps.products.listPriceHistory(productId, Math.min(Math.max(limit, 1), 50)),
+    deps.users.listInScope(scopeFor(actor)),
+  ]);
+
+  const names = new Map(team.map((u) => [u.id, u.fullName]));
+
+  return history.map((h) => ({
+    ...h,
+    changedByName: h.changedById ? (names.get(h.changedById) ?? null) : null,
+  }));
 }
 
 /**
@@ -269,6 +407,13 @@ export async function restockProduct(
   if (!existing) throw Errors.notFound('المنتج');
   assertBranchAccess(actor, existing.branchId);
 
+  // ⚠ الجهاز قطعة واحدة بسريال. توريد كمية ليه معناه إن نفس
+  // السريال بقى عليه حتتين — وده مستحيل في الواقع.
+  // عايز جهاز تاني؟ أضفه كمنتج جديد بسرياله هو.
+  if (existing.productType === 'device') {
+    throw Errors.validation('كمية الجهاز ثابتة. أضف الجهاز الثاني كمنتج مستقل برقمه التسلسلي.');
+  }
+
   const quantityOnHand = await deps.products.adjustQuantity(productId, delta);
 
   await deps.audit.record({
@@ -287,6 +432,28 @@ export async function restockProduct(
 function assertName(name: string): void {
   if (name.length < 2 || name.length > 80) {
     throw Errors.validation('اسم المنتج من حرفين إلى 80 حرفًا.');
+  }
+}
+
+function assertSerial(serial: string): void {
+  if (serial.length < 2 || serial.length > 64) {
+    throw Errors.validation('الرقم التسلسلي من حرفين إلى 64 حرفًا.');
+  }
+}
+
+function trimOrNull(value: string | null | undefined, max: number, message: string): string | null {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return null;
+  if (trimmed.length > max) throw Errors.validation(message);
+  return trimmed;
+}
+
+/** بيحوّل أخطاء التاريخ لأخطاء تطبيق برسايل عربية جاهزة للعرض */
+function readDate(raw: string | null | undefined): string | null {
+  try {
+    return parseDateInput(raw);
+  } catch (error) {
+    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
   }
 }
 
