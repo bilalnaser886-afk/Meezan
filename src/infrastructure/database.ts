@@ -1072,37 +1072,42 @@ function toCustomer(raw: RawCustomer): CustomerRecord {
     phone: raw.phone,
     notes: raw.notes,
     createdAt: new Date(raw.created_at),
+    // الإحصائيات بتتحسب في دالة الترتيب. القراءة بالمعرّف الواحد
+    // ما بتحتاجهاش، فبترجع أصفار.
+    deviceCount: 0,
+    purchaseCount: 0,
+    totalPiastres: 0,
   };
 }
 
 export function createCustomerRepository(db: SupabaseClient): CustomerRepository {
   return {
+    /**
+     * القائمة بتتجاب من دالة في قاعدة البيانات مش باستعلام مباشر.
+     *
+     * السبب: الترتيب محتاج يعدّ الأجهزة في بنود كل فاتورة لكل
+     * عميل — ربط تلات جداول وتجميع. لو عملناه هنا، هيبقى استعلام
+     * لكل عميل يعني مية رحلة شبكة لصفحة واحدة.
+     */
     async list(scope, search, limit) {
-      let query = db
-        .from('customers')
-        .select(CUSTOMER_COLUMNS)
-        .is('deleted_at', null)
-        .order('name')
-        .limit(limit);
+      const { data, error } = await db.rpc('fn_customers_ranked', {
+        p_branch_id: 'allBranches' in scope ? null : scope.branchId,
+        p_search: search,
+        p_limit: limit,
+      });
 
-      if (!('allBranches' in scope)) {
-        query = query.eq('branch_id', scope.branchId);
-      }
+      if (error) throw Errors.internal(`customers ranked: ${error.message}`);
 
-      if (search) {
-        // بحث واحد في الاسم والرقم مع بعض: الموظّف بيدوّر بأي
-        // حاجة فاكرها، مش بيفكّر "ده اسم ولا رقم".
-        //
-        // ⚠ بنهرب % و _ عشان مايتفسّروش كرموز بحث. حد بيكتب "%"
-        // كان هيجيب كل العملاء بدل نتيجة فاضية.
-        const safe = search.replace(/[%_\\]/g, (ch) => `\\${ch}`);
-        query = query.or(`name.ilike.%${safe}%,phone.ilike.%${safe}%`);
-      }
-
-      const { data, error } = await query;
-      if (error) throw Errors.internal(`customers list: ${error.message}`);
-
-      return ((data ?? []) as RawCustomer[]).map(toCustomer);
+      return ((data ?? []) as Array<RawCustomer & {
+        device_count: number | string;
+        purchase_count: number | string;
+        total_piastres: number | string;
+      }>).map((r) => ({
+        ...toCustomer(r),
+        deviceCount: Number(r.device_count),
+        purchaseCount: Number(r.purchase_count),
+        totalPiastres: Number(r.total_piastres),
+      }));
     },
 
     async findById(id) {
