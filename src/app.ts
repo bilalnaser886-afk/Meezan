@@ -38,6 +38,7 @@ import { listCustomers } from './application/use-cases/customers';
 import type { AuthenticatedUser } from './application/ports';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
+import { APP_ICONS, APP_MANIFEST, SERVICE_WORKER, iconBytes } from './ui/icons';
 import {
   dashboardPage,
   lockedPage,
@@ -106,6 +107,49 @@ app.route('/api/customers', customerRoutes);
 app.route('/', setupRoutes);
 
 // ═══════════════════ الصفحات ═══════════════════
+
+// ═══════════════════ أصول التطبيق المثبَّت ═══════════════════
+//
+// ⚠ لازم تتسجّل **قبل** المسار الملتقط /:maybeSecret في آخر الملف،
+// وإلا هيبتلعها ويرجّع 404.
+//
+// الأصول دي مفتوحة بلا تسجيل دخول عن قصد: المتصفح بيطلب البيان
+// والأيقونة قبل ما المستخدم يدخل أصلاً. مفيهاش أي بيانات.
+
+const ASSET_CACHE = 'public, max-age=86400';
+
+app.get('/manifest.webmanifest', (c) => {
+  c.header('Content-Type', 'application/manifest+json; charset=utf-8');
+  c.header('Cache-Control', ASSET_CACHE);
+  return c.body(APP_MANIFEST);
+});
+
+app.get('/sw.js', (c) => {
+  c.header('Content-Type', 'application/javascript; charset=utf-8');
+  // ⚠ مفيش تخزين للملف ده نفسه: لو خزّناه، أي تعديل عليه بعدين
+  // هيفضل المتصفح شغّال بالقديم لمدة مش معروفة.
+  c.header('Cache-Control', 'no-cache');
+  c.header('Service-Worker-Allowed', '/');
+  return c.body(SERVICE_WORKER);
+});
+
+// ⚠ الأيقونات متسجّلة بأسمائها واحدة واحدة مش بنمط regex.
+//
+// النمط كان بيحتاج شرطة مائلة مهرَّبة، وأي زيادة أو نقصان فيها
+// بيخلّي المسار ما يطابقش حاجة — والنتيجة 404 صامت على كل
+// الأيقونات، والتطبيق يفضل بلا صورة من غير أي رسالة خطأ.
+//
+// القائمة صريحة ومصدرها واحد (APP_ICONS)، فمفيش اسم ممكن يفوت.
+for (const file of Object.keys(APP_ICONS)) {
+  app.get(`/${file}`, (c) => {
+    const bytes = iconBytes(file);
+    if (!bytes) return c.notFound();
+
+    c.header('Content-Type', 'image/png');
+    c.header('Cache-Control', ASSET_CACHE);
+    return c.body(bytes);
+  });
+}
 
 app.get('/', (c) => c.redirect('/login'));
 
@@ -361,6 +405,9 @@ app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
         name: cst.name,
         phone: cst.phone,
         notes: cst.notes,
+        deviceCount: cst.deviceCount,
+        purchaseCount: cst.purchaseCount,
+        totalPiastres: cst.totalPiastres,
       })),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
