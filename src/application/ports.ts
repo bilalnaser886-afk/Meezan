@@ -517,6 +517,15 @@ export interface CustomerRecord {
   phone: string | null;
   notes: string | null;
   createdAt: Date;
+  /**
+   * عدد **الأجهزة** اللي اشتراها — مش عدد القطع.
+   *
+   * اللي أخد تلات أجهزة عميل مختلف عن اللي أخد تلاتين جراب.
+   * عدد القطع بيساوي بينهم، والأجهزة هي اللي بتفرق.
+   */
+  deviceCount: number;
+  purchaseCount: number;
+  totalPiastres: number;
 }
 
 export interface CreateCustomerInput {
@@ -534,7 +543,10 @@ export interface UpdateCustomerInput {
 }
 
 export interface CustomerRepository {
-  /** `search` بيدوّر في الاسم والرقم مع بعض */
+  /**
+   * القائمة مرتّبة بعدد الأجهزة تنازليًا.
+   * `search` بيدوّر في الاسم والرقم مع بعض.
+   */
   list(scope: ListScope, search: string | null, limit: number): Promise<CustomerRecord[]>;
   findById(id: string): Promise<CustomerRecord | null>;
   create(data: CreateCustomerInput): Promise<{ id: string }>;
