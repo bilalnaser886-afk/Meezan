@@ -535,7 +535,7 @@ interface MovementBody {
 treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }), async (c) => {
   const body = await readJson<MovementBody>(c);
 
-  if (!body.treasuryId) throw Errors.validation('اختار الخزينة.');
+  if (!body.treasuryId) throw Errors.validation('اختر الخزينة.');
   if (!MOVEMENT_TYPES.includes(body.type as ManualMovementType)) {
     throw Errors.validation('نوع الحركة غير معروف.');
   }
@@ -779,7 +779,7 @@ saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), as
   const body = await readJson<SaleBody>(c);
 
   if (!Array.isArray(body.items) || body.items.length === 0) {
-    throw Errors.validation('السلة فاضية.');
+    throw Errors.validation('السلة فارغة.');
   }
 
   let items: SaleLineInput[];
