@@ -67,17 +67,17 @@ export async function createSale(
 
   // ─── السلة ───
   if (!Array.isArray(input.items) || input.items.length === 0) {
-    throw Errors.validation('السلة فاضية.');
+    throw Errors.validation('السلة فارغة.');
   }
   if (input.items.length > MAX_LINES) {
-    throw Errors.validation(`السلة كبيرة أوي (الحد ${MAX_LINES} بند).`);
+    throw Errors.validation(`السلة تتجاوز الحد المسموح (${MAX_LINES} بندًا).`);
   }
 
   const items: SaleLineInput[] = input.items.map((line) => {
     const productId = typeof line?.productId === 'string' ? line.productId.trim() : '';
     const quantity = Number(line?.quantity);
 
-    if (!productId) throw Errors.validation('فيه بند من غير منتج.');
+    if (!productId) throw Errors.validation('يوجد بند بلا منتج.');
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw Errors.validation('كمية غير صالحة في السلة.');
     }
@@ -95,13 +95,13 @@ export async function createSale(
   // وسيلة الدفع ورقم الخزينة مع بعض، أول ما حد يختار غلط هيبقى
   // عندنا فاتورة مكتوب عليها "كاش" ومربوطة بخزينة فيزا، ومحدش
   // هيعرف مين الصح. مصدر واحد للحقيقة.
-  if (!input.treasuryId) throw Errors.validation('اختار الخزينة.');
+  if (!input.treasuryId) throw Errors.validation('اختر الخزينة.');
 
   const scope = await deps.treasuries.findScope(input.treasuryId);
   if (!scope) throw Errors.notFound('الخزينة');
 
   if (scope.branchId === null) {
-    throw Errors.validation('الخزينة دي مش تابعة لفرع، ما ينفعش يتسجّل عليها بيع.');
+    throw Errors.validation('هذه الخزينة غير تابعة لفرع، ولا يمكن تسجيل بيع عليها.');
   }
   // المالك (بلا فرع) بيبيع في أي فرع. غيره في فرعه بس.
   if (actor.roleKey !== 'SUPER_ADMIN') {
