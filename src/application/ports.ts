@@ -306,11 +306,34 @@ export interface ExpenseReasonRepository {
  * علامة `?` هنا هي اللي بتخلّي تايب سكريبت يفكّرك إن الحقل ممكن
  * ما يكونش موجود، فما تكتبش كود بيفترض وجوده.
  */
+/**
+ * نوع المنتج — قسمة بتغيّر قواعد اللعب مش مجرد تصنيف.
+ *
+ *   device    جهاز. قطعة فعلية واحدة بسريال. كل وحدة صف منفصل،
+ *             حتى لو نفس الموديل بالظبط.
+ *   accessory إكسسوار. صنف بكمية، زي ما كان.
+ *
+ * تشبيه المخزن: علب الشاي كلها "علبة شاي" فبتعدّها. الموبايلات
+ * كل واحد ليه رقم على ضهره فبتسجّله بالرقم.
+ */
+export type ProductType = 'device' | 'accessory';
+
 export interface ProductRecord {
   id: string;
   branchId: string;
   name: string;
-  pricePiastres: number;
+  productType: ProductType;
+  /** للأجهزة فقط. الإكسسوار بيفضل null. */
+  serialNumber: string | null;
+  /** اسم التاجر أو المحل اللي اتشترى منه. نص حر. */
+  source: string | null;
+  /** YYYY-MM-DD — نص مش Date، عشان ما يتزحلقش يوم بالتوقيت */
+  entryDate: string;
+  /**
+   * ⚠ بقى اختياري. منتج ممكن يدخل المخزن قبل ما يتسعّر.
+   * والبيع بيطلب السعر يدويًا وقت الفاتورة لو الحقل ده فاضي.
+   */
+  pricePiastres: number | null;
   costPiastres?: number;
   quantityOnHand: number;
   isActive: boolean;
@@ -319,7 +342,12 @@ export interface ProductRecord {
 export interface CreateProductInput {
   branchId: string;
   name: string;
-  pricePiastres: number;
+  productType: ProductType;
+  serialNumber: string | null;
+  source: string | null;
+  /** null = سيب الافتراضي (تاريخ النهاردة بتوقيت القاهرة) */
+  entryDate: string | null;
+  pricePiastres: number | null;
   costPiastres: number;
   quantityOnHand: number;
   createdById: string;
@@ -327,9 +355,36 @@ export interface CreateProductInput {
 
 export interface UpdateProductInput {
   name?: string;
-  pricePiastres?: number;
+  pricePiastres?: number | null;
   costPiastres?: number;
   isActive?: boolean;
+  source?: string | null;
+  serialNumber?: string | null;
+  entryDate?: string;
+  /**
+   * ⚠ إلزامي في كل تعديل.
+   * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
+   * والمشغّل ما بيعرفش المستخدم من نفسه.
+   */
+  updatedById: string;
+}
+
+/**
+ * سطر في سجل الأسعار.
+ *
+ * القيمتين بيقبلوا null: منتج كان بلا سعر واتسعّر أول مرة
+ * (القديم null)، أو سعره اتشال (الجديد null).
+ */
+export interface PriceChangeRecord {
+  oldPricePiastres: number | null;
+  newPricePiastres: number | null;
+  changedById: string | null;
+  changedAt: Date;
+}
+
+/** نفس نمط EnrichedMovement — المستودع بيرجّع معرّف، والاسم بيتركّب فوق */
+export interface PriceChange extends PriceChangeRecord {
+  changedByName: string | null;
 }
 
 export interface ProductListOptions {
@@ -351,6 +406,8 @@ export interface ProductRepository {
    * اللحظة اللي المدير بيورّد فيها، البيع ما يضيعش.
    */
   adjustQuantity(id: string, delta: number): Promise<number>;
+  /** آخر تغييرات السعر، الأحدث الأول */
+  listPriceHistory(productId: string, limit: number): Promise<PriceChangeRecord[]>;
 }
 
 // ═══════════════════ المبيعات ═══════════════════
@@ -358,6 +415,14 @@ export interface ProductRepository {
 export interface SaleLineInput {
   productId: string;
   quantity: number;
+  /**
+   * السعر اليدوي — للمنتجات اللي مالهاش سعر مسجّل بس.
+   *
+   * ⚠ لو المنتج له سعر، دالة قاعدة البيانات بتتجاهل القيمة دي
+   * تمامًا وبتستخدم سعر المنتج. من غير القاعدة دي، أي حد يقدر
+   * يبيع بأي سعر بتعديل بسيط في الطلب.
+   */
+  unitPricePiastres?: number | null;
 }
 
 export interface CreateSaleInput {
@@ -366,6 +431,8 @@ export interface CreateSaleInput {
   items: SaleLineInput[];
   customerName: string | null;
   customerPhone: string | null;
+  /** null = تاريخ النهاردة بتوقيت القاهرة */
+  exitDate: string | null;
 }
 
 export interface CreateSaleResult {
@@ -384,6 +451,13 @@ export interface SaleSummary {
   totalPiastres: number;
   treasuryId: string;
   createdAt: Date;
+  /**
+   * YYYY-MM-DD — إمتى البضاعة سابت المحل فعلاً.
+   *
+   * ⚠ منفصل تمامًا عن createdAt. ده تاريخ تجاري قابل للتعديل،
+   * وده ختم تقني ما بيتغيّرش. تعديل الأول ما بيلمسش التاني.
+   */
+  exitDate: string;
 }
 
 /** صف الفاتورة بعد إضافة اسم الموظّف — نفس نمط EnrichedMovement */
@@ -424,6 +498,49 @@ export interface SaleRepository {
   create(input: CreateSaleInput): Promise<CreateSaleResult>;
   list(filter: SaleFilter): Promise<SaleSummary[]>;
   findById(id: string, options: { includeCost: boolean }): Promise<SaleDetail | null>;
+  /**
+   * تعديل تاريخ الخروج وحده.
+   *
+   * ⚠ التنفيذ ممنوع يلمس `created_at` بأي شكل. الختم التقني هو
+   * أساس سجل المراجعة — لو اتحرّك معاه، القدرة على اكتشاف
+   * التسجيل المتأخر بتضيع.
+   */
+  updateExitDate(id: string, exitDate: string): Promise<void>;
+}
+
+// ═══════════════════ العملاء ═══════════════════
+
+export interface CustomerRecord {
+  id: string;
+  branchId: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  createdAt: Date;
+}
+
+export interface CreateCustomerInput {
+  branchId: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  createdById: string;
+}
+
+export interface UpdateCustomerInput {
+  name?: string;
+  phone?: string | null;
+  notes?: string | null;
+}
+
+export interface CustomerRepository {
+  /** `search` بيدوّر في الاسم والرقم مع بعض */
+  list(scope: ListScope, search: string | null, limit: number): Promise<CustomerRecord[]>;
+  findById(id: string): Promise<CustomerRecord | null>;
+  create(data: CreateCustomerInput): Promise<{ id: string }>;
+  update(id: string, data: UpdateCustomerInput): Promise<void>;
+  /** حذف ناعم — السجل بيفضل في القاعدة ومش بيظهر في القوائم */
+  softDelete(id: string, actorId: string, at: Date): Promise<void>;
 }
 
 export interface SessionRecord {
