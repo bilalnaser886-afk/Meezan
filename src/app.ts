@@ -132,7 +132,7 @@ app.get('/setup', (c) => {
 const ROLE_LABELS: Record<string, string> = {
   SUPER_ADMIN: 'المالك — صلاحية كاملة',
   BRANCH_MANAGER: 'مدير فرع — نطاق فرعك',
-  STAFF: 'موظّف — البيع وتسجيل العملاء',
+  STAFF: 'مندوب مبيعات — البيع وتسجيل العملاء',
 };
 
 /**
