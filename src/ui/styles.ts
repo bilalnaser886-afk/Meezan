@@ -1,22 +1,36 @@
 /**
- * نظام التصميم — "البنكنوت"
+ * نظام التصميم — "الميزان النحاسي"
  *
  * ══ من فين جت الألوان؟ ══
- * النظام ده بيتعامل مع فلوس مصرية طول اليوم. فبدل ما نخترع لوحة
- * ألوان، أخدناها من الحاجة اللي في إيد الموظّف فعلاً — الجنيه:
+ * النظام ده بيتعامل مع فلوس مصرية طول اليوم، والاسم نفسه "ميزان".
+ * فاللوحة مأخوذة من أدوات الوزن والمحاسبة نفسها:
  *
- *   البترولي الغامق  ← حبر فئة الـ200
- *   الأخضر           ← فئة الـ20   (دخل / تأكيد)
- *   القرمزي          ← فئة الـ10   (منصرف / خطر)
- *   الذهبي           ← خيط الأمان  (معلّق / محتاج انتباه)
- *   الورقي           ← ورق البنكنوت نفسه
+ *   النحاسي   ← معدن الميزان والختم. **لون الهوية وحده**
+ *   الأخضر-الأسود ← حبر الدفتر الثقيل. الهيدر والشريط السفلي
+ *   الأخضر الوظيفي ← فئة الـ20. **الأزرار الإجرائية بس**
+ *   القرمزي    ← فئة الـ10. منصرف أو خطر
+ *   الكريمي    ← ورق الدفتر، بلمحة خضراء خفيفة
  *
- * ══ العنصر المميّز: الختم ══
- * المحلات في مصر بتختم كل ورقة. فالدور بيتعرض كختم مطاطي مايل
- * شوية بحدّين — أصدق وأقرب للواقع من تاج ملوّن عادي.
+ * ══ قاعدة حاكمة: الهوية غير الوظيفة ══
+ * النحاسي **ما بيتحطّش أبدًا على زرار إجراء**، والأخضر الوظيفي
+ * **ما بيتحطّش أبدًا على شعار أو شارة**.
+ *
+ * ليه؟ عشان لما الموظّف يشوف أخضر يبقى عارف إن ده حاجة بيدوس
+ * عليها. لو استخدمنا نفس اللون للهوية، الأخضر يفقد معناه ويبقى
+ * مجرد لون في الصفحة.
+ *
+ * تشبيه: زرار الطوارئ في المصنع أحمر. لو دهنّا الحيطة كلها أحمر،
+ * الزرار يختفي وسط اللون.
+ *
+ * ══ دمج مقصود ══
+ * كان فيه لون ذهبي منفصل للحالات المعلّقة (--thread). بقى هو
+ * النحاسي نفسه: "محتاج انتباه إنسان" هي بالظبط الحاجة اللي اسم
+ * "ميزان" بيقولها. اللونين اتوحّدوا، والأسماء القديمة سايبينها
+ * كمرادفات عشان ما نلمسش كل سطر بيستخدمها.
  *
  * ══ الخطوط ══
- * Readex Pro      للعناوين والمبالغ — عربي بشخصية، مش الافتراضي
+ * Reem Kufi       للشعار **بس** — كوفي هندسي، خط النقش والأختام
+ * Readex Pro      للعناوين والمبالغ
  * IBM Plex Arabic للنص — كثيف ومقروء في الأحجام الصغيرة
  * IBM Plex Mono   للأرقام والمعرّفات — خانات متساوية العرض عشان
  *                 المبالغ تتصفّ تحت بعضها في عمود
@@ -24,13 +38,21 @@
 
 export const BASE_CSS = `
 :root{
-  --ground:#0E2A33; --ground-soft:#173B46;
-  --surface:#EDF1EF; --card:#FFFFFF; --line:#D7E0DC; --line-soft:#E8EEEB;
-  --ink:#0E2A33; --ink-soft:#5F757C; --ink-faint:#93A5AA;
+  --ground:#16211D; --ground-soft:#22302A;
+  --surface:#F1F1E6; --card:#FDFDF7; --line:#DCDCCB; --line-soft:#EAEAE0;
+  --ink:#16211D; --ink-soft:#5B6A62; --ink-faint:#94A099;
+
+  /* الهوية — الشعار والشارات والخطوط الرفيعة. مش للأزرار. */
+  --brand:#B08D3D; --brand-soft:#C9A557; --brand-wash:#F6F0E1; --brand-line:#E4D4AC;
+
+  /* الوظيفة — الأزرار الإجرائية والتأكيد. مش للهوية. */
   --credit:#12805C; --credit-deep:#0C6247; --credit-wash:#E6F2ED;
   --debit:#9E2B3E; --debit-wash:#FAECEE;
-  --thread:#B5822A; --thread-wash:#FBF3E2;
 
+  /* مرادفات: الذهبي القديم بقى هو النحاسي */
+  --thread:var(--brand); --thread-wash:var(--brand-wash);
+
+  --font-brand:'Reem Kufi','Readex Pro',system-ui,sans-serif;
   --font-display:'Readex Pro',system-ui,sans-serif;
   --font-ui:'IBM Plex Sans Arabic',system-ui,-apple-system,sans-serif;
   --font-mono:'IBM Plex Mono',ui-monospace,monospace;
@@ -44,24 +66,53 @@ html,body{margin:0;padding:0;font-family:var(--font-ui);color:var(--ink);
 :focus-visible{outline:2.5px solid var(--credit);outline-offset:2px;border-radius:3px}
 button{font:inherit}
 
-/* ═══ الختم — العنصر المميّز ═══
-   حدّين (border + inset shadow) وميلة بسيطة = إحساس الختم
-   المطاطي المتحطّ بإيد على ورقة. */
-.stamp{display:inline-block;padding:3px 9px 4px;border:1.5px solid currentColor;
-  border-radius:4px;box-shadow:inset 0 0 0 1px currentColor;
-  font-family:var(--font-display);font-size:11px;font-weight:600;
-  letter-spacing:.02em;line-height:1.4;transform:rotate(-1.5deg);white-space:nowrap}
-.stamp[data-role="SUPER_ADMIN"]{color:var(--thread)}
-.stamp[data-role="BRANCH_MANAGER"]{color:var(--credit)}
-.stamp[data-role="STAFF"]{color:var(--ink-faint)}
+/* ═══ الشعار — العنصر المميّز ═══
+   ميزان بخط رفيع نحاسي. الكفة بتتزن مرة واحدة عند فتح صفحة
+   الدخول، وبعدها تسكن. حركة واحدة في النظام كله. */
+.brandmark{display:inline-flex;align-items:center;gap:10px;color:var(--brand)}
+.brandmark-word{font-family:var(--font-brand);font-weight:600;letter-spacing:.02em;
+  line-height:1;color:var(--brand)}
+.brandmark[data-size="lg"] .brandmark-word{font-size:34px}
+.brandmark[data-size="sm"] .brandmark-word{font-size:17px}
+.mark{display:block;flex-shrink:0}
+.mark-beam{transform-box:view-box;transform-origin:20px 12.5px}
 
-/* ═══ الشريط العلوي ═══ */
+@media (prefers-reduced-motion:no-preference){
+  .brandmark[data-animate="true"] .mark-beam{
+    animation:meezan-settle 1.15s cubic-bezier(.33,.78,.38,1) 1 both}
+}
+@keyframes meezan-settle{
+  0%{transform:rotate(-9deg)}
+  45%{transform:rotate(4.5deg)}
+  74%{transform:rotate(-1.8deg)}
+  100%{transform:rotate(0deg)}
+}
+
+/* ═══ الشارة — ختم محفور مش مستطيل ═══
+   حد نحاسي واحد رفيع + تباعد حروف واسع + ميلة بسيطة.
+   الحد المزدوج القديم اتشال: الميلة والتباعد بيدّوا إحساس الختم
+   من غير ما نحتاج حدّين. */
+.stamp{display:inline-block;padding:3px 10px 4px;border:1px solid var(--brand-line);
+  border-radius:3px;color:var(--brand);background:transparent;
+  font-family:var(--font-display);font-size:10.5px;font-weight:600;
+  letter-spacing:.12em;line-height:1.5;transform:rotate(-1deg);white-space:nowrap}
+.stamp[data-role="SUPER_ADMIN"]{background:var(--brand-wash);border-color:var(--brand)}
+.stamp[data-role="BRANCH_MANAGER"]{border-color:var(--brand-line)}
+.stamp[data-role="STAFF"]{border-color:var(--brand-line)}
+
+/* ═══ الشريط العلوي ═══
+   الخط النحاسي تحته هو خيط الأمان في ورقة البنكنوت — أرفع تفصيلة
+   في الشاشة وأكترها تكرارًا. */
 .app-bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;
-  justify-content:space-between;gap:12px;padding:12px var(--pad);
-  background:var(--ground);color:#fff}
-.who{display:flex;align-items:center;gap:10px;min-width:0}
+  justify-content:space-between;gap:12px;padding:11px var(--pad);
+  background:var(--ground);color:#fff;border-bottom:1.5px solid var(--brand)}
+.who{display:flex;align-items:center;gap:9px;min-width:0}
+.who .brandmark{color:var(--brand-soft)}
 .who-name{font-family:var(--font-display);font-size:16px;font-weight:600;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-bar .stamp{color:var(--brand-soft);border-color:rgba(201,165,87,.5)}
+.app-bar .stamp[data-role="SUPER_ADMIN"]{background:rgba(201,165,87,.14);
+  border-color:var(--brand-soft)}
 
 /* ═══ قائمة النقط الثلاث ═══
    مبنية على <details> — بتشتغل بالكيبورد وبدون أي JavaScript. */
@@ -132,7 +183,9 @@ button{font:inherit}
 .tabbar a{flex:1;padding:11px 4px 13px;text-align:center;text-decoration:none;
   font-size:12px;font-weight:600;color:var(--ink-faint);
   border-top:2.5px solid transparent;margin-top:-1px}
-.tabbar a[aria-current="page"]{color:var(--credit);border-top-color:var(--credit)}
+/* التبويب النشط نحاسي مش أخضر: التنقّل تحديد مكان، مش إجراء.
+   الأخضر محجوز لحاجة بتحصل لما تدوس عليها. */
+.tabbar a[aria-current="page"]{color:var(--brand);border-top-color:var(--brand)}
 .tabbar-icon{display:block;font-family:var(--font-mono);font-size:17px;margin-bottom:2px}
 .shell{max-width:640px;margin:0 auto;padding:14px var(--pad) 96px}
 
@@ -282,6 +335,7 @@ select.field-input{appearance:none;
 /* ═══ الدخول ═══ */
 .counter{min-height:100dvh;display:grid;place-items:center;padding:24px 16px;
   background:var(--surface)}
+.counter-brand{display:flex;justify-content:center;margin-bottom:18px}
 .counter-card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);
   border-top:none;padding:30px 26px 26px;border-radius:0 0 var(--r) var(--r);
   box-shadow:0 20px 50px -30px rgba(14,42,51,.55)}
