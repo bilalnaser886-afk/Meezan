@@ -138,7 +138,7 @@ export async function createProduct(
   let targetBranchId: string;
 
   if (actor.roleKey === 'SUPER_ADMIN') {
-    if (!input.branchId) throw Errors.validation('اختار الفرع.');
+    if (!input.branchId) throw Errors.validation('اختر الفرع.');
     const exists = await deps.branches.exists(input.branchId);
     if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
     targetBranchId = input.branchId;
@@ -218,7 +218,7 @@ export async function updateProduct(
   }
 
   if (Object.keys(patch).length === 0) {
-    throw Errors.validation('مفيش حاجة اتغيّرت.');
+    throw Errors.validation('لم يتغيّر شيء.');
   }
 
   await deps.products.update(productId, patch);
@@ -259,7 +259,7 @@ export async function restockProduct(
   }
 
   if (!Number.isInteger(delta) || delta === 0) {
-    throw Errors.validation('اكتب كمية صحيحة (موجبة للتوريد، سالبة للخصم).');
+    throw Errors.validation('اكتب كمية صحيحة: موجبة للتوريد، سالبة للخصم.');
   }
   if (Math.abs(delta) > MAX_QUANTITY) {
     throw Errors.validation('الكمية أكبر من الحد المسموح.');
@@ -286,13 +286,13 @@ export async function restockProduct(
 
 function assertName(name: string): void {
   if (name.length < 2 || name.length > 80) {
-    throw Errors.validation('اسم المنتج من حرفين لـ 80 حرف.');
+    throw Errors.validation('اسم المنتج من حرفين إلى 80 حرفًا.');
   }
 }
 
 function assertPrice(pricePiastres: number): void {
   if (!Number.isInteger(pricePiastres) || pricePiastres <= 0) {
-    throw Errors.validation('سعر البيع لازم يكون أكبر من صفر.');
+    throw Errors.validation('يجب أن يكون سعر البيع أكبر من صفر.');
   }
 }
 
@@ -305,7 +305,7 @@ function assertCost(costPiastres: number): void {
 
 function assertQuantity(quantity: number): void {
   if (!Number.isInteger(quantity) || quantity < 0) {
-    throw Errors.validation('الكمية لازم تكون رقم صحيح مش سالب.');
+    throw Errors.validation('يجب أن تكون الكمية رقمًا صحيحًا غير سالب.');
   }
   if (quantity > MAX_QUANTITY) {
     throw Errors.validation('الكمية أكبر من الحد المسموح.');
