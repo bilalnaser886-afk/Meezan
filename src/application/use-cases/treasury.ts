@@ -105,21 +105,31 @@ export async function recordMovement(
   let expenseReasonId: string | null = null;
   let relatedUserId: string | null = null;
 
-  if (input.type === 'EXPENSE' || input.type === 'ADVANCE') {
-    if (!input.expenseReasonId) throw Errors.validation('اختار سبب الصرف.');
+  // ⚠ السبب مطلوب للمصروف وحده.
+  //
+  // السُلفة سببها معروف من نوعها — "سُلفة" هي السبب. لما كنّا
+  // بنطلب سبب معاها كمان، كان لازم يبقى فيه بند اسمه "سُلفة موظّف"
+  // في قائمة الأسباب، فيبقى نفس المعلومة مكتوبة في مكانين:
+  // في `type` وفي `expense_reason_id`. ولما يختلفوا، مين الصح؟
+  //
+  // قيد قاعدة البيانات `expense_needs_reason` أصلاً بيطلب السبب
+  // للمصروف بس — يعني الاشتراط الزيادة ده كان من عندنا، والقاعدة
+  // مش محتاجاه.
+  if (input.type === 'EXPENSE') {
+    if (!input.expenseReasonId) throw Errors.validation('اختر سبب الصرف.');
 
     const reason = await deps.expenseReasons.findById(input.expenseReasonId);
     if (!reason) throw Errors.validation('سبب الصرف غير موجود.');
 
     // سبب خاص بفرع تاني ما ينفعش يتستخدم هنا
     if (reason.branchId && reason.branchId !== scope.branchId) {
-      throw Errors.validation('سبب الصرف ده مش متاح للفرع ده.');
+      throw Errors.validation('سبب الصرف هذا غير متاح لهذا الفرع.');
     }
     expenseReasonId = reason.id;
   }
 
   if (input.type === 'ADVANCE') {
-    if (!input.relatedUserId) throw Errors.validation('اختار الموظّف صاحب السُلفة.');
+    if (!input.relatedUserId) throw Errors.validation('اختر الموظّف صاحب السُلفة.');
 
     const target = await deps.users.findById(input.relatedUserId);
     if (!target || target.deletedAt) throw Errors.validation('الموظّف غير موجود.');
@@ -200,7 +210,7 @@ export async function reviewMovement(
   if (!movement) throw Errors.notFound('الحركة');
 
   if (movement.status !== 'PENDING') {
-    throw Errors.validation('الحركة دي اتراجعت قبل كده.');
+    throw Errors.validation('سبق مراجعة هذه الحركة.');
   }
 
   // ⚠ حركة البيع معتمدة من لحظة إنشائها ومربوطة بفاتورة.
@@ -208,7 +218,7 @@ export async function reviewMovement(
   // لكن الحارس ده صريح عشان أي تغيير مستقبلي في قواعد الاعتماد
   // ما يفتحش باب "رفض" فاتورة مباعة والفلوس في الدرج.
   if (movement.type === 'SALE') {
-    throw Errors.validation('حركة البيع مش بتتراجع. استخدم المرتجع.');
+    throw Errors.validation('لا تخضع حركة البيع للمراجعة. استخدم المرتجع.');
   }
 
   // فصل المهام: اللي كتب الطلب مش هو اللي يمضيه.
@@ -300,7 +310,7 @@ export async function getSalaryStatement(
     throw Errors.validation('تاريخ البداية غير صالح.');
   }
   if (!(to instanceof Date) || Number.isNaN(to.getTime()) || to <= from) {
-    throw Errors.validation('تاريخ النهاية لازم يكون بعد البداية.');
+    throw Errors.validation('يجب أن يكون تاريخ النهاية بعد تاريخ البداية.');
   }
 
   return deps.movements.salaryStatement(targetUserId, from, to);
