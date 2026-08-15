@@ -60,12 +60,12 @@ const IDLE_SHARED_JS = `
       '<div class="lock-screen"><div class="lock-card">' +
         '<p class="lock-eyebrow">SCREEN LOCKED</p>' +
         '<h1 class="lock-title">الشاشة مقفولة</h1>' +
-        '<p class="lock-who">شغلك محفوظ. اكتب كلمة المرور للمتابعة.</p>' +
+        '<p class="lock-who">عملك محفوظ. أدخل كلمة المرور للمتابعة.</p>' +
         '<form id="lkf"><input class="lock-input" id="lkpw" type="password" dir="ltr" ' +
           'autocomplete="current-password" required>' +
           '<button class="lock-btn" id="lkbtn" type="submit">فتح</button></form>' +
         '<p class="lock-error" id="lkerr" role="alert" aria-live="assertive"></p>' +
-        '<button class="lock-exit" id="lkout" type="button">تسجيل خروج بدل كده</button>' +
+        '<button class="lock-exit" id="lkout" type="button">تسجيل الخروج بدلًا من ذلك</button>' +
       '</div></div>';
 
     var pw = document.getElementById('lkpw');
@@ -128,9 +128,9 @@ const IDLE_SHARED_JS = `
     if (remaining <= WARN) {
       idleRoot.innerHTML =
         '<div class="idle-bar" role="alert" aria-live="assertive">' +
-          '<span>' + (ACTION === 'LOCK' ? 'الشاشة هتتقفل خلال' : 'هيتم تسجيل خروجك خلال') + '</span>' +
+          '<span>' + (ACTION === 'LOCK' ? 'تُغلق الشاشة خلال' : 'يُسجَّل خروجك خلال') + '</span>' +
           '<span class="idle-count">' + remaining + '</span><span>ثانية</span>' +
-          '<button class="idle-btn" id="stay" type="button">أنا هنا</button>' +
+          '<button class="idle-btn" id="stay" type="button">ما زلت هنا</button>' +
         '</div>';
       var stay = document.getElementById('stay');
       if (stay) stay.addEventListener('click', function () {
@@ -164,7 +164,7 @@ const IDLE_SHARED_JS = `
 
 
 const FONTS =
-  'https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap';
+  'https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@500;600&family=Readex+Pro:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap';
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
@@ -199,10 +199,60 @@ function receiptEdge(): string {
 
 // ═══════════════════ مكوّنات مشتركة ═══════════════════
 
+/**
+ * الشعار — ميزان بخط رفيع.
+ *
+ * ══ ليه ميزان مرسوم مش حرف أو أيقونة جاهزة؟ ══
+ * اسم النظام "ميزان"، ووظيفته الحقيقية إن الأرقام تتوازن: المخزون
+ * مع المبيعات، الخزينة مع الحركات، الراتب مع السُلف. الرمز نفسه
+ * هو الوعد اللي النظام بيقدّمه.
+ *
+ * ══ الحركة ══
+ * الكفة بتتزن مرة واحدة عند فتح صفحة الدخول، وبعدها تسكن نهائيًا.
+ * مفيش أي حركة تانية في النظام كله — الموظّف بيفتح الشاشة دي مرة
+ * في اليوم، فالحركة تبقى تحية صباح مش زينة بتتكرر.
+ *
+ * `animate` بتتفعّل في صفحة الدخول بس. النسخة المصغّرة في الهيدر
+ * ساكنة، لأنها بتظهر في كل صفحة والحركة فيها هتبقى إزعاج.
+ */
+function meezanMark(size: number): string {
+  return (
+    `<svg class="mark" viewBox="0 0 40 40" width="${size}" height="${size}" ` +
+    `aria-hidden="true" focusable="false">` +
+    `<g fill="none" stroke="currentColor" stroke-width="1.6" ` +
+    `stroke-linecap="round" stroke-linejoin="round">` +
+    // العمود والقاعدة — ثابتين
+    `<circle cx="20" cy="6.6" r="1.9"/>` +
+    `<path d="M20 8.5V31"/>` +
+    `<path d="M13.5 31.5h13"/>` +
+    // الذراع والكفّتين — دول اللي بيتزنوا
+    `<g class="mark-beam">` +
+    `<path d="M6 12.5h28"/>` +
+    `<path d="M6 12.5v3.4M34 12.5v3.4"/>` +
+    `<path d="M1.8 15.9q4.2 6.4 8.4 0M29.8 15.9q4.2 6.4 8.4 0"/>` +
+    `</g></g></svg>`
+  );
+}
+
+/** الشعار الكامل: الرمز + الاسم. لصفحة الدخول. */
+function brandLockup(animate: boolean): string {
+  return (
+    `<span class="brandmark" data-size="lg" data-animate="${animate ? 'true' : 'false'}">` +
+    meezanMark(40) +
+    `<span class="brandmark-word">ميزان</span>` +
+    `</span>`
+  );
+}
+
+/** الرمز وحده. للهيدر الداخلي — من غير حركة ومن غير اسم. */
+function brandGlyph(): string {
+  return `<span class="brandmark" data-size="sm">${meezanMark(24)}</span>`;
+}
+
 const ROLE_STAMP: Record<string, string> = {
   SUPER_ADMIN: 'المالك',
   BRANCH_MANAGER: 'مدير فرع',
-  STAFF: 'موظّف',
+  STAFF: 'مندوب مبيعات',
 };
 
 /**
@@ -219,6 +269,7 @@ function appBar(opts: {
 }): Html {
   return html`<header class="app-bar">
   <div class="who">
+    ${raw(brandGlyph())}
     <span class="who-name">${opts.fullName}</span>
     <span class="stamp" data-role="${opts.roleKey}">${ROLE_STAMP[opts.roleKey] ?? opts.roleKey}</span>
   </div>
@@ -349,13 +400,13 @@ export function loginPage(opts: { expired: boolean }): Html {
     body: html`<main class="counter"><div>
 ${raw(receiptEdge())}
 <div class="counter-card">
-  <p class="counter-eyebrow">POS TERMINAL</p>
+  <div class="counter-brand">${raw(brandLockup(true))}</div>
   <h1 class="counter-title">تسجيل الدخول</h1>
-  <p class="counter-sub">استخدم بيانات الحساب اللي مدير الفرع أداهالك.</p>
+  <p class="counter-sub">استخدم بيانات الدخول التي زوّدك بها مدير الفرع.</p>
 
   ${opts.expired
     ? raw(
-        '<div class="alert-box" role="status"><span aria-hidden="true">⏱</span><span>انتهت الجلسة لعدم النشاط. سجّل الدخول لاستئناف الوردية.</span></div>',
+        '<div class="alert-box" role="status"><span aria-hidden="true">⏱</span><span>انتهت الجلسة لعدم النشاط. سجّل الدخول للمتابعة.</span></div>',
       )
     : ''}
 
@@ -373,12 +424,12 @@ ${raw(receiptEdge())}
       <label class="field-label" for="password">كلمة المرور</label>
       <input class="field-input" id="password" type="password" dir="ltr"
         autocomplete="current-password" maxlength="1024" required>
-      <p class="field-hint">الشاشة بتتقفل تلقائياً بعد ١٠ دقايق من غير حركة.</p>
+      <p class="field-hint">تُغلق الشاشة تلقائيًا بعد 10 دقائق من دون نشاط.</p>
     </div>
-    <button class="btn-primary" id="btn" type="submit">ابدأ الوردية</button>
+    <button class="btn-primary" id="btn" type="submit">دخول</button>
   </form>
 
-  <div class="counter-foot"><span>MODULE 01</span><span>v1.0.0</span></div>
+  <div class="counter-foot"><span>الإصدار</span><span>1.0.0</span></div>
 </div>
 </div></main>`,
   });
@@ -424,10 +475,10 @@ const LOGIN_SCRIPT = `
       return;
     } catch (e) {
       // فشل الشبكة غير رفض الخادم — والرسالة لازم تفرّق بينهم
-      fail('تعذّر الاتصال بالخادم. اتأكد إن الجهاز متصل بالشبكة.');
+      fail('تعذّر الاتصال بالخادم. تأكّد من اتصال الجهاز بالشبكة.');
     } finally {
       btn.disabled = false;
-      btn.textContent = 'ابدأ الوردية';
+      btn.textContent = 'دخول';
     }
   });
 })();
@@ -529,8 +580,8 @@ ${raw(receiptEdge())}
   <p class="counter-eyebrow">FIRST RUN</p>
   <h1 class="counter-title">إنشاء حساب المالك</h1>
   <p class="counter-sub">
-    الصفحة دي بتشتغل مرة واحدة بس. بعد ما تخلص، امسح <code>SETUP_SECRET</code>
-    من إعدادات كلاودفلير وهتقفل نفسها تلقائياً.
+    تعمل هذه الصفحة مرة واحدة فقط. بعد الانتهاء، احذف <code>SETUP_SECRET</code>
+    من إعدادات كلاودفلير لتُغلق نفسها تلقائيًا.
   </p>
 
   <div class="alert-box" id="msg" role="alert" hidden><span id="msg-text"></span></div>
@@ -540,13 +591,13 @@ ${raw(receiptEdge())}
       <label class="field-label" for="setupSecret">سرّ الإعداد</label>
       <input class="field-input" id="setupSecret" name="setupSecret" type="password"
         dir="ltr" autocomplete="off" required>
-      <p class="field-hint">نفس القيمة اللي حطّيتها في SETUP_SECRET.</p>
+      <p class="field-hint">القيمة نفسها التي وضعتها في SETUP_SECRET.</p>
     </div>
     <div class="field">
       <label class="field-label" for="username">اسم المستخدم</label>
       <input class="field-input" id="username" name="username" type="text" dir="ltr"
         autocomplete="off" spellcheck="false" maxlength="32" required>
-      <p class="field-hint">حروف إنجليزية صغيرة وأرقام، من 3 لـ 32 حرف.</p>
+      <p class="field-hint">حروف إنجليزية صغيرة وأرقام، من 3 إلى 32 حرفًا.</p>
     </div>
     <div class="field">
       <label class="field-label" for="fullName">الاسم الكامل</label>
@@ -556,15 +607,15 @@ ${raw(receiptEdge())}
       <label class="field-label" for="password">كلمة المرور</label>
       <input class="field-input" id="password" name="password" type="password" dir="ltr"
         autocomplete="new-password" required>
-      <p class="field-hint">12 حرف على الأقل.</p>
+      <p class="field-hint">12 حرفًا على الأقل.</p>
     </div>
     <div class="field">
       <label class="field-label" for="passkey">المفتاح السرّي الثاني</label>
       <input class="field-input" id="passkey" name="passkey" type="password" dir="ltr"
         autocomplete="new-password" required>
       <p class="field-hint">
-        16 حرف على الأقل، ولازم يكون مختلف تماماً عن كلمة المرور.
-        ده القفل التاني على بوّابتك السرّية.
+        16 حرفًا على الأقل، ويجب أن يختلف تمامًا عن كلمة المرور.
+        هذا القفل الثاني على بوّابتك السرّية.
       </p>
     </div>
     <button class="btn-primary" id="btn" type="submit">إنشاء الحساب</button>
@@ -673,7 +724,7 @@ export function lockedPage(): Html {
   <div class="lock-card">
     <p class="lock-eyebrow">SCREEN LOCKED</p>
     <h1 class="lock-title">الشاشة مقفولة</h1>
-    <p class="lock-who">جلستك لسه شغّالة. اكتب كلمة المرور للمتابعة.</p>
+    <p class="lock-who">الجلسة ما زالت قائمة. أدخل كلمة المرور للمتابعة.</p>
 
     <form id="lf" novalidate>
       <label class="sr-only" for="lpw">كلمة المرور</label>
@@ -683,7 +734,7 @@ export function lockedPage(): Html {
     </form>
 
     <p class="lock-error" id="lerr" role="alert" aria-live="assertive"></p>
-    <button class="lock-exit" id="lout" type="button">تسجيل خروج بدل كده</button>
+    <button class="lock-exit" id="lout" type="button">تسجيل الخروج بدلًا من ذلك</button>
   </div>
 </main>`,
   });
@@ -736,8 +787,8 @@ const BROADCAST_PANEL = `
   <summary>بثّ إعلان</summary>
   <div class="panel-body">
   <p class="muted">
-    هيظهر كنافذة إلزامية لكل من يخصّه عند أول دخول، ومش هيقدر يكمّل
-    قبل ما يضغط «قرأت وفهمت» — والضغطة بتتسجّل باسمه ووقتها.
+    يظهر كنافذة إلزامية لكل من يعنيه الأمر عند أول دخول، ولا يمكنه المتابعة
+    قبل الضغط على «قرأت وفهمت» — ويُسجَّل الإقرار باسمه ووقته.
   </p>
   <div class="alert-box" id="bmsg" role="alert" hidden><span id="bmsg-text"></span></div>
   <form id="bf" novalidate>
@@ -753,8 +804,8 @@ const BROADCAST_PANEL = `
       <label class="field-label" for="audience">الجمهور</label>
       <select class="field-input" id="audience">
         <option value="ALL">الكل</option>
-        <option value="MANAGERS_ONLY">مديري الفروع بس</option>
-        <option value="STAFF_ONLY">الموظفين بس</option>
+        <option value="MANAGERS_ONLY">مديرو الفروع فقط</option>
+        <option value="STAFF_ONLY">مندوبو المبيعات فقط</option>
       </select>
     </div>
     <div class="field">
@@ -773,7 +824,7 @@ const BROADCAST_PANEL = `
 const ROLE_BADGE: Record<string, string> = {
   SUPER_ADMIN: 'مالك',
   BRANCH_MANAGER: 'مدير فرع',
-  STAFF: 'موظّف',
+  STAFF: 'مندوب مبيعات',
 };
 
 /**
@@ -791,7 +842,7 @@ const ROLE_BADGE: Record<string, string> = {
  */
 function teamListHtml(data: DashboardData): Html {
   if (data.team.length === 0) {
-    return html`<p class="muted">لسه مفيش حسابات مضافة. ابدأ بإضافة حساب من الفورم فوق.</p>`;
+    return html`<p class="muted">لا توجد حسابات بعد. ابدأ بإضافة حساب من النموذج أعلاه.</p>`;
   }
 
   const rows = data.team.map((m) => {
@@ -830,7 +881,7 @@ function teamPanel(data: DashboardData): Html {
     <div class="panel-body">
       <p class="muted">
         ${data.roleKey === 'SUPER_ADMIN' ? 'كل الحسابات في كل الفروع.' : 'حسابات فرعك.'}
-        التعطيل بيقطع جلسة الموظّف فورًا ويمنعه من الدخول، وبيحتفظ بكل سجلّه ومبيعاته.
+        يقطع التعطيل جلسة المستخدم فورًا ويمنعه من الدخول، مع الاحتفاظ بكامل سجلّه ومبيعاته.
       </p>
       <div class="alert-box" id="tmsg" role="alert" hidden><span id="tmsg-text"></span></div>
       ${teamListHtml(data)}
@@ -847,7 +898,7 @@ function teamPanel(data: DashboardData): Html {
 function branchesPanel(data: DashboardData): Html {
   const list =
     data.allBranches.length === 0
-      ? html`<p class="muted">مفيش فروع لسه.</p>`
+      ? html`<p class="muted">لا توجد فروع بعد.</p>`
       : html`<ul class="roster">
           ${data.allBranches.map(
             (b) => html`<li class="roster-row" data-inactive="${b.isActive ? 'false' : 'true'}">
@@ -866,8 +917,8 @@ function branchesPanel(data: DashboardData): Html {
     <summary>الفروع</summary>
     <div class="panel-body">
     <p class="muted">
-      الفرع لازم يتعمل قبل ما تقدر تضيف حسابات ليه. الكود بيظهر في الفواتير
-      والتقارير، فخلّيه قصير وثابت.
+      يجب إنشاء الفرع قبل إضافة حسابات إليه. يظهر الكود في الفواتير
+      والتقارير، فاجعله قصيرًا وثابتًا.
     </p>
 
     <div class="alert-box" id="brmsg" role="alert" hidden><span id="brmsg-text"></span></div>
@@ -888,7 +939,7 @@ function branchesPanel(data: DashboardData): Html {
         <input class="field-input" id="br-address" type="text" maxlength="200">
       </div>
       <div class="field">
-        <label class="field-label" for="br-phone">التليفون (اختياري)</label>
+        <label class="field-label" for="br-phone">الهاتف (اختياري)</label>
         <input class="field-input" id="br-phone" type="tel" dir="ltr" maxlength="32">
       </div>
       <button class="btn-primary" id="brbtn" type="submit">إضافة الفرع</button>
@@ -925,8 +976,8 @@ function createUserPanel(data: DashboardData): Html {
     <div class="panel-body">
     <p class="muted">
       ${isOwner
-        ? 'اختَر الفرع والدور. الحساب هيدخل بنفس اسم المستخدم وكلمة المرور اللي هتكتبها.'
-        : 'الحساب هيتربط بفرعك تلقائياً. لو اخترت «مدير فرع»، هيبقى بنفس صلاحياتك بالظبط جوّه الفرع ده.'}
+        ? 'اختر الفرع والدور. يدخل صاحب الحساب باسم المستخدم وكلمة المرور اللذين تكتبهما.'
+        : 'يُربط الحساب بفرعك تلقائيًا. إذا اخترت «مدير فرع»، تكون صلاحياته مطابقة لصلاحياتك داخل هذا الفرع.'}
     </p>
 
     <div class="alert-box" id="umsg" role="alert" hidden><span id="umsg-text"></span></div>
@@ -940,17 +991,17 @@ function createUserPanel(data: DashboardData): Html {
         <label class="field-label" for="u-username">اسم المستخدم</label>
         <input class="field-input" id="u-username" type="text" dir="ltr" autocomplete="off"
           spellcheck="false" maxlength="32" required>
-        <p class="field-hint">حروف إنجليزية صغيرة وأرقام فقط، من 3 لـ 32 حرف.</p>
+        <p class="field-hint">حروف إنجليزية صغيرة وأرقام فقط، من 3 إلى 32 حرفًا.</p>
       </div>
       <div class="field">
         <label class="field-label" for="u-password">كلمة المرور المبدئية</label>
         <input class="field-input" id="u-password" type="text" dir="ltr" autocomplete="off" required>
-        <p class="field-hint">12 حرف على الأقل. سلّمها للموظّف بنفسك بعد الإنشاء.</p>
+        <p class="field-hint">12 حرفًا على الأقل. سلّمها لصاحب الحساب بنفسك بعد الإنشاء.</p>
       </div>
       <div class="field">
         <label class="field-label" for="u-role">الدور</label>
         <select class="field-input" id="u-role">
-          <option value="STAFF">موظّف</option>
+          <option value="STAFF">مندوب مبيعات</option>
           <option value="BRANCH_MANAGER">مدير فرع</option>
         </select>
       </div>
@@ -973,11 +1024,11 @@ export function dashboardPage(data: DashboardData): Html {
     data.pendingApprovals > 0
       ? html`<section class="strip" data-tone="wait">
           <span class="strip-count">${String(data.pendingApprovals)}</span>
-          <span class="strip-text"><b>طلبات صرف مستنية اعتمادك.</b> مش داخلة في الرصيد لحد ما تعتمدها.</span>
-          <a class="strip-go" href="/treasury">راجعها</a>
+          <span class="strip-text"><b>طلبات صرف تنتظر اعتمادك.</b> لا تدخل في الرصيد قبل أن تعتمدها.</span>
+          <a class="strip-go" href="/treasury">مراجعة</a>
         </section>`
       : html`<section class="strip" data-tone="calm">
-          <span class="strip-text">مفيش حاجة مستنية قرارك دلوقتي.</span>
+          <span class="strip-text">لا يوجد ما ينتظر قرارك الآن.</span>
         </section>`;
 
   // ── البلاطات: اللي تقدر تعمله، بكلام مفهوم مش أكواد نظام ──
@@ -989,7 +1040,7 @@ export function dashboardPage(data: DashboardData): Html {
   if (canSell) {
     tiles.push(html`<a class="tile" data-wide href="/pos">
       <span class="tile-label">شاشة البيع</span>
-      <span class="tile-note">اختار المنتجات واقفل الفاتورة</span>
+      <span class="tile-note">اختر المنتجات وأتمم الفاتورة</span>
     </a>`);
   }
 
@@ -1003,7 +1054,7 @@ export function dashboardPage(data: DashboardData): Html {
   if (canUseTreasury) {
     tiles.push(html`<a class="tile" href="/treasury">
       <span class="tile-label">الخزينة</span>
-      <span class="tile-note">${data.canApproveExpenses ? 'مصروفات وسُلف وأرصدة' : 'سجّل مصروف أو سُلفة'}</span>
+      <span class="tile-note">${data.canApproveExpenses ? 'مصروفات وسُلف وأرصدة' : 'تسجيل مصروف أو سُلفة'}</span>
     </a>`);
   }
 
@@ -1024,17 +1075,17 @@ export function dashboardPage(data: DashboardData): Html {
   if (data.canBroadcast) {
     tiles.push(html`<a class="tile" data-wide href="#broadcast">
       <span class="tile-label">بثّ إعلان</span>
-      <span class="tile-note">نافذة إلزامية لكل من يخصّه</span>
+      <span class="tile-note">نافذة إلزامية لكل من يعنيه الأمر</span>
     </a>`);
   }
 
   // ── شاشة الموظّف: بتقول له إيه اللي جاي بدل ما تسيبه في فراغ ──
   const staffEmpty = html`<section class="panel" open>
     <div class="empty">
-      <p class="empty-title">يومك يبدأ من شاشة البيع</p>
+      <p class="empty-title">يبدأ يومك من شاشة البيع</p>
       <p class="empty-note">
-        اختار المنتجات، حدّد الخزينة، واقفل الفاتورة.<br>
-        المرتجعات وتسجيل العملاء هيتفتحوا في تحديث جاي.
+        اختر المنتجات، وحدّد الخزينة، وأتمم الفاتورة.<br>
+        تُتاح المرتجعات وتسجيل العملاء في تحديث قادم.
       </p>
     </div>
   </section>`;
@@ -1139,7 +1190,7 @@ ${MENU_JS}
       } catch (e) {
         // ما اتسجّلش في الخادم — ما نخفيش النافذة، وإلا يبقى عندنا
         // موظف فاكر إنه وقّع والسجل بيقول العكس.
-        alert('تعذّر تسجيل الإقرار. اتأكد من الاتصال وحاول تاني.');
+        alert('تعذّر تسجيل الإقرار. تحقّق من الاتصال ثم أعد المحاولة.');
       } finally {
         busy = false;
       }
@@ -1243,7 +1294,7 @@ ${MENU_JS}
         box.hidden = false;
         if (res.ok) {
           box.setAttribute('data-tone', 'ok');
-          text.textContent = 'تم إنشاء الحساب. الصفحة هتتحدّث الآن…';
+          text.textContent = 'تم إنشاء الحساب. يجري تحديث الصفحة…';
           // إعادة تحميل عشان الحساب الجديد يظهر في قائمة الفريق
           // (القائمة مبنية من الخادم وقت فتح الصفحة، مش حيّة).
           setTimeout(function () { window.location.reload(); }, 1000);
@@ -1275,7 +1326,7 @@ ${MENU_JS}
     var box = document.getElementById('tmsg');
     var text = document.getElementById('tmsg-text');
 
-    if (!turnOn && !confirm('تعطيل الحساب ده؟ هيتقطع من النظام فورًا.')) return;
+    if (!turnOn && !confirm('تعطيل هذا الحساب؟ ينقطع عن النظام فورًا.')) return;
 
     var original = btn.textContent;
     btn.disabled = true;
@@ -1338,7 +1389,7 @@ ${MENU_JS}
         box.hidden = false;
         if (res.ok) {
           box.setAttribute('data-tone', 'ok');
-          text.textContent = 'تمت إضافة الفرع. الصفحة هتتحدّث الآن…';
+          text.textContent = 'تمت إضافة الفرع. يجري تحديث الصفحة…';
           setTimeout(function () { window.location.reload(); }, 1000);
         } else {
           box.removeAttribute('data-tone');
@@ -1418,7 +1469,7 @@ const TREASURY_TYPE_LABEL: Record<string, string> = {
 };
 
 function movementRowsHtml(items: TreasuryMovementView[], currentUserId: string, canApprove: boolean): Html {
-  if (items.length === 0) return html`<p class="muted">مفيش حركات.</p>`;
+  if (items.length === 0) return html`<p class="muted">لا توجد حركات.</p>`;
 
   return html`${items.map((m) => {
     // زرار المراجعة بيظهر بس لو معلّقة، وعندك صلاحية، ومش إنت
@@ -1460,7 +1511,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
   const balancesHtml =
     data.balances.length === 0
-      ? html`<p class="muted">مفيش خزائن. المالك بيضيفها من قاعدة البيانات حاليًا.</p>`
+      ? html`<p class="muted">لا توجد خزائن. يضيفها المالك من قاعدة البيانات حاليًا.</p>`
       : html`<div class="balances">
           ${data.balances.map(
             (b) => html`<div class="bal-card">
@@ -1499,8 +1550,8 @@ export function treasuryPage(data: TreasuryPageData): Html {
     <div class="panel-body">
     <p class="muted">
       ${data.canApprove
-        ? 'حركتك بتتعتمد فورًا وبتأثّر على الرصيد على طول.'
-        : 'حركتك بتتسجّل كطلب معلّق، وما بتأثّرش على الرصيد قبل اعتماد المدير.'}
+        ? 'تُعتمد حركتك فورًا وتؤثّر على الرصيد مباشرة.'
+        : 'تُسجَّل حركتك كطلب معلّق، ولا تؤثّر على الرصيد قبل اعتماد المدير.'}
     </p>
 
     <div class="alert-box" id="mvmsg" role="alert" hidden><span id="mvmsg-text"></span></div>
@@ -1543,8 +1594,13 @@ export function treasuryPage(data: TreasuryPageData): Html {
       <div class="field" id="mv-user-field" hidden>
         <label class="field-label" for="mv-user">الموظّف صاحب السُلفة</label>
         <select class="field-input" id="mv-user">
-          ${data.team.map((t) => html`<option value="${t.id}">${t.fullName}</option>`)}
+          ${data.team.length > 0
+            ? data.team.map((t) => html`<option value="${t.id}">${t.fullName}</option>`)
+            : html`<option value="${data.currentUserId}">${data.fullName}</option>`}
         </select>
+        ${data.team.length === 0
+          ? html`<p class="field-hint">السُلفة تُسجَّل باسمك، وتُخصم من راتبك عند التسوية.</p>`
+          : ''}
       </div>
 
       <div class="field" id="mv-dir-field" hidden>
@@ -1569,7 +1625,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
     ? html`<details class="panel" open>
         <summary>في انتظار اعتمادك (${String(data.pending.length)})</summary>
         <div class="panel-body">
-          <p class="muted">الطلبات دي مش داخلة في الرصيد لحد ما تعتمدها.</p>
+          <p class="muted">لا تدخل هذه الطلبات في الرصيد قبل أن تعتمدها.</p>
           <div class="alert-box" id="rvmsg" role="alert" hidden><span id="rvmsg-text"></span></div>
           ${movementRowsHtml(data.pending, data.currentUserId, data.canApprove)}
         </div>
@@ -1614,7 +1670,9 @@ ${MENU_JS}
 
   function syncFields() {
     var t = typeEl.value;
-    reasonField.hidden = !(t === 'EXPENSE' || t === 'ADVANCE');
+    // سبب الصرف للمصروف وحده. السُلفة سببها معروف من نوعها،
+    // والمطلوب معاها اسم الموظّف مش سبب.
+    reasonField.hidden = t !== 'EXPENSE';
     userField.hidden = t !== 'ADVANCE';
     dirField.hidden = t !== 'ADJUSTMENT';
   }
@@ -1641,7 +1699,7 @@ ${MENU_JS}
           treasuryId: document.getElementById('mv-treasury').value,
           type: t,
           amount: document.getElementById('mv-amount').value,
-          expenseReasonId: (t === 'EXPENSE' || t === 'ADVANCE') ? document.getElementById('mv-reason').value : null,
+          expenseReasonId: t === 'EXPENSE' ? document.getElementById('mv-reason').value : null,
           relatedUserId: t === 'ADVANCE' ? document.getElementById('mv-user').value : null,
           adjustmentDirection: t === 'ADJUSTMENT' ? document.getElementById('mv-dir').value : null,
           note: document.getElementById('mv-note').value || null
@@ -1679,7 +1737,7 @@ ${MENU_JS}
     var box = document.getElementById('rvmsg');
     var text = document.getElementById('rvmsg-text');
 
-    if (decision === 'REJECTED' && !confirm('رفض الطلب ده؟')) return;
+    if (decision === 'REJECTED' && !confirm('رفض هذا الطلب؟')) return;
 
     btn.disabled = true;
     try {
@@ -1758,10 +1816,10 @@ export function posPage(data: PosPageData): Html {
 
   const productsHtml = !hasProducts
     ? html`<div class="empty">
-        <p class="empty-title">مفيش منتجات متاحة</p>
+        <p class="empty-title">لا توجد منتجات متاحة</p>
         <p class="empty-note">
-          إمّا لسه ما اتضافتش منتجات، أو الكميات كلها خلصت.<br>
-          المدير بيضيفها ويورّدها من شاشة المنتجات.
+          إمّا أن المنتجات لم تُضَف بعد، أو أن الكميات نفدت.<br>
+          يضيفها المدير ويورّدها من شاشة المنتجات.
         </p>
       </div>`
     : html`<div class="prod-grid" id="prod-grid">
@@ -1797,7 +1855,7 @@ export function posPage(data: PosPageData): Html {
       <button class="btn-mini" type="button" id="cart-clear" hidden>تفريغ</button>
     </div>
 
-    <p class="cart-empty" id="cart-empty">فاضية. اختار منتج من تحت.</p>
+    <p class="cart-empty" id="cart-empty">السلة فارغة. اختر منتجًا من الأسفل.</p>
     <div id="cart-lines"></div>
 
     <div class="cart-total">
@@ -1808,7 +1866,7 @@ export function posPage(data: PosPageData): Html {
 
   ${!hasTreasury
     ? html`<div class="alert-box"><span>
-        مفيش خزينة متاحة لفرعك، فمش هينفع تقفل فاتورة. كلّم المالك يضيف خزينة للفرع.
+        لا توجد خزينة متاحة لفرعك، ولا يمكن إتمام فاتورة من دونها. راجع المالك لإضافة خزينة للفرع.
       </span></div>`
     : ''}
 
@@ -1823,8 +1881,8 @@ export function posPage(data: PosPageData): Html {
           )}
         </select>
         <p class="field-hint">
-          وسيلة الدفع بتتقرا من الخزينة نفسها — كاش، فيزا، إنستاباي.${data.roleKey === 'SUPER_ADMIN'
-            ? ' إنت بتشوف منتجات كل الفروع، فاختار خزينة نفس فرع المنتجات اللي في السلة.'
+          تُقرأ وسيلة الدفع من الخزينة نفسها — نقدي، فيزا، إنستاباي.${data.roleKey === 'SUPER_ADMIN'
+            ? ' تظهر لك منتجات كل الفروع، فاختر خزينة الفرع نفسه الذي تنتمي إليه منتجات السلة.'
             : ''}
         </p>
       </div>
@@ -1850,7 +1908,7 @@ export function posPage(data: PosPageData): Html {
       ${hasProducts
         ? html`<div class="field">
             <input class="field-input" id="pos-search" type="search"
-              placeholder="دوّر بالاسم" autocomplete="off">
+              placeholder="ابحث بالاسم" autocomplete="off">
           </div>`
         : ''}
       ${productsHtml}
@@ -2056,7 +2114,7 @@ ${TIME_JS}
   });
 
   clearEl.addEventListener('click', function () {
-    if (!confirm('تفريغ السلة كلها؟')) return;
+    if (!confirm('تفريغ السلة بالكامل؟')) return;
     cart = {};
     render();
   });
@@ -2120,7 +2178,7 @@ ${TIME_JS}
       // ⚠ مش بنقول "ما اتسجّلتش" — إحنا مش عارفين.
       // الطلب ممكن يكون وصل الخادم واتنفّذ والرد هو اللي ضاع.
       // لو قلنا للموظّف إنها فشلت، هيبيع تاني ويتسجّل بيعين.
-      textEl.textContent = 'انقطع الاتصال. حدّث الصفحة وشوف آخر الفواتير قبل ما تعيد البيع.';
+      textEl.textContent = 'انقطع الاتصال. حدّث الصفحة وراجع آخر الفواتير قبل إعادة البيع.';
     } finally {
       render();
     }
@@ -2175,11 +2233,11 @@ export function productsPage(data: ProductsPageData): Html {
   const rows =
     data.products.length === 0
       ? html`<div class="empty">
-          <p class="empty-title">مفيش منتجات لسه</p>
+          <p class="empty-title">لا توجد منتجات بعد</p>
           <p class="empty-note">
             ${data.canEdit
-              ? 'ابدأ بإضافة أول منتج من القسم اللي فوق.'
-              : 'المدير هو اللي بيضيف المنتجات.'}
+              ? 'ابدأ بإضافة أول منتج من القسم أعلاه.'
+              : 'يضيف المديرُ المنتجاتِ.'}
           </p>
         </div>`
       : html`${data.products.map(
@@ -2225,7 +2283,7 @@ export function productsPage(data: ProductsPageData): Html {
                       <label class="field-label" for="stock-${p.id}">تعديل الكمية</label>
                       <input class="field-input" id="stock-${p.id}" type="text"
                         inputmode="numeric" dir="ltr" placeholder="5 أو -2">
-                      <p class="field-hint">اكتب الفرق مش الرقم النهائي. سالب = خصم تالف أو جرد.</p>
+                      <p class="field-hint">اكتب الفرق لا الرقم النهائي. القيمة السالبة خصم لتلف أو جرد.</p>
                     </div>
                   </div>
                   <div class="prod-edit-actions">
@@ -2273,7 +2331,7 @@ export function productsPage(data: ProductsPageData): Html {
               <label class="field-label" for="np-cost">التكلفة (اختياري)</label>
               <input class="field-input" id="np-cost" type="text" inputmode="decimal"
                 dir="ltr" autocomplete="off">
-              <p class="field-hint">سيبها فاضية لو مش معروفة — هتتسجّل صفر.</p>
+              <p class="field-hint">اتركها فارغة إن كانت غير معروفة — تُسجَّل صفرًا.</p>
             </div>
 
             <div class="field">
@@ -2400,7 +2458,7 @@ ${MENU_JS}
 
     var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
     if (result) {
-      say('اتحفظ.', true);
+      say('تم الحفظ.', true);
       setTimeout(function () { window.location.reload(); }, 900);
     }
   });
@@ -2412,7 +2470,7 @@ ${MENU_JS}
 
     var id = btn.getAttribute('data-save-stock');
     var input = document.getElementById('stock-' + id);
-    if (!input || !input.value.trim()) { say('اكتب الكمية الأول.', false); return; }
+    if (!input || !input.value.trim()) { say('اكتب الكمية أولًا.', false); return; }
 
     var result = await send(
       '/api/products/' + encodeURIComponent(id) + '/stock',
@@ -2422,7 +2480,7 @@ ${MENU_JS}
     );
 
     if (result) {
-      say('الكمية بقت ' + result.quantityOnHand + '.', true);
+      say('أصبحت الكمية ' + result.quantityOnHand + '.', true);
       setTimeout(function () { window.location.reload(); }, 900);
     }
   });
@@ -2435,7 +2493,7 @@ ${MENU_JS}
     var id = btn.getAttribute('data-toggle');
     var isActive = btn.getAttribute('data-active') === 'true';
 
-    if (isActive && !confirm('إيقاف المنتج ده؟ مش هيظهر في شاشة البيع، وتاريخ مبيعاته هيفضل زي ما هو.')) return;
+    if (isActive && !confirm('إيقاف هذا المنتج؟ لن يظهر في شاشة البيع، ويبقى تاريخ مبيعاته كما هو.')) return;
 
     var result = await send(
       '/api/products/' + encodeURIComponent(id),
@@ -2445,7 +2503,7 @@ ${MENU_JS}
     );
 
     if (result) {
-      say(isActive ? 'المنتج اتوقف.' : 'المنتج رجع شغّال.', true);
+      say(isActive ? 'تم إيقاف المنتج.' : 'تمت إعادة تفعيل المنتج.', true);
       setTimeout(function () { window.location.reload(); }, 900);
     }
   });
@@ -2481,7 +2539,7 @@ ${MENU_JS}
         msg.hidden = false;
         if (res.ok) {
           msg.setAttribute('data-tone', 'ok');
-          msgText.textContent = 'المنتج اتضاف.';
+          msgText.textContent = 'تمت إضافة المنتج.';
           setTimeout(function () { window.location.reload(); }, 900);
           return;
         }
