@@ -483,6 +483,15 @@ select.field-input{appearance:none;
 .cart-price-input:focus{outline:none;border-color:var(--credit)}
 .cart-price-note{font-size:11px;color:var(--brand)}
 
+/* عدّاد الأجهزة — الرقم اللي القائمة مترتّبة بيه، فبيبقى أوضح
+   حاجة في السطر. الصفر بيبهت عشان الترتيب يقرا نفسه من فوق لتحت. */
+.dev-count{display:flex;flex-direction:column;align-items:center;
+  min-width:44px;line-height:1.15}
+.dev-count b{font-family:var(--font-mono);font-size:18px;font-weight:600;
+  font-variant-numeric:tabular-nums;color:var(--brand)}
+.dev-count span{font-size:10px;color:var(--ink-faint)}
+.dev-count[data-zero="true"] b{color:var(--ink-faint)}
+
 /* ملاحظات العميل: بتلتف على أكتر من سطر مش بتتقص */
 .cust-notes{display:block;font-size:12px;color:var(--ink-soft);
   line-height:1.6;margin-top:4px;white-space:pre-wrap}
