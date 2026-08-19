@@ -46,6 +46,8 @@ export interface RequestContext {
 }
 
 export interface LoginInput {
+  /** كود المحل — جزء من الهوية، مش سياق حواليها */
+  tenantCode: string;
   username: string;
   password: string;
   /** المفتاح التاني — مطلوب بس من بوّابة المالك */
@@ -76,7 +78,13 @@ export async function login(
   const now = clock.now();
 
   // 1) حدّ المحاولات لكل IP — بيمنع رشّ كلمات المرور على مئات الحسابات
-  const rateKey = input.viaAdminGate ? `login:admin:${ctx.ipAddress}` : `login:${ctx.ipAddress}`;
+  // ⚠ كود المحل جزء من مفتاح الحدّ.
+  // من غيره، محل مزحوم عليه محاولات دخول كتير يقفل الباب على
+  // كل المحلات التانية اللي جايّة من نفس شبكة المحمول.
+  const tenantKey = input.tenantCode.trim().toLowerCase();
+  const rateKey = input.viaAdminGate
+    ? `login:admin:${tenantKey}:${ctx.ipAddress}`
+    : `login:${tenantKey}:${ctx.ipAddress}`;
   const limit = input.viaAdminGate ? LOGIN_POLICY.ADMIN_IP_RATE_LIMIT : LOGIN_POLICY.IP_RATE_LIMIT;
   const windowSec = input.viaAdminGate
     ? LOGIN_POLICY.ADMIN_IP_RATE_WINDOW_SECONDS
@@ -88,12 +96,19 @@ export async function login(
       action: 'auth.login.rate_limited',
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
-      metadata: { username: input.username, viaAdminGate: input.viaAdminGate },
+      metadata: {
+        tenantCode: input.tenantCode,
+        username: input.username,
+        viaAdminGate: input.viaAdminGate,
+      },
     });
     throw Errors.rateLimited(retryAfter);
   }
 
-  const user = await users.findByUsername(input.username.trim().toLowerCase());
+  const user = await users.findByTenantAndUsername(
+    input.tenantCode.trim(),
+    input.username.trim().toLowerCase(),
+  );
 
   // 2) مستخدم مش موجود
   // بننفّذ فحص وهمي بنفس التكلفة الزمنية عشان المهاجم ما يعرفش
@@ -104,9 +119,32 @@ export async function login(
       action: 'auth.login.unknown_user',
       ipAddress: ctx.ipAddress,
       userAgent: ctx.userAgent,
-      metadata: { username: input.username },
+      metadata: { tenantCode: input.tenantCode, username: input.username },
     });
+    // ⚠ نفس الرسالة سواء المحل غلط أو الاسم غلط أو الاتنين.
+    // لو فرّقنا، حد يقدر يعرف أنهي أكواد محلات موجودة عندنا.
     throw Errors.invalidCredentials('user not found');
+  }
+
+  // ══ الاشتراك موقوف ══
+  //
+  // ⚠ الفحص ده بعد ما نتأكد إن البيانات صح عن قصد.
+  //
+  // لو رفضنا قبل فحص كلمة المرور، أي حد يقدر يعرف أنهي محلات
+  // موقوفة عندنا بمجرد تجربة الأكواد. والمعلومة دي مش من حقه.
+  //
+  // ورسالة الرفض مختلفة عن "بيانات غلط": صاحب المحل لازم يعرف
+  // إن مشكلته في الاشتراك مش في كلمة المرور، وإلا هيقعد يجرّب
+  // ويعيّط في الموظفين.
+  if (!user.tenantActive) {
+    await audit.record({
+      actorId: user.id,
+      action: 'auth.login.tenant_suspended',
+      ipAddress: ctx.ipAddress,
+      userAgent: ctx.userAgent,
+      metadata: { tenantCode: user.tenantCode },
+    });
+    throw Errors.accountInactive();
   }
 
   // 3) موقوف مؤقتاً
@@ -518,6 +556,9 @@ function toAuthenticatedUser(user: UserRecord): AuthenticatedUser {
     fullName: user.fullName,
     roleKey: user.roleKey,
     branchId: user.branchId,
+    tenantId: user.tenantId,
+    tenantCode: user.tenantCode,
+    tenantName: user.tenantName,
     permissions: user.permissions,
     mustChangePassword: user.mustChangePassword,
   };
