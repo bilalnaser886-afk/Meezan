@@ -11,19 +11,45 @@
 
 import type { PermissionKey } from '../domain/permissions';
 
-export type RoleKey = 'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
+/**
+ * ⚠ لاحظ إن "المالك" اتقسم لاتنين.
+ *
+ *   PLATFORM_ADMIN  إنت. بتفتح محلات وتوقف اللي ما دفعش،
+ *                   وما بتقراش أرباح حد.
+ *   SUPER_ADMIN     صاحب المحل. "مالك" جوّه محله بس، وما يعرفش
+ *                   إن فيه محلات تانية في النظام أصلاً.
+ *
+ * الكلمة كان معناها واحد لما كان المحل واحد.
+ */
+export type RoleKey = 'PLATFORM_ADMIN' | 'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
 
 export interface AuthenticatedUser {
   id: string;
   username: string;
   fullName: string;
   roleKey: RoleKey;
+  /** ⚠ null معناها "كل فروع **محله هو**" — مش كل فروع النظام */
   branchId: string | null;
+  /** المحل اللي المستخدم تابع له. مفيش مستخدم بلا محل. */
+  tenantId: string;
+  tenantCode: string;
+  tenantName: string;
   permissions: PermissionKey[];
   mustChangePassword: boolean;
 }
 
-/** محتوى بطاقة الدخول. خفيف عمداً — بتتحمل مع كل طلب. */
+/**
+ * محتوى بطاقة الدخول. خفيف عمداً — بتتحمل مع كل طلب.
+ *
+ * ⚠ **المحل مش هنا عن قصد.**
+ *
+ * الحارس بيقرا `sid` و `sub` بس، وبيجيب المستخدم وصلاحياته ومحله
+ * من قاعدة البيانات في كل طلب. باقي الحقول هنا معلوماتية.
+ *
+ * ولو حطّينا المحل في البطاقة، هيبقى عندنا نسخة تانية من الحقيقة
+ * بتعيش خمس دقايق: محل يتوقف اشتراكه، وموظّفه يفضل شغّال لحد ما
+ * بطاقته تنتهي. القراءة من القاعدة كل طلب بتخلّي الإيقاف فوري.
+ */
 export interface AccessTokenPayload {
   sub: string; // معرّف المستخدم
   sid: string; // معرّف الجلسة
@@ -70,6 +96,11 @@ export interface RateLimiter {
 
 export interface UserRecord {
   id: string;
+  tenantId: string;
+  tenantCode: string;
+  tenantName: string;
+  /** اشتراك المحل مفعّل؟ لو لأ، الدخول بيترفض برسالة مختلفة */
+  tenantActive: boolean;
   username: string;
   fullName: string;
   passwordHash: string;
@@ -85,7 +116,11 @@ export interface UserRecord {
 }
 
 export interface UserRepository {
-  findByUsername(username: string): Promise<UserRecord | null>;
+  /**
+   * ⚠ الاسم لوحده مش كافي يميّز حد بعد نظام المحلات.
+   * نفس اسم المستخدم في محلّين = شخصين مختلفين تمامًا.
+   */
+  findByTenantAndUsername(tenantCode: string, username: string): Promise<UserRecord | null>;
   findById(id: string): Promise<UserRecord | null>;
   registerFailedLogin(userId: string, lockUntil: Date | null): Promise<void>;
   clearLoginFailures(userId: string, loginAt: Date): Promise<void>;
@@ -98,18 +133,34 @@ export interface UserRepository {
 /**
  * نطاق البحث — صريح عمداً.
  *
- * ليه مش `branchId: string | null`؟
+ * ══ ليه مش `branchId: string | null`؟ ══
  * لأن null معناها الغامض "كل الفروع"، ولو وصلت بالغلط من مدير فرع
- * (مثلاً حسابه من غير فرع)، كان هيشوف كل مستخدمي النظام.
- * ده اسمه fail-open: القفل يتعطّل فيفتح.
+ * كان هيشوف كل مستخدمي النظام. ده اسمه fail-open: القفل يتعطّل
+ * فيفتح.
  *
- * النوع ده بيخلّي الغلطة دي **مستحيلة**: لازم تكتب `allBranches: true`
- * صراحةً عشان تشوف الكل. مفيش طريقة توصلها بالصدفة.
+ * ══ ⚠ التغيير الأخطر في المشروع كله ══
+ * النوع ده كان `{ allBranches: true } | { branchId }`.
+ * و `allBranches` كانت معناها في الكود: **ما تحطّش أي فلتر**.
+ *
+ * ده كان صح لما كل الفروع لمحل واحد. مع محلات كتير في نفس قاعدة
+ * البيانات، الجملة دي معناها إن كل صاحب محل بيشوف مبيعات وتكاليف
+ * وأرباح كل المحلات التانية.
+ *
+ * دلوقتي **مفيش حالة بلا محل** غير حالة واحدة صريحة اسمها
+ * `allTenants` لمشغّل المنصّة. أي استعلام ناسي المحل مش هيتبني
+ * أصلاً — المترجم بيقف عنده.
+ *
+ * تشبيه: قفل الباب مش لافتة عليه. اللافتة بتتقرا أو ما تتقراش،
+ * القفل بيشتغل في الحالتين.
  */
-export type ListScope = { allBranches: true } | { branchId: string };
+export type ListScope =
+  | { allTenants: true }
+  | { tenantId: string }
+  | { tenantId: string; branchId: string };
 
 /** بيانات إنشاء حساب جديد. الهاش يوصل هنا جاهز — المستودع لا يعرف شيئاً عن التشفير. */
 export interface CreateUserInput {
+  tenantId: string;
   username: string;
   fullName: string;
   passwordHash: string;
@@ -130,12 +181,14 @@ export interface TeamMember {
 
 export interface BranchSummary {
   id: string;
+  tenantId: string;
   code: string;
   name: string;
   isActive: boolean;
 }
 
 export interface CreateBranchInput {
+  tenantId: string;
   code: string;
   name: string;
   address: string | null;
@@ -144,13 +197,72 @@ export interface CreateBranchInput {
 
 export interface BranchRepository {
   /** الفروع النشطة فقط — للقوائم المنسدلة */
-  listActive(): Promise<BranchSummary[]>;
+  listActive(tenantId: string): Promise<BranchSummary[]>;
   /** كل الفروع غير المحذوفة، بما فيها المعطّلة — لشاشة الإدارة */
-  listAll(): Promise<BranchSummary[]>;
-  /** فحص وجود الفرع قبل ربط مستخدم جديد به — يمنع ربطه بمعرّف وهمي */
-  exists(branchId: string): Promise<boolean>;
-  findByCode(code: string): Promise<BranchSummary | null>;
+  listAll(tenantId: string): Promise<BranchSummary[]>;
+  /**
+   * ⚠ المحل جزء من الفحص مش سياق حواليه.
+   * من غيره، صاحب محل يقدر يربط موظّف بفرع محل تاني لو خمّن معرّفه.
+   */
+  exists(tenantId: string, branchId: string): Promise<boolean>;
+  findByCode(tenantId: string, code: string): Promise<BranchSummary | null>;
   create(data: CreateBranchInput): Promise<{ id: string }>;
+  /** عدد الفروع الحالية — لفحص حد الاشتراك */
+  countActive(tenantId: string): Promise<number>;
+}
+
+// ═══════════════════ المحلات ═══════════════════
+
+export interface TenantRecord {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  maxBranches: number;
+  notes: string | null;
+  createdAt: Date;
+}
+
+/** صف في شاشة إدارة المحلات — حجم استخدام، مش أرقام مالية */
+export interface TenantOverview extends TenantRecord {
+  branchCount: number;
+  userCount: number;
+  ownerName: string | null;
+}
+
+export interface CreateTenantInput {
+  code: string;
+  name: string;
+  maxBranches: number;
+  ownerUsername: string;
+  ownerFullName: string;
+  /** الهاش بيوصل جاهز — المستودع ما بيعرفش حاجة عن كلمات المرور */
+  ownerPasswordHash: string;
+  branchCode: string;
+  branchName: string;
+}
+
+export interface TenantRepository {
+  findById(id: string): Promise<TenantRecord | null>;
+  findByCode(code: string): Promise<TenantRecord | null>;
+  /**
+   * ⚠ بترجّع حجم الاستخدام بس: عدد الفروع والمستخدمين.
+   * مفيش مبيعات ولا أرباح ولا أرصدة. مشغّل المنصّة بيحاسب على
+   * الاشتراك، مش بيتفرّج على الشغل.
+   */
+  listOverview(): Promise<TenantOverview[]>;
+  /** بتنشئ المحل وأول فرع وحساب المالك وأسباب الصرف والخزينة معًا */
+  create(data: CreateTenantInput): Promise<{ tenantId: string; ownerId: string; branchId: string }>;
+  setActive(id: string, isActive: boolean): Promise<void>;
+  setMaxBranches(id: string, maxBranches: number): Promise<void>;
+  platformAdminExists(): Promise<boolean>;
+  createPlatformAdmin(data: {
+    tenantId: string;
+    username: string;
+    fullName: string;
+    passwordHash: string;
+    passkeyHash: string;
+  }): Promise<{ id: string }>;
 }
 
 // ═══════════════════ الخزينة ═══════════════════
@@ -201,6 +313,7 @@ export interface TreasuryBalance {
 
 export interface ExpenseReason {
   id: string;
+  tenantId: string;
   name: string;
   isAdvance: boolean;
   branchId: string | null;
@@ -208,6 +321,7 @@ export interface ExpenseReason {
 
 export interface MovementRecord {
   id: string;
+  tenantId: string;
   treasuryId: string;
   branchId: string | null;
   direction: MovementDirection;
@@ -233,6 +347,7 @@ export interface EnrichedMovement extends MovementRecord {
 }
 
 export interface CreateMovementInput {
+  tenantId: string;
   treasuryId: string;
   branchId: string | null;
   direction: MovementDirection;
@@ -250,7 +365,8 @@ export interface CreateMovementInput {
 }
 
 export interface MovementFilter {
-  /** null = كل الفروع (للمالك فقط) */
+  tenantId: string;
+  /** null = كل فروع المحل (لصاحب المحل فقط) */
   branchId: string | null;
   status?: MovementStatus;
   limit: number;
@@ -265,9 +381,10 @@ export interface SalaryStatement {
 }
 
 export interface TreasuryRepository {
-  listBalances(branchId: string | null): Promise<TreasuryBalance[]>;
-  /** بيرجّع الفرع التابع له، أو null لو الخزينة مش موجودة */
-  findScope(treasuryId: string): Promise<{ branchId: string | null } | null>;
+  /** ⚠ المحل إلزامي. الفرع اختياري (null = كل فروع المحل). */
+  listBalances(tenantId: string, branchId: string | null): Promise<TreasuryBalance[]>;
+  /** بيرجّع المحل والفرع، أو null لو الخزينة مش موجودة */
+  findScope(treasuryId: string): Promise<{ tenantId: string; branchId: string | null } | null>;
 }
 
 export interface MovementRepository {
@@ -284,8 +401,8 @@ export interface MovementRepository {
 }
 
 export interface ExpenseReasonRepository {
-  /** أسباب الفرع + الأسباب العامة (branch_id = null) */
-  listForBranch(branchId: string | null): Promise<ExpenseReason[]>;
+  /** أسباب الفرع + أسباب المحل العامة (branch_id = null) */
+  listForBranch(tenantId: string, branchId: string | null): Promise<ExpenseReason[]>;
   findById(id: string): Promise<ExpenseReason | null>;
 }
 
@@ -320,6 +437,7 @@ export type ProductType = 'device' | 'accessory';
 
 export interface ProductRecord {
   id: string;
+  tenantId: string;
   branchId: string;
   name: string;
   productType: ProductType;
@@ -340,6 +458,7 @@ export interface ProductRecord {
 }
 
 export interface CreateProductInput {
+  tenantId: string;
   branchId: string;
   name: string;
   productType: ProductType;
@@ -426,6 +545,7 @@ export interface SaleLineInput {
 }
 
 export interface CreateSaleInput {
+  tenantId: string;
   staffId: string;
   treasuryId: string;
   items: SaleLineInput[];
@@ -444,6 +564,7 @@ export interface CreateSaleResult {
 
 export interface SaleSummary {
   id: string;
+  tenantId: string;
   branchId: string;
   staffId: string;
   customerName: string | null;
@@ -512,6 +633,7 @@ export interface SaleRepository {
 
 export interface CustomerRecord {
   id: string;
+  tenantId: string;
   branchId: string;
   name: string;
   phone: string | null;
@@ -529,6 +651,7 @@ export interface CustomerRecord {
 }
 
 export interface CreateCustomerInput {
+  tenantId: string;
   branchId: string;
   name: string;
   phone: string | null;
@@ -602,6 +725,7 @@ export interface AnnouncementRepository {
     body: string;
     severity: 'INFO' | 'WARNING' | 'CRITICAL';
     audience: 'ALL' | 'MANAGERS_ONLY' | 'STAFF_ONLY' | 'SINGLE_BRANCH';
+    tenantId: string;
     branchId: string | null;
     isMandatory: boolean;
     startsAt: Date;
