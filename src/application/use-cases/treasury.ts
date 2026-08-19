@@ -17,6 +17,7 @@ import type {
   AuditLogger,
   AuthenticatedUser,
   Clock,
+  ListScope,
   EnrichedMovement,
   ExpenseReasonRepository,
   ManualMovementType,
@@ -99,7 +100,7 @@ export async function recordMovement(
   // ─── نطاق الخزينة ───
   const scope = await deps.treasuries.findScope(input.treasuryId);
   if (!scope) throw Errors.notFound('الخزينة');
-  assertBranchAccess(actor, scope.branchId);
+  assertScopeAccess(actor, scope.tenantId, scope.branchId);
 
   // ─── الحقول المشروطة بالنوع ───
   let expenseReasonId: string | null = null;
@@ -119,7 +120,10 @@ export async function recordMovement(
     if (!input.expenseReasonId) throw Errors.validation('اختر سبب الصرف.');
 
     const reason = await deps.expenseReasons.findById(input.expenseReasonId);
-    if (!reason) throw Errors.validation('سبب الصرف غير موجود.');
+    // سبب من محل تاني = غير موجود بالنسبة لك
+    if (!reason || reason.tenantId !== actor.tenantId) {
+      throw Errors.validation('سبب الصرف غير موجود.');
+    }
 
     // سبب خاص بفرع تاني ما ينفعش يتستخدم هنا
     if (reason.branchId && reason.branchId !== scope.branchId) {
@@ -132,10 +136,12 @@ export async function recordMovement(
     if (!input.relatedUserId) throw Errors.validation('اختر الموظّف صاحب السُلفة.');
 
     const target = await deps.users.findById(input.relatedUserId);
-    if (!target || target.deletedAt) throw Errors.validation('الموظّف غير موجود.');
+    if (!target || target.deletedAt || target.tenantId !== actor.tenantId) {
+      throw Errors.validation('الموظّف غير موجود.');
+    }
 
     // السُلفة بتتخصم من راتب حد — فلازم يكون في نطاقك
-    assertBranchAccess(actor, target.branchId);
+    assertScopeAccess(actor, target.tenantId, target.branchId);
     relatedUserId = target.id;
   }
 
@@ -157,6 +163,7 @@ export async function recordMovement(
   if (note && note.length > 500) throw Errors.validation('الملاحظة طويلة جدًا.');
 
   const created = await deps.movements.create({
+    tenantId: actor.tenantId,
     treasuryId: input.treasuryId,
     branchId: scope.branchId,
     direction,
@@ -229,7 +236,7 @@ export async function reviewMovement(
     throw Errors.forbidden('لا يمكن اعتماد حركة أنشأتها بنفسك.');
   }
 
-  assertBranchAccess(actor, movement.branchId);
+  assertScopeAccess(actor, movement.tenantId, movement.branchId);
 
   await deps.movements.review(movementId, decision, actor.id, deps.clock.now());
 
@@ -248,7 +255,7 @@ export async function listBalances(
   deps: TreasuryDeps,
   actor: AuthenticatedUser,
 ): Promise<TreasuryBalance[]> {
-  return deps.treasuries.listBalances(scopeFor(actor));
+  return deps.treasuries.listBalances(actor.tenantId, branchScopeFor(actor));
 }
 
 export async function listMovements(
@@ -256,17 +263,17 @@ export async function listMovements(
   actor: AuthenticatedUser,
   status?: MovementStatus,
 ): Promise<EnrichedMovement[]> {
-  const scope = scopeFor(actor);
+  const branchScope = branchScopeFor(actor);
 
   // أربع قوائم صغيرة على التوازي، وبنركّب الأسماء منها.
   // أرخص وأمتن من ربط جدول المستخدمين أربع مرات في استعلام واحد.
+  //
+  // ⚠ كل واحدة فيهم بتاخد المحل صراحةً. مفيش واحدة بتستنتجه.
   const [movements, treasuries, reasons, team] = await Promise.all([
-    deps.movements.list({ branchId: scope, status, limit: 50 }),
-    deps.treasuries.listBalances(scope),
-    deps.expenseReasons.listForBranch(actor.branchId),
-    deps.users.listInScope(
-      actor.roleKey === 'SUPER_ADMIN' ? { allBranches: true } : { branchId: scope ?? '__none__' },
-    ),
+    deps.movements.list({ tenantId: actor.tenantId, branchId: branchScope, status, limit: 50 }),
+    deps.treasuries.listBalances(actor.tenantId, branchScope),
+    deps.expenseReasons.listForBranch(actor.tenantId, actor.branchId),
+    deps.users.listInScope(listScopeFor(actor)),
   ]);
 
   const treasuryNames = new Map(treasuries.map((t) => [t.treasuryId, t.name]));
@@ -283,7 +290,7 @@ export async function listMovements(
 }
 
 export async function listExpenseReasons(deps: TreasuryDeps, actor: AuthenticatedUser) {
-  return deps.expenseReasons.listForBranch(actor.branchId);
+  return deps.expenseReasons.listForBranch(actor.tenantId, actor.branchId);
 }
 
 /**
@@ -302,8 +309,8 @@ export async function getSalaryStatement(
       throw Errors.forbidden(PERMISSIONS.USER_VIEW);
     }
     const target = await deps.users.findById(targetUserId);
-    if (!target) throw Errors.notFound('الموظّف');
-    assertBranchAccess(actor, target.branchId);
+    if (!target || target.tenantId !== actor.tenantId) throw Errors.notFound('الموظّف');
+    assertScopeAccess(actor, target.tenantId, target.branchId);
   }
 
   if (!(from instanceof Date) || Number.isNaN(from.getTime())) {
@@ -318,18 +325,44 @@ export async function getSalaryStatement(
 
 // ─────────── حراسة النطاق ───────────
 
-/** null = كل الفروع. للمالك بس. */
-function scopeFor(actor: AuthenticatedUser): string | null {
+/**
+ * الفرع اللي بيتفلتر بيه — **جوّه المحل**.
+ *
+ * ⚠ null هنا معناها "كل فروع محله هو"، مش "كل النظام".
+ * المحل نفسه بيتبعت منفصل لكل استعلام وما بيعتمدش على الدالة دي.
+ */
+function branchScopeFor(actor: AuthenticatedUser): string | null {
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
   if (actor.roleKey === 'SUPER_ADMIN') return null;
-  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف الكل
+  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف المحل كله
   return actor.branchId ?? '__none__';
 }
 
-function assertBranchAccess(actor: AuthenticatedUser, targetBranchId: string | null): void {
+/** نطاق قائمة الفريق — النوع بيجبرنا نذكر المحل */
+function listScopeFor(actor: AuthenticatedUser): ListScope {
+  if (actor.roleKey === 'SUPER_ADMIN') return { tenantId: actor.tenantId };
+  return { tenantId: actor.tenantId, branchId: actor.branchId ?? '__none__' };
+}
+
+/**
+ * حراسة السجل الواحد: المحل الأول، وبعدين الفرع.
+ *
+ * ⚠ لما المحل ما يطابقش، بنرمي "غير موجود" مش "ممنوع".
+ * "ممنوع" بتأكّد للسائل إن الحاجة موجودة في مكان ما — ودي معلومة
+ * ما ينفعش يعرفها عن محل تاني أصلاً.
+ */
+function assertScopeAccess(
+  actor: AuthenticatedUser,
+  targetTenantId: string,
+  targetBranchId: string | null,
+): void {
+  if (targetTenantId !== actor.tenantId) throw Errors.notFound('العنصر');
   if (actor.roleKey === 'SUPER_ADMIN') return;
   if (!actor.branchId) throw Errors.forbidden('branch scope');
 
-  // خزينة على مستوى الشركة (branchId = null) للمالك بس
-  if (targetBranchId === null) throw Errors.forbidden('company-level treasury');
+  // خزينة على مستوى المحل كله (branchId = null) لصاحب المحل بس
+  if (targetBranchId === null) throw Errors.forbidden('tenant-level treasury');
   if (targetBranchId !== actor.branchId) throw Errors.forbidden('branch scope');
 }
