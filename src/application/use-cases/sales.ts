@@ -115,7 +115,8 @@ export async function createSale(
   if (!input.treasuryId) throw Errors.validation('اختر الخزينة.');
 
   const scope = await deps.treasuries.findScope(input.treasuryId);
-  if (!scope) throw Errors.notFound('الخزينة');
+  // خزينة محل تاني = غير موجودة بالنسبة لك
+  if (!scope || scope.tenantId !== actor.tenantId) throw Errors.notFound('الخزينة');
 
   if (scope.branchId === null) {
     throw Errors.validation('هذه الخزينة غير تابعة لفرع، ولا يمكن تسجيل بيع عليها.');
@@ -145,6 +146,7 @@ export async function createSale(
   // زميله بتعديل بسيط في المتصفح — والعمولات والمحاسبة تبقى
   // بلا معنى.
   const result = await deps.sales.create({
+    tenantId: actor.tenantId,
     staffId: actor.id,
     treasuryId: input.treasuryId,
     items,
@@ -183,18 +185,25 @@ export async function createSale(
  * هيتحبس في الأضيق لأن عنده الاتنين.
  */
 function readScope(actor: AuthenticatedUser): { scope: ListScope; staffId?: string } {
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+
+  // ⚠ "كل الفروع" بقت "كل فروع **محله**".
+  // الصلاحية sales.view_all عمرها ما كانت معناها كل المحلات —
+  // بس النوع القديم كان بيسمح بده. دلوقتي مستحيل.
   if (actor.permissions.includes(PERMISSIONS.SALES_VIEW_ALL)) {
-    return { scope: { allBranches: true } };
+    return { scope: { tenantId: actor.tenantId } };
   }
 
   if (actor.permissions.includes(PERMISSIONS.SALES_VIEW_BRANCH)) {
-    // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف الكل
-    return { scope: { branchId: actor.branchId ?? '__none__' } };
+    // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف المحل كله
+    return { scope: { tenantId: actor.tenantId, branchId: actor.branchId ?? '__none__' } };
   }
 
   if (actor.permissions.includes(PERMISSIONS.SALES_VIEW_OWN)) {
     return {
-      scope: { branchId: actor.branchId ?? '__none__' },
+      scope: { tenantId: actor.tenantId, branchId: actor.branchId ?? '__none__' },
       staffId: actor.id,
     };
   }
@@ -219,7 +228,10 @@ export async function listSales(
   const [sales, team, treasuries] = await Promise.all([
     deps.sales.list({ scope, staffId, limit: Math.min(Math.max(limit, 1), 200) }),
     staffId ? Promise.resolve([]) : deps.users.listInScope(scope),
-    deps.treasuries.listBalances(actor.roleKey === 'SUPER_ADMIN' ? null : actor.branchId),
+    deps.treasuries.listBalances(
+      actor.tenantId,
+      actor.roleKey === 'SUPER_ADMIN' ? null : actor.branchId,
+    ),
   ]);
 
   const staffNames = new Map(team.map((u) => [u.id, u.fullName]));
@@ -248,7 +260,11 @@ export async function getSale(
   // الحراسة بتتعمل تاني هنا على السجل نفسه. الفلتر في الاستعلام
   // بيخدم القوايم، لكن الجلب بالمعرّف المباشر لازم يتفحص بإيده —
   // وإلا أي حد يعرف رقم فاتورة يقراها.
-  if (!('allBranches' in scope) && sale.branchId !== scope.branchId) {
+  // ⚠ حاجز المحل الأول ودايمًا. الجلب بالمعرّف المباشر لازم
+  // يتفحص بإيده — الفلتر في القوايم مش بيحمي النداء ده.
+  if (sale.tenantId !== actor.tenantId) throw Errors.notFound('الفاتورة');
+
+  if ('branchId' in scope && sale.branchId !== scope.branchId) {
     throw Errors.forbidden('branch scope');
   }
   if (staffId && sale.staffId !== staffId) {
@@ -288,6 +304,8 @@ export async function updateSaleExitDate(
   const includeCost = actor.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL);
   const sale = await deps.sales.findById(saleId, { includeCost });
   if (!sale) throw Errors.notFound('الفاتورة');
+
+  if (sale.tenantId !== actor.tenantId) throw Errors.notFound('الفاتورة');
 
   const isOwner = actor.roleKey === 'SUPER_ADMIN';
   if (!isOwner && sale.staffId !== actor.id) {
