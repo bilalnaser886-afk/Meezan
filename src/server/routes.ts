@@ -80,7 +80,7 @@ import {
   setAuthCookies,
 } from './runtime';
 import { requireAuth, type AppBindings } from './guard';
-import { COOKIES, SESSION_POLICY, idleRuleFor, superAdminPath } from '../domain/config';
+import { COOKIES, SESSION_POLICY, idleRuleFor } from '../domain/config';
 import { PERMISSIONS } from '../domain/permissions';
 import { Errors } from '../domain/errors';
 import { createHasher, verifyAccessToken } from '../infrastructure/crypto';
@@ -94,7 +94,6 @@ interface LoginBody {
   username?: string;
   password?: string;
   adminPasskey?: string;
-  gate?: 'staff' | 'admin';
 }
 
 authRoutes.post('/login', async (c) => {
@@ -114,9 +113,6 @@ authRoutes.post('/login', async (c) => {
    * الجسم بس، أي مهاجم هيبعت gate:"admin" ببساطة.
    */
   const referer = c.req.header('referer') ?? '';
-  const secret = superAdminPath(c.env);
-  const viaAdminGate = body.gate === 'admin' && secret.length > 0 && referer.includes(`/${secret}`);
-
   const container = buildContainer(c.env);
   const result = await login(
     container.auth,
@@ -125,7 +121,6 @@ authRoutes.post('/login', async (c) => {
       username,
       password,
       adminPasskey: body.adminPasskey,
-      viaAdminGate,
     },
     getRequestContext(c),
   );
