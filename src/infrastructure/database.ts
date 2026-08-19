@@ -36,12 +36,15 @@ import type {
   ProductRepository,
   ProductType,
   RateLimiter,
+  ListScope,
   RoleKey,
   SaleDetail,
   SaleItemLine,
   SaleRepository,
   SaleSummary,
   SessionRecord,
+  TenantRecord,
+  TenantRepository,
   SessionRepository,
   TeamMember,
   TreasuryRepository,
@@ -99,6 +102,10 @@ interface RawUser {
   branch_id: string | null;
   role_key: string;
   permissions: string[] | null;
+  tenant_id: string;
+  tenant_code: string;
+  tenant_name: string;
+  tenant_active: boolean;
 }
 
 function toUserRecord(raw: RawUser): UserRecord {
@@ -116,25 +123,63 @@ function toUserRecord(raw: RawUser): UserRecord {
     branchId: raw.branch_id,
     roleKey: raw.role_key as RoleKey,
     permissions: (raw.permissions ?? []) as PermissionKey[],
+    tenantId: raw.tenant_id,
+    tenantCode: raw.tenant_code,
+    tenantName: raw.tenant_name,
+    tenantActive: raw.tenant_active,
   };
 }
 
 // ─────────── المستخدمون ───────────
 
+/**
+ * ترجمة نطاق البحث لفلتر استعلام.
+ *
+ * ⚠ الدالة دي هي **النقطة الوحيدة** اللي بيتحوّل فيها النطاق
+ * لفلتر. كل مستودع بيمر منها.
+ *
+ * ليه واحدة؟ عشان لو فيه غلطة في ترجمة النطاق، تبقى غلطة واحدة
+ * في مكان واحد — مش عشر غلطات متفرّقة في عشر استعلامات.
+ *
+ * تشبيه: مفتاح واحد لكل الأبواب أحسن من عشر أقفال كل واحد بمفتاح
+ * مختلف — لما تحتاج تغيّر القفل، بتغيّره مرة.
+ */
+function applyScope<T extends { eq: (col: string, val: string) => T }>(
+  query: T,
+  scope: ListScope,
+): T {
+  // مشغّل المنصّة: مفيش فلتر محل. الحالة الوحيدة، ومكتوبة صراحةً.
+  if ('allTenants' in scope) return query;
+
+  let scoped = query.eq('tenant_id', scope.tenantId);
+  if ('branchId' in scope) scoped = scoped.eq('branch_id', scope.branchId);
+  return scoped;
+}
+
 export function createUserRepository(db: SupabaseClient): UserRepository {
   return {
-    async findByUsername(username) {
-      // رحلة واحدة بتجيب المستخدم + دوره + صلاحياته المدمجة
-      const { data, error } = await db.rpc('fn_login_lookup', { p_username: username });
-      if (error) throw Errors.internal(`fn_login_lookup: ${error.message}`);
+    /**
+     * البحث بكود المحل + الاسم.
+     *
+     * ⚠ الدالة الجديدة `fn_login_lookup_scoped` بتربط جدول المحلات
+     * جوّاها، فبترجّع حالة الاشتراك كمان. الفرق ده مهم: التطبيق
+     * بيفرّق بين "بيانات غلط" و"اشتراك موقوف" — رسالتين مختلفتين.
+     */
+    async findByTenantAndUsername(tenantCode, username) {
+      const { data, error } = await db.rpc('fn_login_lookup_scoped', {
+        p_tenant_code: tenantCode,
+        p_username: username,
+      });
 
-      const rows = data as RawUser[] | null;
-      return rows?.[0] ? toUserRecord(rows[0]) : null;
+      if (error) throw Errors.internal(`login lookup: ${error.message}`);
+
+      const row = (data as RawUser[] | null)?.[0];
+      return row ? toUserRecord(row) : null;
     },
 
     async findById(id) {
-      const { data, error } = await db.rpc('fn_user_by_id', { p_user_id: id });
-      if (error) throw Errors.internal(`fn_user_by_id: ${error.message}`);
+      const { data, error } = await db.rpc('fn_user_by_id_scoped', { p_user_id: id });
+      if (error) throw Errors.internal(`fn_user_by_id_scoped: ${error.message}`);
 
       const rows = data as RawUser[] | null;
       return rows?.[0] ? toUserRecord(rows[0]) : null;
@@ -186,6 +231,7 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
       const { data: row, error } = await db
         .from('users')
         .insert({
+          tenant_id: data.tenantId,
           username: data.username,
           full_name: data.fullName,
           password_hash: data.passwordHash,
@@ -209,24 +255,39 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
     },
 
     async listInScope(scope) {
-      let query = db
+      const query = db
         .from('users')
-        .select('id, username, full_name, branch_id, is_active, created_at, role:roles(key)')
+        .select('id, username, full_name, branch_id, is_active, created_at, roles!inner(key)')
         .is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .limit(200); // سقف احترازي لشاشة موبايل
+        .order('full_name')
+        .limit(200);
 
-      // النوع بيجبرنا نتعامل مع الحالتين صراحةً — مفيش "لو نسيت الفلتر
-      // هيعرض الكل". لازم تكتب allBranches بإيدك عشان تشوف كل الفروع.
-      if (!('allBranches' in scope)) {
-        query = query.eq('branch_id', scope.branchId);
-      }
+      // ⚠ الفلتر بيمر من applyScope. مفيش استعلام بيبني فلتره بإيده.
+      const { data, error } = await applyScope(query, scope);
+      if (error) throw Errors.internal(`users listInScope: ${error.message}`);
 
-      const { data, error } = await query;
-      if (error) throw Errors.internal(`users list: ${error.message}`);
-
-      return ((data ?? []) as RawTeamMember[]).map(toTeamMember);
+      return ((data ?? []) as unknown as Array<{
+        id: string;
+        username: string;
+        full_name: string;
+        branch_id: string | null;
+        is_active: boolean;
+        created_at: string;
+        roles: { key: string } | { key: string }[] | null;
+      }>).map((r): TeamMember => {
+        const role = Array.isArray(r.roles) ? r.roles[0] : r.roles;
+        return {
+          id: r.id,
+          username: r.username,
+          fullName: r.full_name,
+          roleKey: (role?.key ?? 'STAFF') as RoleKey,
+          branchId: r.branch_id,
+          isActive: r.is_active,
+          createdAt: new Date(r.created_at),
+        };
+      });
     },
+
 
     async setActive(userId, isActive) {
       const { error } = await db.from('users').update({ is_active: isActive }).eq('id', userId);
@@ -263,85 +324,267 @@ function toTeamMember(raw: RawTeamMember): TeamMember {
 // ─────────── الفروع ───────────
 
 export function createBranchRepository(db: SupabaseClient): BranchRepository {
-  const COLUMNS = 'id, code, name, is_active';
+  const COLUMNS = 'id, tenant_id, code, name, is_active';
 
-  const toSummary = (r: {
-    id: string;
-    code: string;
-    name: string;
-    is_active: boolean;
-  }): BranchSummary => ({ id: r.id, code: r.code, name: r.name, isActive: r.is_active });
+  function toBranch(r: {
+    id: string; tenant_id: string; code: string; name: string; is_active: boolean;
+  }): BranchSummary {
+    return {
+      id: r.id,
+      tenantId: r.tenant_id,
+      code: r.code,
+      name: r.name,
+      isActive: r.is_active,
+    };
+  }
 
   return {
-    async listActive() {
+    async listActive(tenantId) {
       const { data, error } = await db
         .from('branches')
         .select(COLUMNS)
-        .is('deleted_at', null)
+        .eq('tenant_id', tenantId)
         .eq('is_active', true)
+        .is('deleted_at', null)
         .order('name');
 
       if (error) throw Errors.internal(`branches listActive: ${error.message}`);
-      return (data ?? []).map(toSummary);
+      return ((data ?? []) as never[]).map(toBranch);
     },
 
-    async listAll() {
+    async listAll(tenantId) {
       const { data, error } = await db
         .from('branches')
         .select(COLUMNS)
+        .eq('tenant_id', tenantId)
         .is('deleted_at', null)
         .order('name');
 
       if (error) throw Errors.internal(`branches listAll: ${error.message}`);
-      return (data ?? []).map(toSummary);
+      return ((data ?? []) as never[]).map(toBranch);
     },
 
-    async exists(branchId) {
+    /**
+     * ⚠ المحل شرط في الفحص مش سياق حواليه.
+     *
+     * لو فحصنا وجود الفرع بمعرّفه بس، صاحب محل يقدر يربط موظّف
+     * أو منتج بفرع محل تاني — كل اللي محتاجه معرّف صحيح.
+     */
+    async exists(tenantId, branchId) {
       const { data, error } = await db
         .from('branches')
         .select('id')
         .eq('id', branchId)
+        .eq('tenant_id', tenantId)
         .is('deleted_at', null)
-        .eq('is_active', true)
         .maybeSingle();
 
       if (error) throw Errors.internal(`branch exists: ${error.message}`);
       return Boolean(data);
     },
 
-    async findByCode(code) {
+    async findByCode(tenantId, code) {
       const { data, error } = await db
         .from('branches')
         .select(COLUMNS)
+        .eq('tenant_id', tenantId)
         .eq('code', code)
         .is('deleted_at', null)
         .maybeSingle();
 
       if (error) throw Errors.internal(`branch findByCode: ${error.message}`);
-      return data ? toSummary(data) : null;
+      return data ? toBranch(data as never) : null;
     },
 
     async create(data) {
       const { data: row, error } = await db
         .from('branches')
         .insert({
+          tenant_id: data.tenantId,
           code: data.code,
           name: data.name,
           address: data.address,
           phone: data.phone,
-          is_active: true,
         })
         .select('id')
         .single();
 
       if (error || !row) {
-        // 23505 = unique violation — الكود مكرر رغم الفحص المسبق
-        // (ممكن يحصل لو اتنين بيضيفوا في نفس اللحظة)
-        if (error?.code === '23505') throw Errors.validation('كود الفرع ده مستخدم بالفعل.');
+        if (error?.code === '23505') {
+          throw Errors.validation('كود الفرع ده مستخدم بالفعل.');
+        }
         throw Errors.internal(`branch insert: ${error?.message}`);
       }
-
       return { id: row.id as string };
+    },
+
+    /** لفحص حد الفروع المسموح في الاشتراك */
+    async countActive(tenantId) {
+      const { count, error } = await db
+        .from('branches')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`branches count: ${error.message}`);
+      return count ?? 0;
+    },
+  };
+}
+
+// ─────────── المحلات ───────────
+
+const TENANT_COLUMNS = 'id, code, name, is_active, max_branches, notes, created_at';
+
+interface RawTenant {
+  id: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+  max_branches: number | string;
+  notes: string | null;
+  created_at: string;
+}
+
+function toTenant(r: RawTenant): TenantRecord {
+  return {
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    isActive: r.is_active,
+    maxBranches: Number(r.max_branches),
+    notes: r.notes,
+    createdAt: new Date(r.created_at),
+  };
+}
+
+export function createTenantRepository(db: SupabaseClient): TenantRepository {
+  return {
+    async findById(id) {
+      const { data, error } = await db
+        .from('tenants')
+        .select(TENANT_COLUMNS)
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`tenant findById: ${error.message}`);
+      if (!data) return null;
+
+      const r = data as RawTenant;
+      return toTenant(r);
+    },
+
+    async findByCode(code) {
+      const { data, error } = await db
+        .from('tenants')
+        .select(TENANT_COLUMNS)
+        .ilike('code', code)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`tenant findByCode: ${error.message}`);
+      return data ? toTenant(data as RawTenant) : null;
+    },
+
+    async listOverview() {
+      const { data, error } = await db.rpc('fn_tenants_overview');
+      if (error) throw Errors.internal(`tenants overview: ${error.message}`);
+
+      return ((data ?? []) as Array<RawTenant & {
+        branch_count: number | string;
+        user_count: number | string;
+        owner_name: string | null;
+      }>).map((r) => ({
+        ...toTenant(r),
+        branchCount: Number(r.branch_count),
+        userCount: Number(r.user_count),
+        ownerName: r.owner_name,
+      }));
+    },
+
+    /**
+     * فتح محل — نداء واحد لا يتجزّأ.
+     *
+     * الدالة في قاعدة البيانات بتعمل: المحل + أول فرع + حساب
+     * المالك + أسباب الصرف + خزينة كاش. لو وقع أي جزء، مفيش
+     * حاجة بتتكتب — بدل ما يبقى عندنا محل نصّه مركّب وصاحبه
+     * يدخل يلاقي نظام مكسور من أول يوم.
+     */
+    async create(data) {
+      const { data: rows, error } = await db.rpc('fn_create_tenant', {
+        p_code: data.code,
+        p_name: data.name,
+        p_max_branches: data.maxBranches,
+        p_owner_username: data.ownerUsername,
+        p_owner_full_name: data.ownerFullName,
+        p_owner_password_hash: data.ownerPasswordHash,
+        p_branch_code: data.branchCode,
+        p_branch_name: data.branchName,
+      });
+
+      if (error) {
+        if (error.code === 'MZ400') throw Errors.validation(error.message);
+        if (error.code === '23505') {
+          throw Errors.validation('كود المحل أو اسم المستخدم مستخدم بالفعل.');
+        }
+        throw Errors.internal(`fn_create_tenant: ${error.message}`);
+      }
+
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_create_tenant: مفيش نتيجة');
+
+      return {
+        tenantId: String(row.tenant_id),
+        ownerId: String(row.owner_id),
+        branchId: String(row.branch_id),
+      };
+    },
+
+    async setActive(id, isActive) {
+      const { error } = await db
+        .from('tenants')
+        .update({ is_active: isActive })
+        .eq('id', id)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`tenant setActive: ${error.message}`);
+    },
+
+    async setMaxBranches(id, maxBranches) {
+      const { error } = await db
+        .from('tenants')
+        .update({ max_branches: maxBranches })
+        .eq('id', id)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`tenant setMaxBranches: ${error.message}`);
+    },
+
+    async platformAdminExists() {
+      const { data, error } = await db.rpc('fn_platform_admin_exists');
+      if (error) throw Errors.internal(`platform admin exists: ${error.message}`);
+      return Boolean(data);
+    },
+
+    async createPlatformAdmin(data) {
+      const { data: rows, error } = await db.rpc('fn_create_platform_admin', {
+        p_tenant_id: data.tenantId,
+        p_username: data.username,
+        p_full_name: data.fullName,
+        p_password_hash: data.passwordHash,
+        p_passkey_hash: data.passkeyHash,
+      });
+
+      if (error) {
+        if (error.code === 'MZ409') throw Errors.validation('مشغّل المنصّة موجود بالفعل.');
+        if (error.code === '23505') throw Errors.validation('اسم المستخدم مستخدم بالفعل.');
+        throw Errors.internal(`fn_create_platform_admin: ${error.message}`);
+      }
+
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_create_platform_admin: مفيش نتيجة');
+      return { id: String(row.user_id) };
     },
   };
 }
@@ -350,11 +593,14 @@ export function createBranchRepository(db: SupabaseClient): BranchRepository {
 
 export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository {
   return {
-    async listBalances(branchId) {
+    async listBalances(tenantId, branchId) {
       // الرصيد محسوب في قاعدة البيانات مش هنا — الجمع مكانه جنب
       // الدفتر، مش في رحلة شبكة
-      const { data, error } = await db.rpc('fn_treasury_balances', { p_branch_id: branchId });
-      if (error) throw Errors.internal(`fn_treasury_balances: ${error.message}`);
+      const { data, error } = await db.rpc('fn_treasury_balances_scoped', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_treasury_balances_scoped: ${error.message}`);
 
       return ((data ?? []) as Array<{
         treasury_id: string;
@@ -379,14 +625,17 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
     async findScope(treasuryId) {
       const { data, error } = await db
         .from('treasuries')
-        .select('branch_id')
+        .select('tenant_id, branch_id')
         .eq('id', treasuryId)
         .is('deleted_at', null)
         .eq('is_active', true)
         .maybeSingle();
 
       if (error) throw Errors.internal(`treasury findScope: ${error.message}`);
-      return data ? { branchId: data.branch_id as string | null } : null;
+      if (!data) return null;
+
+      const r = data as { tenant_id: string; branch_id: string | null };
+      return { tenantId: r.tenant_id, branchId: r.branch_id };
     },
   };
 }
@@ -394,11 +643,12 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
 // ─────────── حركات الخزينة ───────────
 
 const MOVEMENT_COLUMNS =
-  'id, treasury_id, branch_id, direction, type, amount_piastres, status, ' +
+  'id, tenant_id, treasury_id, branch_id, direction, type, amount_piastres, status, ' +
   'expense_reason_id, related_user_id, note, occurred_at, created_by_id';
 
 interface RawMovement {
   id: string;
+  tenant_id: string;
   treasury_id: string;
   branch_id: string | null;
   direction: MovementDirection;
@@ -415,6 +665,7 @@ interface RawMovement {
 function toMovement(raw: RawMovement): MovementRecord {
   return {
     id: raw.id,
+    tenantId: raw.tenant_id,
     treasuryId: raw.treasury_id,
     branchId: raw.branch_id,
     direction: raw.direction,
@@ -472,6 +723,8 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         .order('occurred_at', { ascending: false })
         .limit(filter.limit);
 
+      // ⚠ المحل أول فلتر ودايمًا موجود. الفرع فوقه واختياري.
+      query = query.eq('tenant_id', filter.tenantId);
       if (filter.branchId !== null) query = query.eq('branch_id', filter.branchId);
       if (filter.status) query = query.eq('status', filter.status);
 
@@ -536,22 +789,24 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
   const map = (r: {
     id: string;
     name: string;
+    tenant_id: string;
     is_advance: boolean;
     branch_id: string | null;
   }): ExpenseReason => ({
     id: r.id,
     name: r.name,
+    tenantId: r.tenant_id,
     isAdvance: r.is_advance,
     branchId: r.branch_id,
   });
 
   return {
-    async listForBranch(branchId) {
+    async listForBranch(tenantId, branchId) {
       // الأسباب العامة (branch_id = null) متاحة للكل، زائد أسباب
       // الفرع نفسه لو موجود
       let query = db
         .from('expense_reasons')
-        .select('id, name, is_advance, branch_id')
+        .select('id, tenant_id, name, is_advance, branch_id')
         .is('deleted_at', null)
         .eq('is_active', true)
         .order('name');
@@ -566,7 +821,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
     async findById(id) {
       const { data, error } = await db
         .from('expense_reasons')
-        .select('id, name, is_advance, branch_id')
+        .select('id, tenant_id, name, is_advance, branch_id')
         .eq('id', id)
         .is('deleted_at', null)
         .eq('is_active', true)
@@ -596,7 +851,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 // ═══════════════════════════════════════════════════════════
 
 const PRODUCT_BASE_COLUMNS =
-  'id, branch_id, name, product_type, serial_number, source, entry_date, ' +
+  'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
   'price_piastres, quantity_on_hand, is_active';
 
 function productColumns(includeCost: boolean): string {
@@ -605,6 +860,7 @@ function productColumns(includeCost: boolean): string {
 
 interface RawProduct {
   id: string;
+  tenant_id: string;
   branch_id: string;
   name: string;
   product_type: string;
@@ -620,6 +876,7 @@ interface RawProduct {
 function toProduct(raw: RawProduct): ProductRecord {
   const record: ProductRecord = {
     id: raw.id,
+    tenantId: raw.tenant_id,
     branchId: raw.branch_id,
     name: raw.name,
     productType: (raw.product_type === 'device' ? 'device' : 'accessory') as ProductType,
@@ -657,9 +914,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
 
       // نفس نمط المستخدمين: النوع بيجبرنا نتعامل مع الحالتين
       // صراحةً. مفيش "لو نسيت الفلتر هيعرض الكل".
-      if (!('allBranches' in scope)) {
-        query = query.eq('branch_id', scope.branchId);
-      }
+      query = applyScope(query, scope);
       if (options.activeOnly) {
         query = query.eq('is_active', true);
       }
@@ -686,6 +941,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       const { data: row, error } = await db
         .from('products')
         .insert({
+          tenant_id: data.tenantId,
           branch_id: data.branchId,
           name: data.name,
           product_type: data.productType,
@@ -851,11 +1107,12 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
 // ═══════════════════════════════════════════════════════════
 
 const SALE_COLUMNS =
-  'id, branch_id, staff_id, customer_name, customer_phone, total_piastres, ' +
+  'id, tenant_id, branch_id, staff_id, customer_name, customer_phone, total_piastres, ' +
   'treasury_id, created_at, exit_date';
 
 interface RawSale {
   id: string;
+  tenant_id: string;
   branch_id: string;
   staff_id: string;
   customer_name: string | null;
@@ -869,6 +1126,7 @@ interface RawSale {
 function toSale(raw: RawSale): SaleSummary {
   return {
     id: raw.id,
+    tenantId: raw.tenant_id,
     branchId: raw.branch_id,
     staffId: raw.staff_id,
     customerName: raw.customer_name,
@@ -957,9 +1215,7 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
         .order('created_at', { ascending: false })
         .limit(filter.limit);
 
-      if (!('allBranches' in filter.scope)) {
-        query = query.eq('branch_id', filter.scope.branchId);
-      }
+      query = applyScope(query, filter.scope);
       // الموظّف بيشوف فواتيره هو بس
       if (filter.staffId) {
         query = query.eq('staff_id', filter.staffId);
@@ -1053,10 +1309,11 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
 //  العملاء
 // ═══════════════════════════════════════════════════════════
 
-const CUSTOMER_COLUMNS = 'id, branch_id, name, phone, notes, created_at';
+const CUSTOMER_COLUMNS = 'id, tenant_id, branch_id, name, phone, notes, created_at';
 
 interface RawCustomer {
   id: string;
+  tenant_id: string;
   branch_id: string;
   name: string;
   phone: string | null;
@@ -1067,6 +1324,7 @@ interface RawCustomer {
 function toCustomer(raw: RawCustomer): CustomerRecord {
   return {
     id: raw.id,
+    tenantId: raw.tenant_id,
     branchId: raw.branch_id,
     name: raw.name,
     phone: raw.phone,
@@ -1090,8 +1348,9 @@ export function createCustomerRepository(db: SupabaseClient): CustomerRepository
      * لكل عميل يعني مية رحلة شبكة لصفحة واحدة.
      */
     async list(scope, search, limit) {
-      const { data, error } = await db.rpc('fn_customers_ranked', {
-        p_branch_id: 'allBranches' in scope ? null : scope.branchId,
+      const { data, error } = await db.rpc('fn_customers_ranked_scoped', {
+        p_tenant_id: 'allTenants' in scope ? null : scope.tenantId,
+        p_branch_id: 'branchId' in scope ? scope.branchId : null,
         p_search: search,
         p_limit: limit,
       });
@@ -1126,6 +1385,7 @@ export function createCustomerRepository(db: SupabaseClient): CustomerRepository
       const { data: row, error } = await db
         .from('customers')
         .insert({
+          tenant_id: data.tenantId,
           branch_id: data.branchId,
           name: data.name,
           phone: data.phone,
@@ -1348,6 +1608,7 @@ export function createAnnouncementRepository(db: SupabaseClient): AnnouncementRe
           body: data.body,
           severity: data.severity,
           audience: data.audience,
+          tenant_id: data.tenantId,
           branch_id: data.branchId,
           is_mandatory: data.isMandatory,
           starts_at: data.startsAt.toISOString(),
