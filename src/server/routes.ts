@@ -53,6 +53,13 @@ import {
   updateSaleExitDate,
 } from '../application/use-cases/sales';
 import {
+  bootstrapPlatformAdmin,
+  createTenant,
+  listTenants,
+  setTenantActive,
+  setTenantBranchLimit,
+} from '../application/use-cases/platform';
+import {
   createCustomer,
   deleteCustomer,
   listCustomers,
@@ -83,6 +90,7 @@ import { createHasher, verifyAccessToken } from '../infrastructure/crypto';
 export const authRoutes = new Hono<AppBindings>();
 
 interface LoginBody {
+  tenantCode?: string;
   username?: string;
   password?: string;
   adminPasskey?: string;
@@ -112,7 +120,13 @@ authRoutes.post('/login', async (c) => {
   const container = buildContainer(c.env);
   const result = await login(
     container.auth,
-    { username, password, adminPasskey: body.adminPasskey, viaAdminGate },
+    {
+      tenantCode: (body.tenantCode ?? '').trim(),
+      username,
+      password,
+      adminPasskey: body.adminPasskey,
+      viaAdminGate,
+    },
     getRequestContext(c),
   );
 
@@ -1004,3 +1018,131 @@ customerRoutes.post(
     return c.json({ ok: true });
   },
 );
+
+
+// ═══════════════════ 9) إدارة المحلات ═══════════════════
+
+export const platformRoutes = new Hono<AppBindings>();
+
+platformRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listTenants(container.platform, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+interface TenantBody {
+  code?: string;
+  name?: string;
+  maxBranches?: number | string;
+  ownerUsername?: string;
+  ownerFullName?: string;
+  ownerPassword?: string;
+  branchCode?: string;
+  branchName?: string;
+}
+
+platformRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }), async (c) => {
+  const body = await readJson<TenantBody>(c);
+
+  const container = buildContainer(c.env);
+  const created = await createTenant(container.platform, c.get('user'), {
+    code: body.code ?? '',
+    name: body.name ?? '',
+    maxBranches: Number(body.maxBranches ?? 1),
+    ownerUsername: body.ownerUsername ?? '',
+    ownerFullName: body.ownerFullName ?? '',
+    ownerPassword: body.ownerPassword ?? '',
+    branchCode: body.branchCode ?? '',
+    branchName: body.branchName ?? '',
+  });
+
+  return c.json({ ok: true, tenantId: created.tenantId, code: created.code }, 201);
+});
+
+platformRoutes.post(
+  '/:id/active',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المحل مفقود.');
+
+    const body = await readJson<{ isActive?: boolean }>(c);
+    if (typeof body.isActive !== 'boolean') throw Errors.validation('الحالة غير محدّدة.');
+
+    const container = buildContainer(c.env);
+    await setTenantActive(container.platform, c.get('user'), id, body.isActive);
+
+    return c.json({ ok: true });
+  },
+);
+
+platformRoutes.post(
+  '/:id/limit',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المحل مفقود.');
+
+    const body = await readJson<{ maxBranches?: number | string }>(c);
+
+    const container = buildContainer(c.env);
+    await setTenantBranchLimit(
+      container.platform,
+      c.get('user'),
+      id,
+      Number(body.maxBranches ?? 0),
+    );
+
+    return c.json({ ok: true });
+  },
+);
+
+/**
+ * تأسيس أول حساب مشغّل منصّة.
+ *
+ * ⚠ المسار ده **مش محمي بتسجيل دخول** — ما ينفعش يكون، لأن مفيش
+ * حساب بعد. حراسته تلات أقفال زي صفحة الإعداد الأولي بالظبط:
+ *
+ *   1) SETUP_SECRET مش مضبوط في كلاودفلير → المسار 404 أصلاً
+ *   2) السرّ المبعوت لازم يطابق (مقارنة بزمن ثابت)
+ *   3) فيه مشغّل منصّة أصلاً → يترفض
+ *
+ * وبعد ما تخلص، امسح SETUP_SECRET من كلاودفلير — الباب يختفي.
+ */
+platformRoutes.post('/bootstrap', async (c) => {
+  const expected = c.env.SETUP_SECRET;
+
+  if (!expected || expected.length < 16) {
+    throw Errors.notFound('الصفحة');
+  }
+
+  const body = await readJson<{
+    setupSecret?: string;
+    tenantId?: string;
+    username?: string;
+    fullName?: string;
+    password?: string;
+    passkey?: string;
+  }>(c);
+
+  if (!secretsMatch(String(body.setupSecret ?? ''), expected)) {
+    console.warn('[platform] محاولة تأسيس بسرّ خاطئ من', getRequestContext(c).ipAddress);
+    // 404 مش 403: ما نأكّدش إن الباب موجود
+    throw Errors.notFound('الصفحة');
+  }
+
+  const container = buildContainer(c.env);
+  const created = await bootstrapPlatformAdmin(container.platform, {
+    tenantId: String(body.tenantId ?? 'tenant_default'),
+    username: String(body.username ?? ''),
+    fullName: String(body.fullName ?? ''),
+    password: String(body.password ?? ''),
+    passkey: String(body.passkey ?? ''),
+  });
+
+  return c.json({ ok: true, id: created.id }, 201);
+});
