@@ -56,12 +56,35 @@ export interface UpdateCustomerRequest {
  * المالك يشوف كل الفروع. غيره فرعه هو بس، ولو مالوش فرع ما يشوفش
  * حاجة — fail-closed.
  */
+/**
+ * نطاق القراءة.
+ *
+ * ⚠ الترتيب هنا هو الحماية نفسها:
+ *   مشغّل المنصّة  → مالوش أي وصول لبيانات المحلات. بيرمي.
+ *   صاحب المحل     → كل فروع **محله**
+ *   غيره           → فرعه في محله
+ *
+ * ومفيش فرع في الدالة دي بيرجّع نطاق من غير محل. لو حد ضاف واحد
+ * بكرة، النوع نفسه هيرفضه.
+ */
 function scopeFor(actor: AuthenticatedUser): ListScope {
-  if (actor.roleKey === 'SUPER_ADMIN') return { allBranches: true };
-  return { branchId: actor.branchId ?? '__none__' };
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+  if (actor.roleKey === 'SUPER_ADMIN') {
+    return { tenantId: actor.tenantId };
+  }
+  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف كل المحل
+  return { tenantId: actor.tenantId, branchId: actor.branchId ?? '__none__' };
 }
 
-function assertBranchAccess(actor: AuthenticatedUser, targetBranchId: string): void {
+/** حاجز المحل الأول، وبعدين الفرع */
+function assertScopeAccess(
+  actor: AuthenticatedUser,
+  targetTenantId: string,
+  targetBranchId: string,
+): void {
+  if (targetTenantId !== actor.tenantId) throw Errors.notFound('العميل');
   if (actor.roleKey === 'SUPER_ADMIN') return;
   if (!actor.branchId) throw Errors.forbidden('branch scope');
   if (targetBranchId !== actor.branchId) throw Errors.forbidden('branch scope');
@@ -98,7 +121,7 @@ export async function createCustomer(
   let targetBranchId: string;
   if (actor.roleKey === 'SUPER_ADMIN') {
     if (!input.branchId) throw Errors.validation('اختر الفرع.');
-    const exists = await deps.branches.exists(input.branchId);
+    const exists = await deps.branches.exists(actor.tenantId, input.branchId);
     if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
     targetBranchId = input.branchId;
   } else {
@@ -111,6 +134,7 @@ export async function createCustomer(
   const notes = readNotes(input.notes);
 
   const created = await deps.customers.create({
+    tenantId: actor.tenantId,
     branchId: targetBranchId,
     name,
     phone,
@@ -141,7 +165,7 @@ export async function updateCustomer(
 
   const existing = await deps.customers.findById(customerId);
   if (!existing) throw Errors.notFound('العميل');
-  assertBranchAccess(actor, existing.branchId);
+  assertScopeAccess(actor, existing.tenantId, existing.branchId);
 
   const patch: UpdateCustomerRequest = {};
   if (input.name !== undefined) patch.name = readName(input.name);
@@ -178,7 +202,7 @@ export async function deleteCustomer(
 
   const existing = await deps.customers.findById(customerId);
   if (!existing) throw Errors.notFound('العميل');
-  assertBranchAccess(actor, existing.branchId);
+  assertScopeAccess(actor, existing.tenantId, existing.branchId);
 
   await deps.customers.softDelete(customerId, actor.id, deps.clock.now());
 
