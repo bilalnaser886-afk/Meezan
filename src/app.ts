@@ -19,6 +19,7 @@ import {
   authRoutes,
   branchRoutes,
   customerRoutes,
+  platformRoutes,
   productRoutes,
   saleRoutes,
   setupRoutes,
@@ -35,6 +36,7 @@ import {
 import { listProducts, listSellableProducts } from './application/use-cases/products';
 import { listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
+import { listTenants } from './application/use-cases/platform';
 import type { AuthenticatedUser } from './application/ports';
 import { requireAuth, type AppBindings } from './server/guard';
 import { buildContainer, errorResponse, getRequestContext } from './server/runtime';
@@ -44,6 +46,8 @@ import {
   lockedPage,
   loginPage,
   customersPage,
+  platformPage,
+  platformSetupPage,
   posPage,
   productsPage,
   setupPage,
@@ -104,6 +108,7 @@ app.route('/api/treasury', treasuryRoutes);
 app.route('/api/products', productRoutes);
 app.route('/api/sales', saleRoutes);
 app.route('/api/customers', customerRoutes);
+app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
 
 // ═══════════════════ الصفحات ═══════════════════
@@ -178,8 +183,58 @@ app.get('/setup', (c) => {
   return c.html(setupPage());
 });
 
+/**
+ * تأسيس مشغّل المنصّة — لمرّة واحدة.
+ * بتختفي (404) لو SETUP_SECRET مش مضبوط، زي صفحة الإعداد الأولي.
+ */
+app.get('/platform-setup', (c) => {
+  if (!c.env.SETUP_SECRET || c.env.SETUP_SECRET.length < 16) return c.notFound();
+  return c.html(platformSetupPage());
+});
+
+/**
+ * شاشة إدارة المحلات.
+ *
+ * ⚠ الشاشة دي مالهاش أي وصول لبيانات المحلات. الحارس بيفحص
+ * `tenant.view` اللي مالكوش غير مشغّل المنصّة، وحالات الاستخدام
+ * بترمي لو الدور ده حاول يقرا منتجات أو مبيعات.
+ */
+app.get('/platform', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.TENANT_VIEW)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+  const tenants = await listTenants(container.platform, user);
+
+  return c.html(
+    platformPage({
+      fullName: user.fullName,
+      username: user.username,
+      currentTenantId: user.tenantId,
+      tenants: tenants.map((t) => ({
+        id: t.id,
+        code: t.code,
+        name: t.name,
+        isActive: t.isActive,
+        maxBranches: t.maxBranches,
+        branchCount: t.branchCount,
+        userCount: t.userCount,
+        ownerName: t.ownerName,
+      })),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
 const ROLE_LABELS: Record<string, string> = {
-  SUPER_ADMIN: 'المالك — صلاحية كاملة',
+  PLATFORM_ADMIN: 'مشغّل المنصّة — إدارة الاشتراكات',
+  SUPER_ADMIN: 'صاحب المحل — صلاحية كاملة داخل محلّه',
   BRANCH_MANAGER: 'مدير فرع — نطاق فرعك',
   STAFF: 'مندوب مبيعات — البيع وتسجيل العملاء',
 };
@@ -201,6 +256,13 @@ async function branchLabelFor(
 
 app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
   const user = c.get('user');
+
+  // ⚠ مشغّل المنصّة مالوش لوحة محل — مالوش محل يديره أصلاً.
+  // لو سيبناه يكمّل، كل استدعاء تحت هيرمي لأن نطاقه ممنوع.
+  if (user.roleKey === 'PLATFORM_ADMIN') {
+    return c.redirect('/platform');
+  }
+
   const container = buildContainer(c.env);
 
   const canViewUsers = user.permissions.includes(PERMISSIONS.USER_VIEW);
@@ -213,7 +275,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
   // بدل تلاتة) وأبسط للقوائم اللي محتاجة تتعرض فوراً
   const canApproveExpenses = user.permissions.includes(PERMISSIONS.EXPENSE_APPROVE);
 
-  const [team, branchOptions, allBranches, pending] = await Promise.all([
+  const [team, branchOptions, tenantBranches, pending] = await Promise.all([
     canViewUsers ? listTeam(container.users, user) : Promise.resolve([]),
     canCreateUsers ? listBranchesForActor(container.users, user) : Promise.resolve([]),
     canManageBranches ? listBranches(container.branchOps, user) : Promise.resolve([]),
@@ -230,6 +292,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       fullName: user.fullName,
       username: user.username,
       branchLabel,
+      tenantName: user.tenantName,
       roleKey: user.roleKey,
       roleLabel: ROLE_LABELS[user.roleKey] ?? user.roleKey,
       permissions: user.permissions,
@@ -242,7 +305,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       canManageBranches,
       team,
       branches: branchOptions,
-      allBranches,
+      tenantBranches,
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
@@ -279,6 +342,7 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       fullName: user.fullName,
       username: user.username,
       branchLabel,
+      tenantName: user.tenantName,
       roleKey: user.roleKey,
       canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
@@ -348,6 +412,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       fullName: user.fullName,
       username: user.username,
       branchLabel,
+      tenantName: user.tenantName,
       roleKey: user.roleKey,
       canEdit,
       canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
@@ -393,6 +458,7 @@ app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
       fullName: user.fullName,
       username: user.username,
       branchLabel,
+      tenantName: user.tenantName,
       roleKey: user.roleKey,
       canAdd,
       canEdit: user.permissions.includes(PERMISSIONS.CUSTOMER_EDIT),
@@ -449,6 +515,7 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
       fullName: user.fullName,
       username: user.username,
       branchLabel: branchName,
+      tenantName: user.tenantName,
       roleKey: user.roleKey,
       canApprove,
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
