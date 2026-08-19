@@ -3,6 +3,10 @@
  *
  * تشبيه: لوحة الإعلانات عند باب النادي. الإعلان الإلزامي مثل
  * تعليمات السلامة الجديدة: لا تنزل على البساط قبل أن توقّع أنك قرأتها.
+ *
+ * ══ ومع نظام المحلات ══
+ * اللوحة بقت لوحة **كل محل على حدة**. إعلان محل ما يوصلش لموظّف
+ * محل تاني — لا في القراءة ولا في البثّ.
  */
 
 import { Errors } from '../../domain/errors';
@@ -52,7 +56,7 @@ export interface BroadcastInput {
   endsAt?: Date | null;
 }
 
-/** بثّ إعلان — السوبر أدمن فقط */
+/** بثّ إعلان — صاحب المحل فقط، وداخل محله فقط */
 export async function broadcastAnnouncement(
   deps: AnnouncementDeps,
   actor: AuthenticatedUser,
@@ -66,10 +70,10 @@ export async function broadcastAnnouncement(
 
   const title = input.title?.trim();
   const body = input.body?.trim();
-  if (!title || title.length < 3) throw Errors.validation('عنوان الإعلان قصير جداً.');
-  if (!body || body.length < 3) throw Errors.validation('نص الإعلان قصير جداً.');
-  if (title.length > 140) throw Errors.validation('العنوان يجب أن يكون 140 حرفاً أو أقل.');
-  if (body.length > 4000) throw Errors.validation('النص طويل جداً (الحد 4000 حرف).');
+  if (!title || title.length < 3) throw Errors.validation('عنوان الإعلان قصير جدًا.');
+  if (!body || body.length < 3) throw Errors.validation('نص الإعلان قصير جدًا.');
+  if (title.length > 140) throw Errors.validation('العنوان يجب أن يكون 140 حرفًا أو أقل.');
+  if (body.length > 4000) throw Errors.validation('النص طويل جدًا (الحد 4000 حرف).');
 
   if (input.audience === 'SINGLE_BRANCH' && !input.branchId) {
     throw Errors.validation('اختر الفرع المستهدف.');
@@ -86,6 +90,9 @@ export async function broadcastAnnouncement(
     body,
     severity: input.severity,
     audience: input.audience,
+    // ⚠ المحل بيتاخد من جلسة الباثّ مش من الطلب.
+    // من غير كده، طلب معدّل بإيد يقدر يبثّ إعلان في محل تاني.
+    tenantId: actor.tenantId,
     branchId: input.audience === 'SINGLE_BRANCH' ? input.branchId! : null,
     isMandatory: input.isMandatory,
     startsAt,
@@ -98,7 +105,12 @@ export async function broadcastAnnouncement(
     action: 'announcement.broadcast',
     entity: 'Announcement',
     entityId: created.id,
-    metadata: { audience: input.audience, severity: input.severity, isMandatory: input.isMandatory },
+    metadata: {
+      audience: input.audience,
+      severity: input.severity,
+      isMandatory: input.isMandatory,
+      tenantId: actor.tenantId,
+    },
   });
 
   return created;
