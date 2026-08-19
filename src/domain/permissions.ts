@@ -53,6 +53,12 @@ export const PERMISSIONS = {
   BRANCH_VIEW: 'branch.view',
   BRANCH_MANAGE: 'branch.manage',
 
+  // ── المنصّة ──
+  // ⚠ الصلاحيتين دول لمشغّل المنصّة بس. صاحب المحل ما عندوش ولا
+  // واحدة فيهم، وما يعرفش إن فيه محلات تانية في النظام أصلاً.
+  TENANT_VIEW: 'tenant.view',
+  TENANT_MANAGE: 'tenant.manage',
+
   // ── الإعلانات ──
   ANNOUNCEMENT_VIEW: 'announcement.view',
   ANNOUNCEMENT_BROADCAST: 'announcement.broadcast',
@@ -69,7 +75,7 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
   [PERMISSIONS.SALES_CREATE]: { group: 'المبيعات', description: 'إنشاء فاتورة بيع من نقطة البيع' },
   [PERMISSIONS.SALES_VIEW_OWN]: { group: 'المبيعات', description: 'عرض مبيعاته هو فقط' },
   [PERMISSIONS.SALES_VIEW_BRANCH]: { group: 'المبيعات', description: 'عرض كل مبيعات فرعه' },
-  [PERMISSIONS.SALES_VIEW_ALL]: { group: 'المبيعات', description: 'عرض مبيعات كل الفروع' },
+  [PERMISSIONS.SALES_VIEW_ALL]: { group: 'المبيعات', description: 'عرض مبيعات كل فروع المحل' },
   [PERMISSIONS.SALES_REFUND]: { group: 'المبيعات', description: 'تنفيذ مرتجع' },
   [PERMISSIONS.CUSTOMER_CREATE]: { group: 'العملاء', description: 'تسجيل عميل جديد' },
   [PERMISSIONS.CUSTOMER_VIEW]: { group: 'العملاء', description: 'عرض بيانات العملاء' },
@@ -80,9 +86,12 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
   [PERMISSIONS.INVENTORY_ADJUST]: { group: 'المخزون', description: 'تسوية كميات المخزون' },
   [PERMISSIONS.INVENTORY_AUDIT]: { group: 'المخزون', description: 'تنفيذ جرد ومطابقة' },
   [PERMISSIONS.REPORT_VIEW_BRANCH]: { group: 'التقارير', description: 'تقارير الفرع' },
-  [PERMISSIONS.REPORT_VIEW_GLOBAL]: { group: 'التقارير', description: 'تقارير كل الفروع' },
+  [PERMISSIONS.REPORT_VIEW_GLOBAL]: { group: 'التقارير', description: 'تقارير كل فروع المحل' },
   [PERMISSIONS.PROFIT_VIEW_DISPLAY]: { group: 'التقارير', description: 'عرض الهامش المعلن' },
-  [PERMISSIONS.PROFIT_VIEW_REAL]: { group: 'التقارير', description: 'عرض الربح الحقيقي والتكلفة الفعلية' },
+  [PERMISSIONS.PROFIT_VIEW_REAL]: {
+    group: 'التقارير',
+    description: 'عرض الربح الحقيقي والتكلفة الفعلية',
+  },
   [PERMISSIONS.USER_VIEW]: { group: 'المستخدمون', description: 'عرض المستخدمين' },
   [PERMISSIONS.USER_CREATE]: { group: 'المستخدمون', description: 'إضافة مستخدم' },
   [PERMISSIONS.USER_EDIT]: { group: 'المستخدمون', description: 'تعديل مستخدم' },
@@ -93,6 +102,11 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
   [PERMISSIONS.RECORD_HARD_DELETE]: { group: 'الأرشيف', description: 'حذف نهائي لأي سجل' },
   [PERMISSIONS.BRANCH_VIEW]: { group: 'الفروع', description: 'عرض الفروع' },
   [PERMISSIONS.BRANCH_MANAGE]: { group: 'الفروع', description: 'إضافة وتعديل الفروع' },
+  [PERMISSIONS.TENANT_VIEW]: { group: 'المنصّة', description: 'عرض المحلات المشتركة' },
+  [PERMISSIONS.TENANT_MANAGE]: {
+    group: 'المنصّة',
+    description: 'فتح وإيقاف المحلات وضبط حدودها',
+  },
   [PERMISSIONS.ANNOUNCEMENT_VIEW]: { group: 'الإعلانات', description: 'استقبال الإعلانات' },
   [PERMISSIONS.ANNOUNCEMENT_BROADCAST]: { group: 'الإعلانات', description: 'بثّ إعلان إلزامي' },
   [PERMISSIONS.ALERT_VIEW]: { group: 'التنبيهات', description: 'عرض تنبيهات النظام' },
@@ -101,6 +115,14 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
 
 /**
  * خريطة الأحزمة: أي دور يملك أي صلاحيات.
+ *
+ * ⚠ الملف ده **مرجع وبذرة**، مش مصدر الصلاحيات وقت التشغيل.
+ * الصلاحيات الفعلية بتتقري من جدول `role_permissions` في قاعدة
+ * البيانات عن طريق `fn_resolve_permissions`.
+ *
+ * يعني تعديل الملف ده لوحده ما بيغيّرش حاجة عند المستخدمين —
+ * لازم يمشي معاه SQL.
+ *
  * لاحظ ما هو **غائب** عمداً عن مدير الفرع:
  *   - PROFIT_VIEW_REAL      (الربح الحقيقي)
  *   - RECORD_HARD_DELETE    (الحذف النهائي)
@@ -108,8 +130,31 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
  *   - ANNOUNCEMENT_BROADCAST
  * الغياب هنا هو التصميم الأمني نفسه، وليس نسياناً.
  */
-export const ROLE_PERMISSIONS: Record<'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF', PermissionKey[]> = {
-  SUPER_ADMIN: Object.values(PERMISSIONS), // صلاحية مطلقة
+export const ROLE_PERMISSIONS: Record<
+  'PLATFORM_ADMIN' | 'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF',
+  PermissionKey[]
+> = {
+  /**
+   * مشغّل المنصّة — إدارة المحلات وبس.
+   *
+   * ⚠ القائمة دي **قصيرة عن قصد**، ومفيهاش ولا صلاحية بيانات.
+   * بيفتح المحلات ويوقفها ويظبط حدودها، وما بيقراش مبيعاتهم ولا
+   * تكاليفهم ولا أرباحهم.
+   *
+   * ده مش تواضع — ده اللي بيخلّي محل يوافق يشترك أصلاً. لو صاحب
+   * محل عرف إن مورّد النظام شايف هوامشه، مش هيدخّل بياناته.
+   */
+  PLATFORM_ADMIN: [PERMISSIONS.TENANT_VIEW, PERMISSIONS.TENANT_MANAGE],
+
+  /**
+   * صاحب المحل — صلاحية مطلقة **جوّه محله**.
+   *
+   * ⚠ لاحظ استثناء صلاحيات المنصّة تحت. "مطلقة" هنا معناها كل حاجة
+   * في محله، مش كل حاجة في النظام. والفرق ده هو المشروع كله.
+   */
+  SUPER_ADMIN: Object.values(PERMISSIONS).filter(
+    (key) => key !== PERMISSIONS.TENANT_VIEW && key !== PERMISSIONS.TENANT_MANAGE,
+  ),
 
   BRANCH_MANAGER: [
     PERMISSIONS.SALES_CREATE,
@@ -140,8 +185,10 @@ export const ROLE_PERMISSIONS: Record<'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF'
     PERMISSIONS.SALES_VIEW_OWN,
     PERMISSIONS.CUSTOMER_CREATE,
     PERMISSIONS.CUSTOMER_VIEW,
+    PERMISSIONS.CUSTOMER_EDIT,
     PERMISSIONS.EXPENSE_CREATE,
     PERMISSIONS.INVENTORY_VIEW,
+    PERMISSIONS.INVENTORY_ADJUST,
     PERMISSIONS.ANNOUNCEMENT_VIEW,
   ],
 };
