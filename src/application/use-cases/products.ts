@@ -97,13 +97,43 @@ function canSeeCost(actor: AuthenticatedUser): boolean {
  * المالك يشوف كل الفروع. غيره فرعه هو بس، ولو مالوش فرع ما يشوفش
  * حاجة — fail-closed.
  */
+/**
+ * نطاق القراءة.
+ *
+ * ⚠ الترتيب هنا هو الحماية نفسها:
+ *   مشغّل المنصّة  → مالوش أي وصول لبيانات المحلات. بيرمي.
+ *   صاحب المحل     → كل فروع **محله**
+ *   غيره           → فرعه في محله
+ *
+ * ومفيش فرع في الدالة دي بيرجّع نطاق من غير محل. لو حد ضاف واحد
+ * بكرة، النوع نفسه هيرفضه.
+ */
 function scopeFor(actor: AuthenticatedUser): ListScope {
-  if (actor.roleKey === 'SUPER_ADMIN') return { allBranches: true };
-  return { branchId: actor.branchId ?? '__none__' };
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+  if (actor.roleKey === 'SUPER_ADMIN') {
+    return { tenantId: actor.tenantId };
+  }
+  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف كل المحل
+  return { tenantId: actor.tenantId, branchId: actor.branchId ?? '__none__' };
 }
 
-/** حراسة: المنتج ده في نطاقك ولا لأ؟ */
-function assertBranchAccess(actor: AuthenticatedUser, targetBranchId: string): void {
+/**
+ * حراسة السجل الواحد.
+ *
+ * ⚠ حاجز المحل الأول، وبعدين الفرع. الترتيب مهم: لو فحصنا الفرع
+ * بس، معرّف فرع من محل تاني كان ممكن يعدّي لو اتخمّن.
+ *
+ * والمستودع بيفلتر بالمحل برضه. الاتنين مع بعض مش زيادة —
+ * ده الفرق بين قفل واحد وقفلين.
+ */
+function assertScopeAccess(
+  actor: AuthenticatedUser,
+  targetTenantId: string,
+  targetBranchId: string,
+): void {
+  if (targetTenantId !== actor.tenantId) throw Errors.notFound('المنتج');
   if (actor.roleKey === 'SUPER_ADMIN') return;
   if (!actor.branchId) throw Errors.forbidden('branch scope');
   if (targetBranchId !== actor.branchId) throw Errors.forbidden('branch scope');
@@ -196,6 +226,7 @@ export async function createProduct(
   const entryDate = readDate(input.entryDate);
 
   const created = await deps.products.create({
+    tenantId: actor.tenantId,
     branchId: targetBranchId,
     name,
     productType,
@@ -240,7 +271,9 @@ async function resolveBranch(
 ): Promise<string> {
   if (actor.roleKey === 'SUPER_ADMIN') {
     if (!requested) throw Errors.validation('اختر الفرع.');
-    const exists = await deps.branches.exists(requested);
+    // ⚠ الفحص بياخد المحل معاه. من غيره، صاحب محل يقدر يضيف
+    // منتج في فرع محل تاني لو عرف معرّفه.
+    const exists = await deps.branches.exists(actor.tenantId, requested);
     if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
     return requested;
   }
@@ -263,7 +296,7 @@ export async function updateProduct(
   // سبب نجيب حقل حسّاس مش هنستخدمه
   const existing = await deps.products.findById(productId, { includeCost: false });
   if (!existing) throw Errors.notFound('المنتج');
-  assertBranchAccess(actor, existing.branchId);
+  assertScopeAccess(actor, existing.tenantId, existing.branchId);
 
   const patch: {
     name?: string;
@@ -360,7 +393,7 @@ export async function getPriceHistory(
 
   const product = await deps.products.findById(productId, { includeCost: false });
   if (!product) throw Errors.notFound('المنتج');
-  assertBranchAccess(actor, product.branchId);
+  assertScopeAccess(actor, product.tenantId, product.branchId);
 
   const [history, team] = await Promise.all([
     deps.products.listPriceHistory(productId, Math.min(Math.max(limit, 1), 50)),
@@ -405,7 +438,7 @@ export async function restockProduct(
 
   const existing = await deps.products.findById(productId, { includeCost: false });
   if (!existing) throw Errors.notFound('المنتج');
-  assertBranchAccess(actor, existing.branchId);
+  assertScopeAccess(actor, existing.tenantId, existing.branchId);
 
   // ⚠ الجهاز قطعة واحدة بسريال. توريد كمية ليه معناه إن نفس
   // السريال بقى عليه حتتين — وده مستحيل في الواقع.
