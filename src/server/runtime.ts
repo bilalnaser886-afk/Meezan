@@ -21,6 +21,7 @@ import type { TreasuryDeps } from '../application/use-cases/treasury';
 import type { ProductDeps } from '../application/use-cases/products';
 import type { SaleDeps } from '../application/use-cases/sales';
 import type { CustomerDeps } from '../application/use-cases/customers';
+import type { PlatformDeps } from '../application/use-cases/platform';
 import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
@@ -38,6 +39,7 @@ import {
   createRateLimiter,
   createSaleRepository,
   createSessionRepository,
+  createTenantRepository,
   createTreasuryRepository,
   createUserRepository,
 } from '../infrastructure/database';
@@ -54,6 +56,7 @@ export interface Container {
   products: ProductDeps;
   sales: SaleDeps;
   customers: CustomerDeps;
+  platform: PlatformDeps;
   branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
@@ -67,6 +70,7 @@ export function buildContainer(env: Env): Container {
   const branchRepo = createBranchRepository(db);
   const sessionRepo = createSessionRepository(db);
   const treasuryRepo = createTreasuryRepository(db);
+  const tenantRepo = createTenantRepository(db);
 
   return {
     db,
@@ -95,6 +99,7 @@ export function buildContainer(env: Env): Container {
     },
     branchOps: {
       branches: branchRepo,
+      tenants: tenantRepo,
       clock: systemClock,
       audit,
     },
@@ -123,6 +128,12 @@ export function buildContainer(env: Env): Container {
     customers: {
       customers: createCustomerRepository(db),
       branches: branchRepo,
+      clock: systemClock,
+      audit,
+    },
+    platform: {
+      tenants: tenantRepo,
+      hasher,
       clock: systemClock,
       audit,
     },
