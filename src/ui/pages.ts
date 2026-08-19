@@ -454,8 +454,21 @@ ${raw(receiptEdge())}
       <label class="field-label" for="password">كلمة المرور</label>
       <input class="field-input" id="password" type="password" dir="ltr"
         autocomplete="current-password" maxlength="1024" required>
-      <p class="field-hint">تُغلق الشاشة تلقائيًا بعد 10 دقائق من دون نشاط.</p>
     </div>
+
+    <!-- ⚠ المفتاح التاني لحساب إدارة المنصّة وحده.
+         مخفي في قسم قابل للفتح عشان ما يزحمش شاشة بيدخل منها
+         عشرات الموظّفين كل يوم ومحدش فيهم محتاجه. -->
+    <details class="advanced">
+      <summary>دخول الإدارة</summary>
+      <div class="field">
+        <label class="field-label" for="passkey">المفتاح الثاني</label>
+        <input class="field-input" id="passkey" type="password" dir="ltr"
+          autocomplete="off" maxlength="512">
+        <p class="field-hint">لحساب إدارة المنصّة فقط. اتركه فارغًا في الاستخدام العادي.</p>
+      </div>
+    </details>
+
     <button class="btn-primary" id="btn" type="submit">دخول</button>
   </form>
 
@@ -493,7 +506,7 @@ const LOGIN_SCRIPT = `
           tenantCode: document.getElementById('tenant').value,
           username: document.getElementById('username').value,
           password: document.getElementById('password').value,
-          gate: 'staff'
+          adminPasskey: document.getElementById('passkey').value || undefined
         })
       });
       var data = await res.json().catch(function () { return null; });
@@ -525,86 +538,7 @@ const LOGIN_SCRIPT = `
  *  - لا autocomplete (مفيش حاجة بتتحفظ في المتصفح)
  * الغياب هنا هو الميزة الأمنية نفسها.
  */
-export function vaultPage(): Html {
-  return shell({
-    title: ' ',
-    noIndex: true,
-    script: VAULT_SCRIPT,
-    body: html`<main class="vault"><div class="vault-card">
-<p class="vault-error" id="err" role="alert" aria-live="assertive"></p>
-<form id="f" novalidate autocomplete="off">
-  <div class="vault-field">
-    <label class="sr-only" for="t">كود المحل</label>
-    <input class="vault-input" id="t" type="text" placeholder="SHOP CODE" dir="ltr"
-      autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" required>
-  </div>
-  <div class="vault-field">
-    <label class="sr-only" for="u">المعرّف</label>
-    <input class="vault-input" id="u" type="text" placeholder="IDENTIFIER" dir="ltr"
-      autocomplete="off" spellcheck="false" maxlength="64" required>
-  </div>
-  <div class="vault-field">
-    <label class="sr-only" for="p">كلمة المرور</label>
-    <input class="vault-input" id="p" type="password" placeholder="PASSPHRASE" dir="ltr"
-      autocomplete="off" maxlength="1024" required>
-  </div>
-  <div class="vault-field">
-    <label class="sr-only" for="k">المفتاح السرّي</label>
-    <input class="vault-input" id="k" type="password" placeholder="SECOND KEY" dir="ltr"
-      autocomplete="off" maxlength="512" required>
-  </div>
-  <button class="vault-btn" id="btn" type="submit">UNLOCK</button>
-</form>
-</div></main>`,
-  });
-}
 
-const VAULT_SCRIPT = `
-(function () {
-  var form = document.getElementById('f');
-  var btn = document.getElementById('btn');
-  var err = document.getElementById('err');
-
-  form.addEventListener('submit', async function (event) {
-    event.preventDefault();
-    err.textContent = '';
-    btn.disabled = true;
-    btn.textContent = 'VERIFYING';
-
-    try {
-      var res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          tenantCode: document.getElementById('t').value,
-          username: document.getElementById('u').value,
-          password: document.getElementById('p').value,
-          adminPasskey: document.getElementById('k').value,
-          gate: 'admin'
-        })
-      });
-
-      if (!res.ok) {
-        // رسالة واحدة لكل أنواع الفشل — ما نرشدش المهاجم لغلطته
-        err.textContent = res.status === 429 ? 'ACCESS THROTTLED' : 'ACCESS DENIED';
-        document.getElementById('p').value = '';
-        document.getElementById('k').value = '';
-        return;
-      }
-      // ⚠ مشغّل المنصّة مالوش لوحة محل. /app بيوجّهه لـ /platform
-      // على الخادم — فمفيش قرار وجهة في المتصفح.
-      window.location.href = '/app';
-      return;
-    } catch (e) {
-      err.textContent = 'CONNECTION FAILED';
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'UNLOCK';
-    }
-  });
-})();
-`;
 
 // ═══════════════════ 3) الإعداد لمرّة واحدة ═══════════════════
 
