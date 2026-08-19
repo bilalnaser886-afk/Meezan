@@ -6,8 +6,12 @@
  * وبيوفّر تنظيف مؤلم بعدين لما يكبر (فروع لها خزائن ومخزون وتقارير).
  *
  * ══ مين يقدر ينشئ فرع؟ ══
- * المالك بس. صلاحية `BRANCH_MANAGE` غايبة عن مدير الفرع عمدًا —
+ * صاحب المحل بس. صلاحية `BRANCH_MANAGE` غايبة عن مدير الفرع عمدًا —
  * لأن إنشاء فرع قرار مِلكية مش قرار تشغيلي.
+ *
+ * ══ وحد الاشتراك ══
+ * عدد الفروع محكوم بـ `max_branches` في سجل المحل، ومشغّل المنصّة
+ * هو اللي بيحرّكه. صاحب المحل بيفتح لحد الحد وبس.
  */
 
 import { Errors } from '../../domain/errors';
@@ -18,10 +22,13 @@ import type {
   BranchRepository,
   BranchSummary,
   Clock,
+  TenantRepository,
 } from '../ports';
 
 export interface BranchDeps {
   branches: BranchRepository;
+  /** لقراءة حد الفروع المسموح في اشتراك المحل */
+  tenants: TenantRepository;
   clock: Clock;
   audit: AuditLogger;
 }
@@ -54,7 +61,7 @@ export async function createBranch(
   const name = input.name.trim();
 
   if (!CODE_RE.test(code)) {
-    throw Errors.validation('كود الفرع: حروف إنجليزية كبيرة وأرقام وشرطة، من 2 إلى 16 حرف.');
+    throw Errors.validation('كود الفرع: حروف إنجليزية كبيرة وأرقام وشرطة، من 2 إلى 16 حرفًا.');
   }
   if (name.length < 2 || name.length > 80) {
     throw Errors.validation('اسم الفرع غير صالح.');
@@ -66,19 +73,43 @@ export async function createBranch(
   if (address && address.length > 200) throw Errors.validation('العنوان طويل جدًا.');
   if (phone && phone.length > 32) throw Errors.validation('رقم الهاتف غير صالح.');
 
-  // فحص التكرار قبل المحاولة عشان نطلّع رسالة عربية واضحة بدل
-  // خطأ قاعدة بيانات خام. قيد UNIQUE في الجدول هو الضمان النهائي.
-  const existing = await deps.branches.findByCode(code);
+  // ⚠ فحص التكرار **جوّه المحل**.
+  //
+  // محل تاني عنده فرع بنفس الكود مالوش دعوة بينا — دول نظامين
+  // منفصلين تمامًا وما يعرفوش بعض. لو فحصنا على مستوى النظام،
+  // أول محل ياخد MAIN يمنع كل المحلات التانية منه للأبد.
+  const existing = await deps.branches.findByCode(actor.tenantId, code);
   if (existing) throw Errors.validation('كود الفرع ده مستخدم بالفعل.');
 
-  const created = await deps.branches.create({ code, name, address, phone });
+  // ══ حد الاشتراك ══
+  //
+  // ⚠ الفحص هنا مش في الواجهة. إخفاء زرار "إضافة فرع" مش بيمنع
+  // حد يبعت الطلب من المتصفح مباشرةً — والفرق بين الاتنين هو
+  // الفرق بين لافتة وقفل.
+  const tenant = await deps.tenants.findById(actor.tenantId);
+  if (!tenant) throw Errors.internal('tenant not found');
+
+  const current = await deps.branches.countActive(actor.tenantId);
+  if (current >= tenant.maxBranches) {
+    throw Errors.validation(
+      `اشتراكك يسمح بـ ${tenant.maxBranches} فرع. راجع الإدارة لرفع الحد.`,
+    );
+  }
+
+  const created = await deps.branches.create({
+    tenantId: actor.tenantId,
+    code,
+    name,
+    address,
+    phone,
+  });
 
   await deps.audit.record({
     actorId: actor.id,
     action: 'branch.create',
     entity: 'Branch',
     entityId: created.id,
-    metadata: { code, name },
+    metadata: { code, name, tenantId: actor.tenantId },
   });
 
   return created;
@@ -86,7 +117,7 @@ export async function createBranch(
 
 /**
  * قائمة الفروع لشاشة الإدارة.
- * المالك يشوف الكل. غيره ما بيشوفش الشاشة دي أصلًا.
+ * صاحب المحل يشوف كل فروع محله. غيره ما بيشوفش الشاشة دي أصلًا.
  */
 export async function listBranches(
   deps: BranchDeps,
@@ -96,10 +127,11 @@ export async function listBranches(
     throw Errors.forbidden(PERMISSIONS.BRANCH_VIEW);
   }
 
-  // مدير الفرع عنده BRANCH_VIEW، لكن مفيش سبب يشوف بيه فروع غيره.
-  // بنرجّعله فرعه هو بس.
-  const all = await deps.branches.listAll();
+  // ⚠ الاستعلام محصور بالمحل من المستودع نفسه، مش بفلترة بعدية.
+  const all = await deps.branches.listAll(actor.tenantId);
   if (actor.roleKey === 'SUPER_ADMIN') return all;
 
+  // مدير الفرع عنده BRANCH_VIEW، لكن مفيش سبب يشوف بيه فروع غيره.
+  // بنرجّعله فرعه هو بس.
   return all.filter((b) => b.id === actor.branchId);
 }
