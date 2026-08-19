@@ -66,6 +66,16 @@ html,body{margin:0;padding:0;font-family:var(--font-ui);color:var(--ink);
 :focus-visible{outline:2.5px solid var(--credit);outline-offset:2px;border-radius:3px}
 button{font:inherit}
 
+/* قسم قابل للفتح في صفحة الدخول — هادي عشان ما يسحبش الانتباه
+   من الحقول اللي كل الناس بتملاها */
+.advanced{margin-bottom:18px}
+.advanced summary{font-size:12px;color:var(--ink-faint);cursor:pointer;
+  padding:6px 0;list-style:none}
+.advanced summary::-webkit-details-marker{display:none}
+.advanced summary::before{content:"+ ";font-family:var(--font-mono)}
+.advanced[open] summary::before{content:"− "}
+.advanced[open] summary{margin-bottom:10px}
+
 /* ═══ الشعار — العنصر المميّز ═══
    ميزان بخط رفيع نحاسي. الكفة بتتزن مرة واحدة عند فتح صفحة
    الدخول، وبعدها تسكن. حركة واحدة في النظام كله. */
