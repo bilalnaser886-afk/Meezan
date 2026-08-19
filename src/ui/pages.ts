@@ -284,6 +284,8 @@ function appBar(opts: {
   username: string;
   roleKey: string;
   branchLabel: string | null;
+  /** اسم المحل — بيظهر في القائمة عشان الموظّف يتأكد إنه في المكان الصح */
+  tenantName?: string | null;
 }): Html {
   return html`<header class="app-bar">
   <div class="who">
@@ -297,6 +299,9 @@ function appBar(opts: {
     <div class="menu-sheet">
       <div class="menu-info">
         <div class="menu-row"><span>اسم المستخدم</span><b>${opts.username}</b></div>
+        ${opts.tenantName
+          ? html`<div class="menu-row"><span>المحل</span><b>${opts.tenantName}</b></div>`
+          : ''}
         ${opts.branchLabel
           ? html`<div class="menu-row"><span>الفرع</span><b>${opts.branchLabel}</b></div>`
           : ''}
@@ -435,9 +440,15 @@ ${raw(receiptEdge())}
 
   <form id="f" novalidate>
     <div class="field">
+      <label class="field-label" for="tenant">كود المحل</label>
+      <input class="field-input" id="tenant" type="text" dir="ltr" autocomplete="organization"
+        autocapitalize="characters" spellcheck="false" maxlength="32" required autofocus>
+      <p class="field-hint">الكود الذي زوّدتك به الإدارة عند تفعيل الاشتراك.</p>
+    </div>
+    <div class="field">
       <label class="field-label" for="username">اسم المستخدم</label>
       <input class="field-input" id="username" type="text" dir="ltr" autocomplete="username"
-        autocapitalize="none" spellcheck="false" maxlength="64" required autofocus>
+        autocapitalize="none" spellcheck="false" maxlength="64" required>
     </div>
     <div class="field">
       <label class="field-label" for="password">كلمة المرور</label>
@@ -479,6 +490,7 @@ const LOGIN_SCRIPT = `
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
+          tenantCode: document.getElementById('tenant').value,
           username: document.getElementById('username').value,
           password: document.getElementById('password').value,
           gate: 'staff'
@@ -522,6 +534,11 @@ export function vaultPage(): Html {
 <p class="vault-error" id="err" role="alert" aria-live="assertive"></p>
 <form id="f" novalidate autocomplete="off">
   <div class="vault-field">
+    <label class="sr-only" for="t">كود المحل</label>
+    <input class="vault-input" id="t" type="text" placeholder="SHOP CODE" dir="ltr"
+      autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" required>
+  </div>
+  <div class="vault-field">
     <label class="sr-only" for="u">المعرّف</label>
     <input class="vault-input" id="u" type="text" placeholder="IDENTIFIER" dir="ltr"
       autocomplete="off" spellcheck="false" maxlength="64" required>
@@ -560,6 +577,7 @@ const VAULT_SCRIPT = `
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
+          tenantCode: document.getElementById('t').value,
           username: document.getElementById('u').value,
           password: document.getElementById('p').value,
           adminPasskey: document.getElementById('k').value,
@@ -574,6 +592,8 @@ const VAULT_SCRIPT = `
         document.getElementById('k').value = '';
         return;
       }
+      // ⚠ مشغّل المنصّة مالوش لوحة محل. /app بيوجّهه لـ /platform
+      // على الخادم — فمفيش قرار وجهة في المتصفح.
       window.location.href = '/app';
       return;
     } catch (e) {
@@ -708,6 +728,7 @@ export interface DashboardData {
   fullName: string;
   username: string;
   branchLabel: string | null;
+  tenantName: string;
   roleLabel: string;
   roleKey: string;
   permissions: string[];
@@ -720,7 +741,7 @@ export interface DashboardData {
   canManageBranches: boolean;
   team: DashboardTeamMember[];
   branches: DashboardBranch[];
-  allBranches: DashboardBranchFull[];
+  tenantBranches: DashboardBranchFull[];
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
   /** LOGOUT = خروج كامل · LOCK = قفل شاشة والجلسة تفضل حيّة */
@@ -916,10 +937,10 @@ function teamPanel(data: DashboardData): Html {
  */
 function branchesPanel(data: DashboardData): Html {
   const list =
-    data.allBranches.length === 0
+    data.tenantBranches.length === 0
       ? html`<p class="muted">لا توجد فروع بعد.</p>`
       : html`<ul class="roster">
-          ${data.allBranches.map(
+          ${data.tenantBranches.map(
             (b) => html`<li class="roster-row" data-inactive="${b.isActive ? 'false' : 'true'}">
               <div class="roster-main">
                 <span class="roster-name">${b.name}</span>
@@ -1087,7 +1108,7 @@ export function dashboardPage(data: DashboardData): Html {
   if (data.canManageBranches) {
     tiles.push(html`<a class="tile" href="#branches">
       <span class="tile-label">الفروع</span>
-      <span class="tile-num">${String(data.allBranches.length)}</span>
+      <span class="tile-num">${String(data.tenantBranches.length)}</span>
     </a>`);
   }
 
@@ -1117,6 +1138,7 @@ export function dashboardPage(data: DashboardData): Html {
       username: data.username,
       roleKey: data.roleKey,
       branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
     })}
 
 <main class="shell">
@@ -1436,6 +1458,7 @@ export interface TreasuryPageData {
   fullName: string;
   username: string;
   branchLabel: string | null;
+  tenantName: string;
   roleKey: string;
   canApprove: boolean;
   /** للتبويبات السفلية — بتتحسب من الصلاحيات في app.ts */
@@ -1551,6 +1574,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
       username: data.username,
       roleKey: data.roleKey,
       branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
     })}
 
 <main class="shell">
@@ -1791,6 +1815,7 @@ export interface PosPageData {
   fullName: string;
   username: string;
   branchLabel: string | null;
+  tenantName: string;
   roleKey: string;
   canViewProducts: boolean;
   canUseTreasury: boolean;
@@ -1882,6 +1907,7 @@ export function posPage(data: PosPageData): Html {
       username: data.username,
       roleKey: data.roleKey,
       branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
     })}
 
 <main class="shell">
@@ -2404,6 +2430,7 @@ export interface ProductsPageData {
   fullName: string;
   username: string;
   branchLabel: string | null;
+  tenantName: string;
   roleKey: string;
   /** inventory.adjust — يقدر يضيف ويعدّل ويورّد */
   canEdit: boolean;
@@ -2664,6 +2691,7 @@ export function productsPage(data: ProductsPageData): Html {
       username: data.username,
       roleKey: data.roleKey,
       branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
     })}
 
 <main class="shell">
@@ -2998,6 +3026,7 @@ export interface CustomersPageData {
   fullName: string;
   username: string;
   branchLabel: string | null;
+  tenantName: string;
   roleKey: string;
   /** customer.create */
   canAdd: boolean;
@@ -3144,6 +3173,7 @@ export function customersPage(data: CustomersPageData): Html {
       username: data.username,
       roleKey: data.roleKey,
       branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
     })}
 
 <main class="shell">
@@ -3333,3 +3363,477 @@ ${MENU_JS}
 })();
 `;
 }
+
+
+// ═══════════════════ 8) إدارة المحلات ═══════════════════
+
+export interface PlatformPageData {
+  fullName: string;
+  username: string;
+  tenants: Array<{
+    id: string;
+    code: string;
+    name: string;
+    isActive: boolean;
+    maxBranches: number;
+    branchCount: number;
+    userCount: number;
+    ownerName: string | null;
+  }>;
+  /** محل الحساب الحالي — بيتمنع إيقافه */
+  currentTenantId: string;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * شاشة إدارة المحلات.
+ *
+ * ══ لاحظ اللي **مش** موجود هنا ══
+ * مفيش مبيعات، مفيش أرباح، مفيش أرصدة خزينة، مفيش مخزون.
+ * الشاشة بتوري حجم الاستخدام بس: كام فرع وكام مستخدم.
+ *
+ * ده مش نقص في الشاشة — ده حدّ مرسوم عن قصد في تلات طبقات:
+ * الصلاحيات، وحالات الاستخدام، وهنا. مشغّل المنصّة بيحاسب على
+ * الاشتراك، مش بيتفرّج على شغل عملائه.
+ *
+ * والسبب تجاري قبل ما يكون أخلاقي: المحلات دي ممكن تكون منافسة
+ * لبعض. أول ما واحد فيهم يشك إنك شايف هوامشه، هيدخّل أرقام
+ * مزوّقة والنظام يبقى بلا قيمة عندك وعنده.
+ */
+export function platformPage(data: PlatformPageData): Html {
+  const rows =
+    data.tenants.length === 0
+      ? html`<div class="empty">
+          <p class="empty-title">لا توجد محلات بعد</p>
+          <p class="empty-note">افتح أول محل من القسم أعلاه.</p>
+        </div>`
+      : html`${data.tenants.map(
+          (t) => html`<div class="prod-row" data-tenant="${t.id}">
+            <div class="prod-row-main">
+              <span class="prod-row-name" data-off="${t.isActive ? 'false' : 'true'}">
+                ${t.name}
+                <span class="type-tag" data-type="${t.isActive ? 'device' : 'accessory'}">
+                  ${t.code}
+                </span>
+              </span>
+              <span class="prod-row-sub">
+                ${t.ownerName ?? 'بلا مالك'} · ${String(t.userCount)} مستخدم${t.isActive
+                  ? ''
+                  : ' · موقوف'}
+              </span>
+            </div>
+
+            <div class="prod-row-side">
+              <span class="dev-count" data-zero="${t.branchCount === 0 ? 'true' : 'false'}">
+                <b>${String(t.branchCount)}/${String(t.maxBranches)}</b>
+                <span>فرع</span>
+              </span>
+              <button class="btn-mini" type="button" data-tedit="${t.id}">إدارة</button>
+            </div>
+
+            <div class="prod-edit" id="tedit-${t.id}" hidden>
+              <div class="field">
+                <label class="field-label" for="tlimit-${t.id}">حد الفروع</label>
+                <input class="field-input" id="tlimit-${t.id}" type="text"
+                  inputmode="numeric" dir="ltr" value="${String(t.maxBranches)}">
+                <p class="field-hint">
+                  التخفيض لا يُغلق فروعًا قائمة — يمنع فتح جديد فقط.
+                </p>
+              </div>
+
+              <div class="prod-edit-actions">
+                <button class="btn-mini" type="button" data-tlimit="${t.id}">حفظ الحد</button>
+                ${t.id === data.currentTenantId
+                  ? html`<span class="price-log-who">لا يمكن إيقاف المحل الذي يضم حسابك.</span>`
+                  : html`<button class="btn-mini" data-danger="${t.isActive ? 'true' : 'false'}"
+                      type="button" data-tactive="${t.id}"
+                      data-on="${t.isActive ? 'true' : 'false'}">
+                      ${t.isActive ? 'إيقاف الاشتراك' : 'إعادة التفعيل'}
+                    </button>`}
+              </div>
+            </div>
+          </div>`,
+        )}`;
+
+  return shell({
+    title: 'المحلات',
+    noIndex: true,
+    script: platformScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    body: html`<header class="app-bar">
+  <div class="who">
+    ${raw(brandGlyph())}
+    <span class="who-name">${data.fullName}</span>
+    <span class="stamp" data-role="PLATFORM_ADMIN">مشغّل المنصّة</span>
+  </div>
+  <button class="menu-btn" id="menu-btn" type="button" aria-label="القائمة"
+    aria-haspopup="true" aria-expanded="false">⋯</button>
+  <div class="menu-sheet" id="menu-sheet" hidden>
+    <div class="menu-panel" role="menu">
+      <div class="menu-row"><span>الحساب</span><b>${data.username}</b></div>
+      <button class="menu-item" type="button" data-action="logout">تسجيل الخروج</button>
+    </div>
+  </div>
+</header>
+
+<main class="shell">
+  <div class="alert-box" id="pmsg" role="alert" hidden><span id="pmsg-text"></span></div>
+
+  <div class="alert-box" data-tone="ok">
+    <span>
+      هذه الشاشة تعرض حجم الاشتراك فقط — عدد الفروع والمستخدمين.
+      بيانات المبيعات والتكاليف والأرباح غير متاحة لهذا الحساب.
+    </span>
+  </div>
+
+  <details class="panel">
+    <summary>فتح محل جديد</summary>
+    <div class="panel-body">
+      <div class="alert-box" id="tadd-msg" role="alert" hidden><span id="tadd-text"></span></div>
+
+      <form id="tf" novalidate>
+        <div class="field">
+          <label class="field-label" for="t-code">كود المحل</label>
+          <input class="field-input" id="t-code" type="text" dir="ltr"
+            autocapitalize="characters" maxlength="16" required>
+          <p class="field-hint">
+            هذا ما سيكتبه موظّفو المحل في شاشة الدخول كل يوم. اجعله قصيرًا وواضحًا.
+          </p>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-name">اسم المحل</label>
+          <input class="field-input" id="t-name" type="text" maxlength="80" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-max">عدد الفروع المسموح</label>
+          <input class="field-input" id="t-max" type="text" inputmode="numeric"
+            dir="ltr" value="1" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-bcode">كود أول فرع</label>
+          <input class="field-input" id="t-bcode" type="text" dir="ltr"
+            autocapitalize="characters" maxlength="16" value="MAIN" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-bname">اسم أول فرع</label>
+          <input class="field-input" id="t-bname" type="text" maxlength="80"
+            value="الفرع الرئيسي" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-ouser">اسم مستخدم المالك</label>
+          <input class="field-input" id="t-ouser" type="text" dir="ltr"
+            autocapitalize="none" spellcheck="false" maxlength="32" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-oname">اسم المالك الكامل</label>
+          <input class="field-input" id="t-oname" type="text" maxlength="80" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="t-opass">كلمة مرور المالك</label>
+          <input class="field-input" id="t-opass" type="text" dir="ltr"
+            autocomplete="off" maxlength="1024" required>
+          <p class="field-hint">
+            12 حرفًا على الأقل. سلّمها للمالك بنفسك — لن تظهر مرة أخرى بعد الحفظ.
+          </p>
+        </div>
+
+        <button class="btn-primary" id="tbtn" type="submit">فتح المحل</button>
+      </form>
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>المحلات (${String(data.tenants.length)})</summary>
+    <div class="panel-body">
+      ${rows}
+    </div>
+  </details>
+</main>
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function platformScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+
+(function () {
+  var box = document.getElementById('pmsg');
+  var text = document.getElementById('pmsg-text');
+
+  function say(message, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    text.textContent = message;
+    box.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function send(url, body, btn, busyLabel) {
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyLabel;
+    try {
+      var res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (res.ok) return data || {};
+      say((data && data.error && data.error.message) || 'فشل التنفيذ.', false);
+      return null;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return null;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  // ── فتح لوحة الإدارة ──
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tedit]') : null;
+    if (!btn) return;
+    var panel = document.getElementById('tedit-' + btn.getAttribute('data-tedit'));
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    btn.textContent = panel.hidden ? 'إدارة' : 'إغلاق';
+  });
+
+  // ── حد الفروع ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tlimit]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-tlimit');
+    var input = document.getElementById('tlimit-' + id);
+    if (!input || !input.value.trim()) { say('اكتب عدد الفروع.', false); return; }
+
+    var result = await send(
+      '/api/platform/' + encodeURIComponent(id) + '/limit',
+      { maxBranches: input.value },
+      btn, 'جارٍ الحفظ…'
+    );
+    if (result) {
+      say('تم تعديل حد الفروع.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── إيقاف / تفعيل ──
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tactive]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-tactive');
+    var isOn = btn.getAttribute('data-on') === 'true';
+
+    if (isOn && !confirm('إيقاف اشتراك هذا المحل؟ سيُمنع الدخول فورًا، ولن تُحذف أي بيانات.')) {
+      return;
+    }
+
+    var result = await send(
+      '/api/platform/' + encodeURIComponent(id) + '/active',
+      { isActive: !isOn },
+      btn, 'جارٍ التنفيذ…'
+    );
+    if (result) {
+      say(isOn ? 'تم إيقاف الاشتراك.' : 'تمت إعادة التفعيل.', true);
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── فتح محل ──
+  var form = document.getElementById('tf');
+  if (form) {
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var btn = document.getElementById('tbtn');
+      var msg = document.getElementById('tadd-msg');
+      var msgText = document.getElementById('tadd-text');
+
+      btn.disabled = true;
+      btn.textContent = 'جارٍ الفتح…';
+
+      try {
+        var res = await fetch('/api/platform', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            code: document.getElementById('t-code').value,
+            name: document.getElementById('t-name').value,
+            maxBranches: document.getElementById('t-max').value,
+            branchCode: document.getElementById('t-bcode').value,
+            branchName: document.getElementById('t-bname').value,
+            ownerUsername: document.getElementById('t-ouser').value,
+            ownerFullName: document.getElementById('t-oname').value,
+            ownerPassword: document.getElementById('t-opass').value
+          })
+        });
+        var data = await res.json().catch(function () { return null; });
+
+        msg.hidden = false;
+        if (res.ok) {
+          msg.setAttribute('data-tone', 'ok');
+          msgText.textContent =
+            'تم فتح المحل. كود الدخول: ' + (data && data.code) + ' — سلّمه للمالك مع كلمة المرور.';
+          // ⚠ تأخير أطول هنا عن باقي الشاشات عن قصد: الكود وكلمة
+          // المرور لازم يتقروا قبل ما الصفحة تتحدّث وتمسحهم.
+          setTimeout(function () { window.location.reload(); }, 6000);
+          return;
+        }
+
+        msg.removeAttribute('data-tone');
+        msgText.textContent = (data && data.error && data.error.message) || 'فشل الفتح.';
+      } catch (err) {
+        msg.hidden = false;
+        msg.removeAttribute('data-tone');
+        msgText.textContent = 'تعذّر الاتصال بالخادم.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'فتح المحل';
+      }
+    });
+  }
+})();
+`;
+}
+
+
+// ═══════════════════ 9) تأسيس مشغّل المنصّة ═══════════════════
+
+/**
+ * صفحة لمرّة واحدة.
+ *
+ * نفس منطق صفحة الإعداد الأولي بالظبط: بتشتغل مرة، وبعدين تمسح
+ * SETUP_SECRET من كلاودفلير فتختفي تمامًا (404).
+ */
+export function platformSetupPage(): Html {
+  return shell({
+    title: 'تأسيس المنصّة',
+    noIndex: true,
+    script: PLATFORM_SETUP_SCRIPT,
+    body: html`<main class="counter"><div>
+${raw(receiptEdge())}
+<div class="counter-card">
+  <div class="counter-brand">${raw(brandLockup(false))}</div>
+  <h1 class="counter-title">تأسيس المنصّة</h1>
+  <p class="counter-sub">
+    حساب واحد لإدارة اشتراكات المحلات. يعمل هذا النموذج مرة واحدة فقط.
+  </p>
+
+  <div class="alert-box" id="err" role="alert" hidden>
+    <span aria-hidden="true">⚠</span><span id="err-text"></span>
+  </div>
+
+  <form id="f" novalidate>
+    <div class="field">
+      <label class="field-label" for="secret">سرّ التأسيس</label>
+      <input class="field-input" id="secret" type="password" dir="ltr"
+        autocomplete="off" maxlength="512" required>
+      <p class="field-hint">القيمة نفسها الموجودة في SETUP_SECRET.</p>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="username">اسم المستخدم</label>
+      <input class="field-input" id="username" type="text" dir="ltr"
+        autocapitalize="none" spellcheck="false" maxlength="32" required>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="fullName">الاسم الكامل</label>
+      <input class="field-input" id="fullName" type="text" maxlength="80" required>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="password">كلمة المرور</label>
+      <input class="field-input" id="password" type="password" dir="ltr"
+        autocomplete="new-password" maxlength="1024" required>
+      <p class="field-hint">12 حرفًا على الأقل.</p>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="passkey">المفتاح الثاني</label>
+      <input class="field-input" id="passkey" type="password" dir="ltr"
+        autocomplete="off" maxlength="512" required>
+      <p class="field-hint">
+        16 حرفًا على الأقل، ويجب أن يختلف تمامًا عن كلمة المرور.
+        هذا هو القفل الثاني على البوّابة السرّية.
+      </p>
+    </div>
+
+    <button class="btn-primary" id="btn" type="submit">تأسيس الحساب</button>
+  </form>
+
+  <div class="counter-foot"><span>بعد الانتهاء</span><span>احذف SETUP_SECRET</span></div>
+</div>
+</div></main>`,
+  });
+}
+
+const PLATFORM_SETUP_SCRIPT = `
+(function () {
+  var form = document.getElementById('f');
+  var btn = document.getElementById('btn');
+  var box = document.getElementById('err');
+  var text = document.getElementById('err-text');
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    btn.disabled = true;
+    btn.textContent = 'جارٍ التأسيس…';
+
+    try {
+      var res = await fetch('/api/platform/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          setupSecret: document.getElementById('secret').value,
+          username: document.getElementById('username').value,
+          fullName: document.getElementById('fullName').value,
+          password: document.getElementById('password').value,
+          passkey: document.getElementById('passkey').value
+        })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      box.hidden = false;
+      if (res.ok) {
+        box.setAttribute('data-tone', 'ok');
+        text.textContent = 'تم التأسيس. ادخل من البوّابة السرّية بكود المحل MEEZAN.';
+        return;
+      }
+
+      box.removeAttribute('data-tone');
+      text.textContent = (data && data.error && data.error.message) || 'فشل التأسيس.';
+    } catch (err) {
+      box.hidden = false;
+      box.removeAttribute('data-tone');
+      text.textContent = 'تعذّر الاتصال بالخادم.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'تأسيس الحساب';
+    }
+  });
+})();
+`;
