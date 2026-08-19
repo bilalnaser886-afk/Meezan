@@ -10,7 +10,7 @@
 
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import { SESSION_POLICY, assertEnv, idleRuleFor, superAdminPath, type Env } from './domain/config';
+import { SESSION_POLICY, assertEnv, idleRuleFor, type Env } from './domain/config';
 import { todayInCairo } from './domain/dates';
 import { AppError } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
@@ -52,7 +52,6 @@ import {
   productsPage,
   setupPage,
   treasuryPage,
-  vaultPage,
 } from './ui/pages';
 
 export const app = new Hono<AppBindings>();
@@ -532,38 +531,16 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
   );
 });
 
-// ═══════════════════ البوّابة السرّية ═══════════════════
-
-/**
- * لازم تتسجّل **آخر حاجة**، عشان المسارات الثابتة فوق تاخد أولويتها.
- *
- * ══ كن صريح مع نفسك ══
- * المسار المخفي **مطبّ سرعة، مش قفل**. بيخبّي الباب عن الماسحات
- * الآلية، لكنه ما بيصمدش قدّام حد يعرف العنوان.
- *
- * الأقفال الحقيقية الأربعة، وكلها شغّالة:
- *   1) المفتاح التاني بعد كلمة المرور
- *   2) حدّ 5 محاولات لكل 15 دقيقة على البوّابة دي
- *   3) قائمة IP مسموحة
- *   4) فصل البوّابات (المالك ما يدخلش من باب الموظفين والعكس)
- */
-app.get('/:maybeSecret', (c) => {
-  const secret = superAdminPath(c.env);
-  if (!secret || c.req.param('maybeSecret') !== secret) return c.notFound();
-
-  const allowList = (c.env.SUPER_ADMIN_ALLOWED_IPS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (allowList.length > 0) {
-    const ip = getRequestContext(c).ipAddress ?? '';
-    // 404 مش 403: ما نأكّدش للمهاجم إنه لقى الباب الصح
-    if (!allowList.includes(ip)) return c.notFound();
-  }
-
-  c.header('X-Robots-Tag', 'noindex, nofollow');
-  return c.html(vaultPage());
-});
+// ⚠ البوّابة السرّية اتشالت.
+//
+// كانت رابط مخفي + مفتاح تاني لأعلى حساب، ومنطقها كان سليم لما
+// كان فيه مالك واحد في النظام كله.
+//
+// مع محلات كتير، بقى فيه صاحب محل لكل عميل — وما ينفعش عشرين
+// واحد يشتركوا في نفس الرابط. المسار المخفي كان "مطبّ سرعة مش
+// قفل" من الأول، ومع الكتر بقى مطبّ بلا فايدة.
+//
+// دلوقتي الكل بيدخل من /login بكود محله. والقفل الحقيقي اللي
+// فضل: كود المحل + كلمة المرور + مفتاح تاني لحساب المنصّة وحده.
 
 export default app;
