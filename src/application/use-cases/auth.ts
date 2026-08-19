@@ -51,10 +51,8 @@ export interface LoginInput {
   tenantCode: string;
   username: string;
   password: string;
-  /** المفتاح التاني — مطلوب بس من بوّابة المالك */
+  /** المفتاح التاني — مطلوب من مشغّل المنصّة وحده */
   adminPasskey?: string;
-  /** true لما الطلب جاي من المسار السرّي */
-  viaAdminGate: boolean;
 }
 
 export interface LoginResult {
@@ -108,13 +106,9 @@ export async function login(
   // من غيره، محل مزحوم عليه محاولات دخول كتير يقفل الباب على
   // كل المحلات التانية اللي جايّة من نفس شبكة المحمول.
   const tenantKey = input.tenantCode.trim().toLowerCase();
-  const rateKey = input.viaAdminGate
-    ? `login:admin:${tenantKey}:${ctx.ipAddress}`
-    : `login:${tenantKey}:${ctx.ipAddress}`;
-  const limit = input.viaAdminGate ? LOGIN_POLICY.ADMIN_IP_RATE_LIMIT : LOGIN_POLICY.IP_RATE_LIMIT;
-  const windowSec = input.viaAdminGate
-    ? LOGIN_POLICY.ADMIN_IP_RATE_WINDOW_SECONDS
-    : LOGIN_POLICY.IP_RATE_WINDOW_SECONDS;
+  const rateKey = `login:${tenantKey}:${ctx.ipAddress}`;
+  const limit = LOGIN_POLICY.IP_RATE_LIMIT;
+  const windowSec = LOGIN_POLICY.IP_RATE_WINDOW_SECONDS;
 
   const retryAfter = await rateLimiter.check(rateKey, limit, windowSec);
   if (retryAfter !== null) {
@@ -125,7 +119,6 @@ export async function login(
       metadata: {
         tenantCode: input.tenantCode,
         username: input.username,
-        viaAdminGate: input.viaAdminGate,
       },
     });
     throw Errors.rateLimited(retryAfter);
@@ -182,32 +175,19 @@ export async function login(
     throw Errors.accountInactive();
   }
 
-  // 5) البوّابة الصح للدور الصح
+  // ══ 5) البوّابة السرّية اتلغت ══
   //
-  //    الموظّف ما بيدخلش من الباب السرّي، وصاحب الصلاحية العليا
-  //    ما بيدخلش من باب الموظفين.
+  // كان فيه فصل: المالك من رابط سرّي، والموظّف من الصفحة العامة.
   //
-  //    ⚠ القائمة دي كانت دور واحد لما كان فيه "مالك" واحد.
-  //    مع نظام المحلات بقى فيه اتنين فوق:
-  //      SUPER_ADMIN     صاحب المحل
-  //      PLATFORM_ADMIN  مشغّل المنصّة
+  // ده كان منطقي لما كان فيه مالك واحد في النظام كله. مع نظام
+  // المحلات بقى فيه صاحب محل لكل عميل، وما ينفعش عشرين واحد
+  // يشتركوا في نفس الرابط — ده مش قفل، ده مفتاح واحد متوزّع.
   //
-  //    الاتنين بيدخلوا من الباب السرّي بالمفتاح التاني. لو سيبنا
-  //    الشرط على دور واحد، مشغّل المنصّة يبقى ممنوع من الباب
-  //    الوحيد اللي المفروض يدخل منه — وممنوع كمان من باب الموظفين
-  //    لأنه صاحب صلاحية عليا. يعني مقفول بره النظام بالكامل.
-  if (input.viaAdminGate && !PRIVILEGED_ROLES.includes(user.roleKey)) {
-    await audit.record({
-      actorId: user.id,
-      action: 'auth.login.wrong_gate',
-      ipAddress: ctx.ipAddress,
-      metadata: { attemptedGate: 'admin', actualRole: user.roleKey },
-    });
-    throw Errors.invalidCredentials('non-admin at admin gate');
-  }
-  if (!input.viaAdminGate && PRIVILEGED_ROLES.includes(user.roleKey)) {
-    throw Errors.invalidCredentials('privileged role at public gate');
-  }
+  // والأسوأ إن `fn_create_tenant` ما بتعملش مفتاح تاني للمالك
+  // الجديد، فكان بيتقفل بره النظام من البابين: العام لأنه صاحب
+  // صلاحية، والسرّي لأنه بلا مفتاح.
+  //
+  // دلوقتي: باب واحد للكل، وكود المحل هو اللي بيفرّق.
 
   // 6) كلمة المرور
   if (!(await hasher.verify(user.passwordHash, input.password))) {
@@ -215,9 +195,22 @@ export async function login(
     throw Errors.invalidCredentials('bad password');
   }
 
-  // 7) المفتاح التاني للمالك
-  if (input.viaAdminGate) {
-    if (!user.adminPasskeyHash) throw Errors.internal('super admin has no passkey configured');
+  // ══ 7) المفتاح التاني — لمشغّل المنصّة وحده ══
+  //
+  // ⚠ الحساب ده بيتحكّم في اشتراكات كل المحلات: يفتح، يوقف،
+  // ويغيّر حدودها. سرقته معناها إن كل عملائك يقفوا في نفس اللحظة.
+  //
+  // كلمة مرور واحدة مش كفاية لحساب بالحجم ده. والتكلفة عليك
+  // بقت شبه صفر: الجلسة بتعيش 30 يوم، فالمفتاح بيتكتب مرة في
+  // الشهر مش كل يوم.
+  //
+  // وصاحب المحل **مالوش** مفتاح تاني: هو أعلى حساب في محله، مش
+  // في النظام. لو طلبناه منه، هيبقى سرّ زيادة على كل عميل يحفظه
+  // ويضيّعه ويكلّمك عشانه.
+  if (user.roleKey === 'PLATFORM_ADMIN') {
+    if (!user.adminPasskeyHash) {
+      throw Errors.internal('platform admin has no passkey configured');
+    }
 
     const passkeyOk = input.adminPasskey
       ? await hasher.verify(user.adminPasskeyHash, input.adminPasskey)
@@ -225,7 +218,7 @@ export async function login(
 
     if (!passkeyOk) {
       await handleFailedAttempt(deps, user, now, ctx);
-      throw Errors.invalidCredentials('bad admin passkey');
+      throw Errors.invalidCredentials('bad platform passkey');
     }
   }
 
@@ -270,7 +263,7 @@ export async function login(
     entityId: session.id,
     ipAddress: ctx.ipAddress,
     userAgent: ctx.userAgent,
-    metadata: { viaAdminGate: input.viaAdminGate },
+    metadata: { tenantCode: user.tenantCode, roleKey: user.roleKey },
   });
 
   return {
@@ -375,6 +368,19 @@ export async function checkSession(
   if (!user || !user.isActive || user.deletedAt) {
     await sessions.revoke(session.id, 'user_disabled', now);
     throw Errors.sessionExpired();
+  }
+
+  // ⚠ اشتراك المحل بيتفحص هنا، في **كل طلب**.
+  //
+  // من غير السطر ده، إيقاف اشتراك محل ما كانش هيبان غير بعد ما
+  // جلسات موظفينه تنتهي — 30 يوم كاملة يشتغلوا فيها بعد ما
+  // توقفهم. دلوقتي الإيقاف فوري.
+  //
+  // وده هو اللي بيعوّض إلغاء مهلة الخمول: الجلسة طويلة، لكن
+  // صلاحيتها بتتراجع من الدفتر مع كل حركة.
+  if (!user.tenantActive) {
+    await sessions.revoke(session.id, 'tenant_suspended', now);
+    throw Errors.accountInactive();
   }
 
   await enforceIdlePolicy(deps, session, user.roleKey, now);
@@ -534,8 +540,12 @@ async function enforceIdlePolicy(
   if (session.lockedAt) throw Errors.sessionLocked();
 
   const rule = idleRuleFor(roleKey);
-  const idleSeconds = (now.getTime() - session.lastSeenAt.getTime()) / 1000;
 
+  // ⚠ صفر = المهلة معطّلة لهذا الدور. الآلية كلها تحت لسه شغّالة،
+  // بس ما بتتنفّذش. رقم واحد في config.ts بيرجّعها.
+  if (rule.seconds <= 0) return;
+
+  const idleSeconds = (now.getTime() - session.lastSeenAt.getTime()) / 1000;
   if (idleSeconds <= rule.seconds) return;
 
   if (rule.action === 'LOCK') {
