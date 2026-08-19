@@ -16,6 +16,7 @@
 import { Errors } from '../../domain/errors';
 import { LOGIN_POLICY, SESSION_POLICY, idleRuleFor } from '../../domain/config';
 import type {
+  RoleKey,
   AuditLogger,
   AuthenticatedUser,
   Clock,
@@ -63,6 +64,15 @@ export interface LoginResult {
   accessTokenExpiresAt: Date;
   refreshTokenExpiresAt: Date;
 }
+
+/**
+ * الأدوار اللي بتدخل من الباب السرّي بالمفتاح التاني.
+ *
+ * ⚠ أي دور جديد فوق لازم يتضاف هنا. لو اتنسي، صاحبه هيبقى
+ * ممنوع من البابين: السرّي لأنه مش في القائمة، والعام لأنه
+ * صاحب صلاحية عليا.
+ */
+const PRIVILEGED_ROLES: RoleKey[] = ['SUPER_ADMIN', 'PLATFORM_ADMIN'];
 
 /**
  * تسجيل الدخول.
@@ -157,8 +167,20 @@ export async function login(
   }
 
   // 5) البوّابة الصح للدور الصح
-  //    المالك ما بيدخلش من باب الموظفين، والموظف ما بيدخلش من الباب السرّي.
-  if (input.viaAdminGate && user.roleKey !== 'SUPER_ADMIN') {
+  //
+  //    الموظّف ما بيدخلش من الباب السرّي، وصاحب الصلاحية العليا
+  //    ما بيدخلش من باب الموظفين.
+  //
+  //    ⚠ القائمة دي كانت دور واحد لما كان فيه "مالك" واحد.
+  //    مع نظام المحلات بقى فيه اتنين فوق:
+  //      SUPER_ADMIN     صاحب المحل
+  //      PLATFORM_ADMIN  مشغّل المنصّة
+  //
+  //    الاتنين بيدخلوا من الباب السرّي بالمفتاح التاني. لو سيبنا
+  //    الشرط على دور واحد، مشغّل المنصّة يبقى ممنوع من الباب
+  //    الوحيد اللي المفروض يدخل منه — وممنوع كمان من باب الموظفين
+  //    لأنه صاحب صلاحية عليا. يعني مقفول بره النظام بالكامل.
+  if (input.viaAdminGate && !PRIVILEGED_ROLES.includes(user.roleKey)) {
     await audit.record({
       actorId: user.id,
       action: 'auth.login.wrong_gate',
@@ -167,8 +189,8 @@ export async function login(
     });
     throw Errors.invalidCredentials('non-admin at admin gate');
   }
-  if (!input.viaAdminGate && user.roleKey === 'SUPER_ADMIN') {
-    throw Errors.invalidCredentials('admin at public gate');
+  if (!input.viaAdminGate && PRIVILEGED_ROLES.includes(user.roleKey)) {
+    throw Errors.invalidCredentials('privileged role at public gate');
   }
 
   // 6) كلمة المرور
