@@ -66,6 +66,39 @@ html,body{margin:0;padding:0;font-family:var(--font-ui);color:var(--ink);
 :focus-visible{outline:2.5px solid var(--credit);outline-offset:2px;border-radius:3px}
 button{font:inherit}
 
+/* ═══ كتل التجهيز — الفروع والحسابات ═══ */
+.setup-block{margin:18px 0;padding:13px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-sm)}
+.setup-head{display:flex;align-items:center;justify-content:space-between;
+  gap:12px;margin-bottom:12px}
+.setup-title{font-family:var(--font-display);font-size:14px;font-weight:600}
+.setup-row{padding:12px;margin-bottom:10px;background:var(--card);
+  border:1px solid var(--line);border-radius:var(--r-sm)}
+.setup-row .field{margin-bottom:10px}
+.setup-row .field:last-of-type{margin-bottom:0}
+
+/* ═══ ملخّص التسليم ═══
+   إطار نحاسي تخين: دي الشاشة الوحيدة في النظام اللي بتعرض كلمات
+   مرور نصّ صريح، ومحتواها ما بيترجّعش. لازم تبان إنها مختلفة. */
+.handover{margin-bottom:18px;padding:15px;background:var(--brand-wash);
+  border:2px solid var(--brand);border-radius:var(--r)}
+.handover[hidden]{display:none}
+.handover-title{margin:0 0 6px;font-family:var(--font-display);font-size:15px;
+  font-weight:700;color:var(--brand)}
+.handover-note{margin:0 0 13px;font-size:12px;line-height:1.7;color:var(--ink-soft)}
+.handover-row{display:flex;align-items:baseline;justify-content:space-between;
+  gap:12px;padding:9px 0;border-bottom:1px solid var(--brand-line)}
+.handover-label{font-size:12px;color:var(--ink-soft)}
+.handover-value{font-family:var(--font-mono);font-size:16px;direction:ltr}
+.handover-card{padding:10px 0;border-bottom:1px solid var(--brand-line)}
+.handover-who{font-size:13px;font-weight:600;margin-bottom:5px}
+/* الاسم وكلمة المرور بخط أحادي المسافة وقابلين للتحديد بسهولة —
+   دي بتتنسخ بالإصبع على شاشة موبايل */
+.handover-creds{font-family:var(--font-mono);font-size:15px;direction:ltr;
+  text-align:start;user-select:all;-webkit-user-select:all;
+  background:var(--card);padding:8px 10px;border-radius:var(--r-sm)}
+.handover .btn-mini{margin-top:13px}
+
 /* قسم قابل للفتح في صفحة الدخول — هادي عشان ما يسحبش الانتباه
    من الحقول اللي كل الناس بتملاها */
 .advanced{margin-bottom:18px}
