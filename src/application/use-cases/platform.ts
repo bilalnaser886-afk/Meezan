@@ -46,9 +46,41 @@ export interface CreateTenantRequest {
   maxBranches: number;
   ownerUsername: string;
   ownerFullName: string;
-  ownerPassword: string;
-  branchCode: string;
-  branchName: string;
+  /** فاضية = يتولّد واحدة عشوائية ويترجع في الملخّص */
+  ownerPassword?: string;
+  branches: Array<{ code: string; name: string }>;
+  users: Array<{
+    username: string;
+    fullName: string;
+    password?: string;
+    role: 'BRANCH_MANAGER' | 'STAFF';
+    branchCode: string;
+  }>;
+}
+
+/**
+ * ملخّص التسليم — بيتعرض مرة واحدة بعد الفتح وما بيتخزّنش.
+ *
+ * ⚠ كلمات المرور هنا **نصّ صريح**، وده الاستثناء الوحيد في
+ * النظام كله. السبب إنك لازم تسلّمها للعميل، ومفيش طريقة تانية:
+ * الهاش مالوش رجعة.
+ *
+ * ولذلك ما بتترجّعش تاني أبدًا. لو قفلت الشاشة قبل ما تنسخها،
+ * الحل الوحيد إنك تغيّرها من حساب صاحب المحل.
+ */
+export interface ProvisionedAccount {
+  username: string;
+  fullName: string;
+  role: 'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
+  branchCode: string | null;
+  password: string;
+}
+
+export interface CreateTenantResult {
+  tenantId: string;
+  code: string;
+  branchCount: number;
+  accounts: ProvisionedAccount[];
 }
 
 /** كود المحل: حروف إنجليزية كبيرة وأرقام وشرطة، من 3 لـ 16 */
@@ -58,6 +90,35 @@ const USERNAME_RE = /^[a-z0-9._-]{3,32}$/;
 
 /** حد أقصى احترازي — مفيش محل واقعي بمية فرع */
 const MAX_ALLOWED_BRANCHES = 50;
+const MAX_USERS_AT_SETUP = 30;
+
+/**
+ * حروف كلمة المرور المولّدة.
+ *
+ * ⚠ لاحظ اللي **مش** موجود: صفر و O، واحد و l و I.
+ *
+ * إنت هتكتب الكلمة دي على ورقة وتسلّمها لموظّف هيكتبها على شاشة
+ * موبايل. الحروف المتشابهة دي بتخلق مكالمة "مش راضي يفتح" كل مرة،
+ * والمكالمة دي أغلى بكتير من حرفين ناقصين في مساحة الاحتمالات.
+ */
+const SAFE_CHARS = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const GENERATED_LENGTH = 14;
+
+/**
+ * توليد كلمة مرور.
+ *
+ * `crypto.getRandomValues` مش `Math.random` — الفرق مش شكلي:
+ * الأولى عشوائية تشفيريًا، والتانية متوقّعة لو حد عرف بذرتها.
+ * ودي كلمات مرور محلات عملاء، مش أرقام لعبة.
+ */
+function generatePassword(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(GENERATED_LENGTH));
+  let out = '';
+  for (let i = 0; i < GENERATED_LENGTH; i++) {
+    out += SAFE_CHARS[bytes[i] % SAFE_CHARS.length];
+  }
+  return out;
+}
 
 function assertPlatform(actor: AuthenticatedUser, permission: string): void {
   if (!actor.permissions.includes(permission as never)) {
@@ -81,39 +142,25 @@ export async function createTenant(
   deps: PlatformDeps,
   actor: AuthenticatedUser,
   input: CreateTenantRequest,
-): Promise<{ tenantId: string; code: string }> {
+): Promise<CreateTenantResult> {
   assertPlatform(actor, PERMISSIONS.TENANT_MANAGE);
 
   // نوحّد لحروف كبيرة قبل الفحص عشان "shop1" و"SHOP1" ما يبقوش
   // محلّين مختلفين — والكود ده الموظّف هيكتبه كل يوم في الدخول
   const code = input.code.trim().toUpperCase();
-  const branchCode = input.branchCode.trim().toUpperCase();
   const name = input.name.trim();
-  const branchName = input.branchName.trim();
   const ownerUsername = input.ownerUsername.trim().toLowerCase();
   const ownerFullName = input.ownerFullName.trim();
 
   if (!TENANT_CODE_RE.test(code)) {
     throw Errors.validation('كود المحل: حروف إنجليزية كبيرة وأرقام وشرطة، من 3 إلى 16 حرفًا.');
   }
-  if (!BRANCH_CODE_RE.test(branchCode)) {
-    throw Errors.validation('كود الفرع: حروف إنجليزية كبيرة وأرقام وشرطة، من حرفين إلى 16.');
-  }
   if (name.length < 2 || name.length > 80) throw Errors.validation('اسم المحل غير صالح.');
-  if (branchName.length < 2 || branchName.length > 80) {
-    throw Errors.validation('اسم الفرع غير صالح.');
-  }
   if (!USERNAME_RE.test(ownerUsername)) {
     throw Errors.validation('اسم مستخدم المالك: حروف إنجليزية صغيرة وأرقام، من 3 إلى 32 حرفًا.');
   }
   if (ownerFullName.length < 3 || ownerFullName.length > 80) {
     throw Errors.validation('اسم المالك الكامل غير صالح.');
-  }
-  if (input.ownerPassword.length < 12) {
-    throw Errors.validation('كلمة مرور المالك 12 حرفًا على الأقل.');
-  }
-  if (input.ownerPassword.length > 1024) {
-    throw Errors.validation('كلمة المرور أطول من الحد المسموح.');
   }
 
   const maxBranches = Number(input.maxBranches);
@@ -121,12 +168,94 @@ export async function createTenant(
     throw Errors.validation(`عدد الفروع من 1 إلى ${MAX_ALLOWED_BRANCHES}.`);
   }
 
-  // فحص مبكر عشان رسالة عربية واضحة بدل خطأ قاعدة بيانات خام.
-  // القيد الفريد في القاعدة هو الضمانة النهائية.
+  // ─── الفروع ───
+  if (!Array.isArray(input.branches) || input.branches.length === 0) {
+    throw Errors.validation('أضف فرعًا واحدًا على الأقل.');
+  }
+  if (input.branches.length > maxBranches) {
+    throw Errors.validation(
+      `عدد الفروع ${input.branches.length} أكبر من الحد المسموح ${maxBranches}. ارفع الحد أو احذف فرعًا.`,
+    );
+  }
+
+  const branches = input.branches.map((b) => {
+    const bCode = String(b.code ?? '').trim().toUpperCase();
+    const bName = String(b.name ?? '').trim();
+    if (!BRANCH_CODE_RE.test(bCode)) {
+      throw Errors.validation(`كود الفرع "${bCode}" غير صالح: حروف كبيرة وأرقام وشرطة، من حرفين إلى 16.`);
+    }
+    if (bName.length < 2 || bName.length > 80) {
+      throw Errors.validation('اسم الفرع غير صالح.');
+    }
+    return { code: bCode, name: bName };
+  });
+
+  // ⚠ فحص التكرار هنا قبل النداء. القيد الفريد في القاعدة هو
+  // الضمانة النهائية، لكن الرسالة اللي بترجع منه غامضة — والفحص
+  // ده بيقول للمستخدم أنهي كود بالظبط اتكرّر.
+  const branchCodes = new Set<string>();
+  for (const b of branches) {
+    if (branchCodes.has(b.code)) throw Errors.validation(`كود الفرع "${b.code}" مكرّر.`);
+    branchCodes.add(b.code);
+  }
+
+  // ─── الحسابات ───
+  const rawUsers = Array.isArray(input.users) ? input.users : [];
+  if (rawUsers.length > MAX_USERS_AT_SETUP) {
+    throw Errors.validation(`الحد ${MAX_USERS_AT_SETUP} حسابًا عند التجهيز. الباقي يضيفه صاحب المحل.`);
+  }
+
+  const usernames = new Set<string>([ownerUsername]);
+  const prepared = rawUsers.map((u) => {
+    const username = String(u.username ?? '').trim().toLowerCase();
+    const fullName = String(u.fullName ?? '').trim();
+    const branchCode = String(u.branchCode ?? '').trim().toUpperCase();
+
+    if (!USERNAME_RE.test(username)) {
+      throw Errors.validation(`اسم المستخدم "${username}" غير صالح.`);
+    }
+    if (usernames.has(username)) {
+      throw Errors.validation(`اسم المستخدم "${username}" مكرّر في النموذج.`);
+    }
+    usernames.add(username);
+
+    if (fullName.length < 3 || fullName.length > 80) {
+      throw Errors.validation(`الاسم الكامل لـ "${username}" غير صالح.`);
+    }
+    if (u.role !== 'BRANCH_MANAGER' && u.role !== 'STAFF') {
+      throw Errors.validation('الدور المسموح: مدير فرع أو مندوب مبيعات.');
+    }
+    if (!branchCodes.has(branchCode)) {
+      throw Errors.validation(`الفرع "${branchCode}" غير موجود في قائمة الفروع.`);
+    }
+
+    // فاضية = يتولّد. المولّدة أقوى من اللي بتتكتب على السريع،
+    // وبتترجع في الملخّص عشان تسلّمها.
+    const password = String(u.password ?? '').trim() || generatePassword();
+    if (password.length < 12) {
+      throw Errors.validation(`كلمة مرور "${username}" 12 حرفًا على الأقل.`);
+    }
+    if (password.length > 1024) throw Errors.validation('كلمة المرور أطول من الحد المسموح.');
+
+    return { username, fullName, password, role: u.role, branchCode };
+  });
+
+  const ownerPassword = String(input.ownerPassword ?? '').trim() || generatePassword();
+  if (ownerPassword.length < 12) {
+    throw Errors.validation('كلمة مرور المالك 12 حرفًا على الأقل.');
+  }
+  if (ownerPassword.length > 1024) throw Errors.validation('كلمة المرور أطول من الحد المسموح.');
+
   const existing = await deps.tenants.findByCode(code);
   if (existing) throw Errors.validation('كود المحل ده مستخدم بالفعل.');
 
-  const ownerPasswordHash = await deps.hasher.hash(input.ownerPassword);
+  // ─── التجزئة ───
+  // كل الهاشات على التوازي: كل واحد بيلف مية ألف لفة عن قصد،
+  // فالتسلسل هيخلّي عشر حسابات تاخد وقت ملحوظ قدّامك.
+  const [ownerPasswordHash, ...userHashes] = await Promise.all([
+    deps.hasher.hash(ownerPassword),
+    ...prepared.map((u) => deps.hasher.hash(u.password)),
+  ]);
 
   const created = await deps.tenants.create({
     code,
@@ -135,8 +264,14 @@ export async function createTenant(
     ownerUsername,
     ownerFullName,
     ownerPasswordHash,
-    branchCode,
-    branchName,
+    branches,
+    users: prepared.map((u, i) => ({
+      username: u.username,
+      fullName: u.fullName,
+      passwordHash: userHashes[i],
+      role: u.role,
+      branchCode: u.branchCode,
+    })),
   });
 
   await deps.audit.record({
@@ -146,10 +281,37 @@ export async function createTenant(
     entityId: created.tenantId,
     // ⚠ مفيش كلمة مرور ولا هاش في السجل. السجل بيتقرا بصلاحية
     // تانية، وما ينفعش يبقى نسخة تانية من الأسرار.
-    metadata: { code, name, maxBranches, ownerUsername, branchCode },
+    metadata: {
+      code,
+      name,
+      maxBranches,
+      branchCount: created.branchCount,
+      userCount: created.userCount,
+      ownerUsername,
+    },
   });
 
-  return { tenantId: created.tenantId, code };
+  return {
+    tenantId: created.tenantId,
+    code,
+    branchCount: created.branchCount,
+    accounts: [
+      {
+        username: ownerUsername,
+        fullName: ownerFullName,
+        role: 'SUPER_ADMIN',
+        branchCode: null,
+        password: ownerPassword,
+      },
+      ...prepared.map((u) => ({
+        username: u.username,
+        fullName: u.fullName,
+        role: u.role,
+        branchCode: u.branchCode,
+        password: u.password,
+      })),
+    ],
+  };
 }
 
 // ─────────── إيقاف وتفعيل ───────────
