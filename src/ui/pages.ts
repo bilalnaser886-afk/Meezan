@@ -454,7 +454,10 @@ ${raw(receiptEdge())}
       <label class="field-label" for="tenant">كود المحل</label>
       <input class="field-input" id="tenant" type="text" dir="ltr" autocomplete="organization"
         autocapitalize="characters" spellcheck="false" maxlength="32" required autofocus>
-      <p class="field-hint">الكود الذي زوّدتك به الإدارة عند تفعيل الاشتراك.</p>
+      <p class="field-hint">
+        كود <b>المحل</b> الذي زوّدتك به الإدارة — وليس كود الفرع.
+        هو نفسه لكل فروع المحل وكل موظّفيه.
+      </p>
     </div>
     <div class="field">
       <label class="field-label" for="username">اسم المستخدم</label>
