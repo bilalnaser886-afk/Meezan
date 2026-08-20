@@ -215,7 +215,13 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
     },
 
     async updatePasswordHash(userId, hash) {
-      await db.from('users').update({ password_hash: hash }).eq('id', userId);
+      // ⚠ بنمسح علم "لازم تغيّر كلمة المرور" مع الهاش في نفس
+      // التحديث. لو سيبناه، المستخدم يغيّر كلمته والنظام يفضل
+      // شايفه كأنه ما غيّرش.
+      await db
+        .from('users')
+        .update({ password_hash: hash, must_change_password: false })
+        .eq('id', userId);
     },
 
     async create(data) {
@@ -519,8 +525,14 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
         p_owner_username: data.ownerUsername,
         p_owner_full_name: data.ownerFullName,
         p_owner_password_hash: data.ownerPasswordHash,
-        p_branch_code: data.branchCode,
-        p_branch_name: data.branchName,
+        p_branches: data.branches.map((b) => ({ code: b.code, name: b.name })),
+        p_users: data.users.map((u) => ({
+          username: u.username,
+          full_name: u.fullName,
+          password_hash: u.passwordHash,
+          role: u.role,
+          branch_code: u.branchCode,
+        })),
       });
 
       if (error) {
@@ -537,7 +549,8 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
       return {
         tenantId: String(row.tenant_id),
         ownerId: String(row.owner_id),
-        branchId: String(row.branch_id),
+        branchCount: Number(row.branch_count),
+        userCount: Number(row.user_count),
       };
     },
 
