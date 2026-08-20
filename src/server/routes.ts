@@ -14,6 +14,7 @@ import type { Context } from 'hono';
 import {
   checkSession,
   lockSession,
+  changeOwnPassword,
   login,
   logout,
   refreshSession,
@@ -233,6 +234,28 @@ authRoutes.post('/unlock', async (c) => {
     ok: true,
     user: { id: result.user.id, fullName: result.user.fullName, roleKey: result.user.roleKey },
   });
+});
+
+
+/** تغيير كلمة المرور — المستخدم لنفسه */
+authRoutes.post('/password', requireAuth(), async (c) => {
+  const body = await readJson<{ currentPassword?: string; newPassword?: string }>(c);
+
+  if (!body.currentPassword) throw Errors.validation('اكتب كلمة المرور الحالية.');
+  if (!body.newPassword) throw Errors.validation('اكتب كلمة المرور الجديدة.');
+
+  const container = buildContainer(c.env);
+  await changeOwnPassword(
+    container.auth,
+    c.get('user'),
+    body.currentPassword,
+    body.newPassword,
+  );
+
+  // كل الجلسات اتقفلت — الكوكيز بقت بلا قيمة، فبنمسحها
+  clearAuthCookies(c);
+
+  return c.json({ ok: true, message: 'تم تغيير كلمة المرور. سجّل الدخول من جديد.' });
 });
 
 
@@ -1036,8 +1059,14 @@ interface TenantBody {
   ownerUsername?: string;
   ownerFullName?: string;
   ownerPassword?: string;
-  branchCode?: string;
-  branchName?: string;
+  branches?: Array<{ code?: string; name?: string }>;
+  users?: Array<{
+    username?: string;
+    fullName?: string;
+    password?: string;
+    role?: string;
+    branchCode?: string;
+  }>;
 }
 
 platformRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }), async (c) => {
@@ -1051,11 +1080,33 @@ platformRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }
     ownerUsername: body.ownerUsername ?? '',
     ownerFullName: body.ownerFullName ?? '',
     ownerPassword: body.ownerPassword ?? '',
-    branchCode: body.branchCode ?? '',
-    branchName: body.branchName ?? '',
+    branches: (body.branches ?? []).map((b) => ({
+      code: String(b?.code ?? ''),
+      name: String(b?.name ?? ''),
+    })),
+    users: (body.users ?? []).map((u) => ({
+      username: String(u?.username ?? ''),
+      fullName: String(u?.fullName ?? ''),
+      password: String(u?.password ?? ''),
+      role: (u?.role === 'BRANCH_MANAGER' ? 'BRANCH_MANAGER' : 'STAFF') as
+        | 'BRANCH_MANAGER'
+        | 'STAFF',
+      branchCode: String(u?.branchCode ?? ''),
+    })),
   });
 
-  return c.json({ ok: true, tenantId: created.tenantId, code: created.code }, 201);
+  // ⚠ كلمات المرور بترجع في الرد **مرة واحدة** عشان الملخّص.
+  // مفيش مكان تاني في النظام بيرجّع كلمة مرور نصّ صريح.
+  return c.json(
+    {
+      ok: true,
+      tenantId: created.tenantId,
+      code: created.code,
+      branchCount: created.branchCount,
+      accounts: created.accounts,
+    },
+    201,
+  );
 });
 
 platformRoutes.post(
