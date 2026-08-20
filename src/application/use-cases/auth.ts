@@ -575,6 +575,60 @@ async function enforceIdlePolicy(
 const DUMMY_HASH =
   'pbkdf2-sha256$100000$ZHVtbXlzYWx0MTIzNDU2$0mL3xQ9vK2nR7tY4wZ8aB5cD1eF6gH0iJ3kL9mN2oPQ';
 
+/**
+ * تغيير كلمة المرور — المستخدم لنفسه.
+ *
+ * ══ ليه بنطلب الكلمة القديمة؟ ══
+ * الجلسة مفتوحة 30 يوم. لو حد لقى الموبايل مفتوح، من غير الفحص
+ * ده كان هيقدر يغيّر الكلمة ويقفل صاحبها بره حسابه.
+ *
+ * ══ وليه كل الجلسات بتتقفل بعد التغيير؟ ══
+ * تغيير كلمة المرور معناه غالبًا إن حد تاني عرفها. لو سبنا الجلسات
+ * القديمة شغّالة، اللي عرفها يفضل داخل بجلسته المفتوحة والتغيير
+ * ما نفعش في حاجة.
+ *
+ * وده يشمل جلستك إنت — فبتسجّل دخول تاني بالكلمة الجديدة. الخطوة
+ * الزيادة دي هي الدليل إن التغيير اشتغل فعلاً.
+ */
+export async function changeOwnPassword(
+  deps: AuthDeps,
+  actor: AuthenticatedUser,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const { users, sessions, hasher, clock, audit } = deps;
+  const now = clock.now();
+
+  const user = await users.findById(actor.id);
+  if (!user || !user.isActive || user.deletedAt) throw Errors.sessionExpired();
+
+  const ok = await hasher.verify(user.passwordHash, currentPassword);
+  if (!ok) {
+    await audit.record({
+      actorId: actor.id,
+      action: 'auth.password.change_failed',
+      metadata: { reason: 'bad current password' },
+    });
+    throw Errors.validation('كلمة المرور الحالية غير صحيحة.');
+  }
+
+  if (newPassword.length < 12) throw Errors.validation('كلمة المرور الجديدة 12 حرفًا على الأقل.');
+  if (newPassword.length > 1024) throw Errors.validation('كلمة المرور أطول من الحد المسموح.');
+  if (newPassword === currentPassword) {
+    throw Errors.validation('كلمة المرور الجديدة يجب أن تختلف عن الحالية.');
+  }
+
+  await users.updatePasswordHash(user.id, await hasher.hash(newPassword));
+  await sessions.revokeAllForUser(user.id, 'password_changed', now);
+
+  await audit.record({
+    actorId: actor.id,
+    action: 'auth.password.changed',
+    entity: 'User',
+    entityId: actor.id,
+  });
+}
+
 async function handleFailedAttempt(
   deps: AuthDeps,
   user: UserRecord,
