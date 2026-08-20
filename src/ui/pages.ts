@@ -37,6 +37,17 @@ import { formatPiastres } from '../domain/money';
 const IDLE_SHARED_JS = `
 (function () {
   var IDLE = __IDLE__, WARN = __WARN__, ACTION = '__ACTION__';
+
+  // ⚠ صفر معناه "ما تقفلش أبدًا" — مش "اقفل حالًا".
+  //
+  // من غير السطر ده، الحسبة تحت بتبقى:
+  //     المتبقّي = 0 − الوقت المنقضي   ←  سالب من أول ثانية
+  // فالشاشة بتتقفل فورًا، وكل ما تفتحها تتقفل تاني بعد ثانيتين.
+  //
+  // الخروج المبكر أوضح من إني أحط شرط جوّه العدّاد: الآلية كلها
+  // ما بتشتغلش أصلاً، مش بتشتغل وتتجاهل نفسها كل ثانية.
+  if (!IDLE || IDLE <= 0) return;
+
   var lastActivity = Date.now();
   var locked = false;
   var lockRoot = document.getElementById('lock-root');
