@@ -230,16 +230,32 @@ export interface TenantOverview extends TenantRecord {
   ownerName: string | null;
 }
 
+export interface TenantBranchInput {
+  code: string;
+  name: string;
+}
+
+export interface TenantUserInput {
+  username: string;
+  fullName: string;
+  /** الهاش بيوصل جاهز — المستودع ما بيعرفش حاجة عن كلمات المرور */
+  passwordHash: string;
+  role: 'BRANCH_MANAGER' | 'STAFF';
+  /** كود الفرع جوّه نفس المحل — بيتحوّل لمعرّف في قاعدة البيانات */
+  branchCode: string;
+}
+
 export interface CreateTenantInput {
   code: string;
   name: string;
   maxBranches: number;
   ownerUsername: string;
   ownerFullName: string;
-  /** الهاش بيوصل جاهز — المستودع ما بيعرفش حاجة عن كلمات المرور */
   ownerPasswordHash: string;
-  branchCode: string;
-  branchName: string;
+  /** فرع واحد على الأقل. كل فرع بياخد خزينة كاش تلقائيًا. */
+  branches: TenantBranchInput[];
+  /** ممكن تبقى فاضية — صاحب المحل يقدر يضيف بعدين */
+  users: TenantUserInput[];
 }
 
 export interface TenantRepository {
@@ -251,8 +267,16 @@ export interface TenantRepository {
    * الاشتراك، مش بيتفرّج على الشغل.
    */
   listOverview(): Promise<TenantOverview[]>;
-  /** بتنشئ المحل وأول فرع وحساب المالك وأسباب الصرف والخزينة معًا */
-  create(data: CreateTenantInput): Promise<{ tenantId: string; ownerId: string; branchId: string }>;
+  /**
+   * بتنشئ المحل وفروعه وحساباته وأسباب الصرف وخزائنه — كله معًا.
+   * يا الكل يتعمل يا مفيش حاجة تتعمل.
+   */
+  create(data: CreateTenantInput): Promise<{
+    tenantId: string;
+    ownerId: string;
+    branchCount: number;
+    userCount: number;
+  }>;
   setActive(id: string, isActive: boolean): Promise<void>;
   setMaxBranches(id: string, maxBranches: number): Promise<void>;
   platformAdminExists(): Promise<boolean>;
