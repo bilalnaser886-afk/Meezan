@@ -46,6 +46,7 @@ import {
   lockedPage,
   loginPage,
   customersPage,
+  passwordPage,
   platformPage,
   platformSetupPage,
   posPage,
@@ -423,6 +424,26 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * تغيير كلمة المرور — متاح لكل من دخل، أيًا كان دوره.
+ *
+ * ⚠ مفيش فحص صلاحية هنا عن قصد: تغيير كلمة مرورك حق مش امتياز.
+ * الحراسة الوحيدة إنك مسجّل دخول، والفحص الحقيقي (كلمة المرور
+ * الحالية) في حالة الاستخدام.
+ */
+app.get('/password', requireAuth({ redirectOnFail: true }), (c) => {
+  const user = c.get('user');
+  return c.html(
+    passwordPage({
+      fullName: user.fullName,
+      username: user.username,
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      branchLabel: null,
     }),
   );
 });
