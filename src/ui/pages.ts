@@ -318,6 +318,7 @@ function appBar(opts: {
           : ''}
       </div>
       <a class="menu-item" href="/customers">بيانات العملاء</a>
+      <a class="menu-item" href="/password">تغيير كلمة المرور</a>
       <button class="menu-item" type="button" data-action="lock">قفل الشاشة</button>
       <button class="menu-item" type="button" data-action="logout" data-danger>تسجيل الخروج</button>
     </div>
@@ -3420,6 +3421,7 @@ export function platformPage(data: PlatformPageData): Html {
   <div class="menu-sheet" id="menu-sheet" hidden>
     <div class="menu-panel" role="menu">
       <div class="menu-row"><span>الحساب</span><b>${data.username}</b></div>
+      <a class="menu-item" href="/password">تغيير كلمة المرور</a>
       <button class="menu-item" type="button" data-action="logout">تسجيل الخروج</button>
     </div>
   </div>
@@ -3440,13 +3442,26 @@ export function platformPage(data: PlatformPageData): Html {
     <div class="panel-body">
       <div class="alert-box" id="tadd-msg" role="alert" hidden><span id="tadd-text"></span></div>
 
+      <!-- ⚠ ملخّص التسليم. بيفضل ظاهر لحد ما تقفله بإيدك —
+           مفيش إعادة تحميل تلقائي، لأن اللي جوّاه ما بيترجّعش تاني. -->
+      <div class="handover" id="handover" hidden>
+        <p class="handover-title">بيانات التسليم — تظهر مرة واحدة</p>
+        <p class="handover-note">
+          انسخها الآن. لن تظهر مرة أخرى، والطريقة الوحيدة لاستعادتها
+          هي تغييرها من داخل حساب صاحب المحل.
+        </p>
+        <div id="handover-body"></div>
+        <button class="btn-mini" type="button" id="handover-done">نسختها — إغلاق</button>
+      </div>
+
       <form id="tf" novalidate>
         <div class="field">
           <label class="field-label" for="t-code">كود المحل</label>
           <input class="field-input" id="t-code" type="text" dir="ltr"
             autocapitalize="characters" maxlength="16" required>
           <p class="field-hint">
-            هذا ما سيكتبه موظّفو المحل في شاشة الدخول كل يوم. اجعله قصيرًا وواضحًا.
+            هذا ما سيكتبه كل موظّفي المحل في شاشة الدخول كل يوم — بكل فروعه.
+            اجعله قصيرًا وواضحًا.
           </p>
         </div>
 
@@ -3456,41 +3471,47 @@ export function platformPage(data: PlatformPageData): Html {
         </div>
 
         <div class="field">
-          <label class="field-label" for="t-max">عدد الفروع المسموح</label>
+          <label class="field-label" for="t-max">عدد الفروع المسموح بالاشتراك</label>
           <input class="field-input" id="t-max" type="text" inputmode="numeric"
             dir="ltr" value="1" required>
         </div>
 
-        <div class="field">
-          <label class="field-label" for="t-bcode">كود أول فرع</label>
-          <input class="field-input" id="t-bcode" type="text" dir="ltr"
-            autocapitalize="characters" maxlength="16" value="MAIN" required>
+        <!-- ═══ الفروع ═══ -->
+        <div class="setup-block">
+          <div class="setup-head">
+            <span class="setup-title">الفروع</span>
+            <button class="btn-mini" type="button" id="add-branch">+ فرع</button>
+          </div>
+          <div id="branch-rows"></div>
+          <p class="field-hint">كل فرع يحصل على خزينة نقدية تلقائيًا — بدونها لا يمكن إتمام بيع.</p>
         </div>
 
-        <div class="field">
-          <label class="field-label" for="t-bname">اسم أول فرع</label>
-          <input class="field-input" id="t-bname" type="text" maxlength="80"
-            value="الفرع الرئيسي" required>
-        </div>
+        <!-- ═══ الحسابات ═══ -->
+        <div class="setup-block">
+          <div class="setup-head">
+            <span class="setup-title">حسابات المحل</span>
+            <button class="btn-mini" type="button" id="add-user">+ حساب</button>
+          </div>
 
-        <div class="field">
-          <label class="field-label" for="t-ouser">اسم مستخدم المالك</label>
-          <input class="field-input" id="t-ouser" type="text" dir="ltr"
-            autocapitalize="none" spellcheck="false" maxlength="32" required>
-        </div>
+          <div class="field">
+            <label class="field-label" for="t-ouser">اسم مستخدم صاحب المحل</label>
+            <input class="field-input" id="t-ouser" type="text" dir="ltr"
+              autocapitalize="none" spellcheck="false" maxlength="32" required>
+          </div>
 
-        <div class="field">
-          <label class="field-label" for="t-oname">اسم المالك الكامل</label>
-          <input class="field-input" id="t-oname" type="text" maxlength="80" required>
-        </div>
+          <div class="field">
+            <label class="field-label" for="t-oname">اسم صاحب المحل الكامل</label>
+            <input class="field-input" id="t-oname" type="text" maxlength="80" required>
+          </div>
 
-        <div class="field">
-          <label class="field-label" for="t-opass">كلمة مرور المالك</label>
-          <input class="field-input" id="t-opass" type="text" dir="ltr"
-            autocomplete="off" maxlength="1024" required>
-          <p class="field-hint">
-            12 حرفًا على الأقل. سلّمها للمالك بنفسك — لن تظهر مرة أخرى بعد الحفظ.
-          </p>
+          <div class="field">
+            <label class="field-label" for="t-opass">كلمة مروره (اختياري)</label>
+            <input class="field-input" id="t-opass" type="text" dir="ltr"
+              autocomplete="off" maxlength="1024">
+            <p class="field-hint">اتركها فارغة ليولّدها النظام. تظهر مرة واحدة بعد الفتح.</p>
+          </div>
+
+          <div id="user-rows"></div>
         </div>
 
         <button class="btn-primary" id="tbtn" type="submit">فتح المحل</button>
@@ -3609,6 +3630,221 @@ ${MENU_JS}
     }
   });
 
+  // ── صفوف الفروع والحسابات ──
+  //
+  // ⚠ الصفوف بتتبني بـ createElement مش innerHTML.
+  // السبب مش تجميلي: أسماء الفروع بتتكتب بإيد المستخدم، ولو
+  // ركّبناها كنص HTML، اسم فيه قوس أو علامة بيكسر الصفحة —
+  // وفي أسوأ حالة بيحقن كود.
+  var branchRows = document.getElementById('branch-rows');
+  var userRows = document.getElementById('user-rows');
+  var branchSeq = 0;
+
+  function field(labelText, el, hint) {
+    var wrap = document.createElement('div');
+    wrap.className = 'field';
+
+    var lb = document.createElement('label');
+    lb.className = 'field-label';
+    lb.textContent = labelText;
+
+    wrap.appendChild(lb);
+    wrap.appendChild(el);
+
+    if (hint) {
+      var h = document.createElement('p');
+      h.className = 'field-hint';
+      h.textContent = hint;
+      wrap.appendChild(h);
+    }
+    return wrap;
+  }
+
+  function input(placeholder, ltr) {
+    var el = document.createElement('input');
+    el.className = 'field-input';
+    el.type = 'text';
+    if (ltr) { el.dir = 'ltr'; el.setAttribute('autocapitalize', 'none'); }
+    if (placeholder) el.placeholder = placeholder;
+    return el;
+  }
+
+  function removeBtn(row) {
+    var b = document.createElement('button');
+    b.className = 'btn-mini';
+    b.type = 'button';
+    b.setAttribute('data-danger', 'true');
+    b.textContent = 'حذف';
+    b.addEventListener('click', function () {
+      row.remove();
+      syncBranchOptions();
+    });
+    return b;
+  }
+
+  function addBranch(code, name) {
+    branchSeq++;
+    var row = document.createElement('div');
+    row.className = 'setup-row';
+    row.setAttribute('data-branch-row', '1');
+
+    var codeEl = input('MAIN', true);
+    codeEl.className += ' b-code';
+    codeEl.maxLength = 16;
+    codeEl.value = code || '';
+    codeEl.addEventListener('input', syncBranchOptions);
+
+    var nameEl = input('الفرع الرئيسي', false);
+    nameEl.className += ' b-name';
+    nameEl.maxLength = 80;
+    nameEl.value = name || '';
+
+    row.appendChild(field('كود الفرع', codeEl));
+    row.appendChild(field('اسم الفرع', nameEl));
+
+    // أول فرع ما بيتحذفش: المحل لازم يكون له فرع واحد على الأقل
+    if (branchRows.children.length > 0) row.appendChild(removeBtn(row));
+
+    branchRows.appendChild(row);
+    syncBranchOptions();
+  }
+
+  function branchCodes() {
+    var out = [];
+    var els = branchRows.querySelectorAll('.b-code');
+    for (var i = 0; i < els.length; i++) {
+      var v = els[i].value.trim().toUpperCase();
+      if (v) out.push(v);
+    }
+    return out;
+  }
+
+  // قوائم الفروع في الحسابات بتتحدّث مع كل تعديل في أكواد الفروع،
+  // عشان ما تختارش فرع اتغيّر كوده بعد ما اخترته
+  function syncBranchOptions() {
+    var codes = branchCodes();
+    var selects = userRows.querySelectorAll('.u-branch');
+
+    for (var i = 0; i < selects.length; i++) {
+      var sel = selects[i];
+      var current = sel.value;
+      sel.innerHTML = '';
+
+      for (var j = 0; j < codes.length; j++) {
+        var opt = document.createElement('option');
+        opt.value = codes[j];
+        opt.textContent = codes[j];
+        sel.appendChild(opt);
+      }
+      if (codes.indexOf(current) !== -1) sel.value = current;
+    }
+  }
+
+  function addUser() {
+    if (branchCodes().length === 0) {
+      say('أضف فرعًا أولًا — كل حساب لازم يكون تابعًا لفرع.', false);
+      return;
+    }
+
+    var row = document.createElement('div');
+    row.className = 'setup-row';
+    row.setAttribute('data-user-row', '1');
+
+    var userEl = input('', true);
+    userEl.className += ' u-user';
+    userEl.maxLength = 32;
+
+    var nameEl = input('', false);
+    nameEl.className += ' u-name';
+    nameEl.maxLength = 80;
+
+    var roleEl = document.createElement('select');
+    roleEl.className = 'field-input u-role';
+    var roles = [['STAFF', 'مندوب مبيعات'], ['BRANCH_MANAGER', 'مدير فرع']];
+    for (var i = 0; i < roles.length; i++) {
+      var o = document.createElement('option');
+      o.value = roles[i][0];
+      o.textContent = roles[i][1];
+      roleEl.appendChild(o);
+    }
+
+    var branchEl = document.createElement('select');
+    branchEl.className = 'field-input u-branch';
+
+    var passEl = input('', true);
+    passEl.className += ' u-pass';
+    passEl.maxLength = 1024;
+
+    row.appendChild(field('اسم المستخدم', userEl));
+    row.appendChild(field('الاسم الكامل', nameEl));
+    row.appendChild(field('الدور', roleEl));
+    row.appendChild(field('الفرع', branchEl));
+    row.appendChild(field('كلمة المرور (اختياري)', passEl, 'اتركها فارغة ليولّدها النظام.'));
+    row.appendChild(removeBtn(row));
+
+    userRows.appendChild(row);
+    syncBranchOptions();
+  }
+
+  document.getElementById('add-branch').addEventListener('click', function () { addBranch(); });
+  document.getElementById('add-user').addEventListener('click', addUser);
+
+  // فرع افتراضي واحد جاهز — أغلب المحلات بتبدأ بفرع واحد
+  addBranch('MAIN', 'الفرع الرئيسي');
+
+  // ── ملخّص التسليم ──
+  var ROLE_AR = {
+    SUPER_ADMIN: 'صاحب المحل',
+    BRANCH_MANAGER: 'مدير فرع',
+    STAFF: 'مندوب مبيعات'
+  };
+
+  function showHandover(shopCode, accounts) {
+    var wrap = document.getElementById('handover');
+    var body = document.getElementById('handover-body');
+    body.innerHTML = '';
+
+    var head = document.createElement('div');
+    head.className = 'handover-row';
+    var hl = document.createElement('span');
+    hl.className = 'handover-label';
+    hl.textContent = 'كود المحل';
+    var hv = document.createElement('b');
+    hv.className = 'handover-value';
+    hv.textContent = shopCode;
+    head.appendChild(hl);
+    head.appendChild(hv);
+    body.appendChild(head);
+
+    for (var i = 0; i < accounts.length; i++) {
+      var a = accounts[i];
+
+      var card = document.createElement('div');
+      card.className = 'handover-card';
+
+      var who = document.createElement('div');
+      who.className = 'handover-who';
+      who.textContent = a.fullName + ' — ' + (ROLE_AR[a.role] || a.role) +
+        (a.branchCode ? ' · ' + a.branchCode : '');
+
+      var creds = document.createElement('div');
+      creds.className = 'handover-creds';
+      creds.textContent = a.username + '   ' + a.password;
+
+      card.appendChild(who);
+      card.appendChild(creds);
+      body.appendChild(card);
+    }
+
+    wrap.hidden = false;
+    wrap.scrollIntoView({ block: 'start' });
+  }
+
+  document.getElementById('handover-done').addEventListener('click', function () {
+    if (!confirm('إغلاق بيانات التسليم؟ لن تظهر مرة أخرى.')) return;
+    window.location.reload();
+  });
+
   // ── فتح محل ──
   var form = document.getElementById('tf');
   if (form) {
@@ -3618,8 +3854,29 @@ ${MENU_JS}
       var msg = document.getElementById('tadd-msg');
       var msgText = document.getElementById('tadd-text');
 
+      var branches = [];
+      var brows = branchRows.querySelectorAll('[data-branch-row]');
+      for (var i = 0; i < brows.length; i++) {
+        branches.push({
+          code: brows[i].querySelector('.b-code').value,
+          name: brows[i].querySelector('.b-name').value
+        });
+      }
+
+      var users = [];
+      var urows = userRows.querySelectorAll('[data-user-row]');
+      for (var k = 0; k < urows.length; k++) {
+        users.push({
+          username: urows[k].querySelector('.u-user').value,
+          fullName: urows[k].querySelector('.u-name').value,
+          role: urows[k].querySelector('.u-role').value,
+          branchCode: urows[k].querySelector('.u-branch').value,
+          password: urows[k].querySelector('.u-pass').value
+        });
+      }
+
       btn.disabled = true;
-      btn.textContent = 'جارٍ الفتح…';
+      btn.textContent = 'جارٍ التجهيز…';
 
       try {
         var res = await fetch('/api/platform', {
@@ -3630,26 +3887,25 @@ ${MENU_JS}
             code: document.getElementById('t-code').value,
             name: document.getElementById('t-name').value,
             maxBranches: document.getElementById('t-max').value,
-            branchCode: document.getElementById('t-bcode').value,
-            branchName: document.getElementById('t-bname').value,
             ownerUsername: document.getElementById('t-ouser').value,
             ownerFullName: document.getElementById('t-oname').value,
-            ownerPassword: document.getElementById('t-opass').value
+            ownerPassword: document.getElementById('t-opass').value,
+            branches: branches,
+            users: users
           })
         });
         var data = await res.json().catch(function () { return null; });
 
-        msg.hidden = false;
         if (res.ok) {
-          msg.setAttribute('data-tone', 'ok');
-          msgText.textContent =
-            'تم فتح المحل. كود الدخول: ' + (data && data.code) + ' — سلّمه للمالك مع كلمة المرور.';
-          // ⚠ تأخير أطول هنا عن باقي الشاشات عن قصد: الكود وكلمة
-          // المرور لازم يتقروا قبل ما الصفحة تتحدّث وتمسحهم.
-          setTimeout(function () { window.location.reload(); }, 6000);
+          msg.hidden = true;
+          // ⚠ مفيش إعادة تحميل هنا. الملخّص فيه كلمات مرور
+          // ما بترجعش تاني، والتحديث التلقائي كان هيمسحها قبل
+          // ما تنسخها.
+          showHandover(data.code, data.accounts || []);
           return;
         }
 
+        msg.hidden = false;
         msg.removeAttribute('data-tone');
         msgText.textContent = (data && data.error && data.error.message) || 'فشل الفتح.';
       } catch (err) {
@@ -3781,6 +4037,139 @@ const PLATFORM_SETUP_SCRIPT = `
     } finally {
       btn.disabled = false;
       btn.textContent = 'تأسيس الحساب';
+    }
+  });
+})();
+`;
+
+
+// ═══════════════════ 10) تغيير كلمة المرور ═══════════════════
+
+/**
+ * شاشة تغيير كلمة المرور.
+ *
+ * ══ ليه صفحة مستقلة مش نافذة داخل الشاشة؟ ══
+ * الرابط في قائمة التلات نقط، والقائمة دي مشتركة بين كل الشاشات.
+ * الصفحة المستقلة معناها كود واحد بيخدم الأربعة — مش أربع نسخ
+ * من نفس النموذج تتصلّح كل واحدة لوحدها.
+ */
+export function passwordPage(data: {
+  fullName: string;
+  username: string;
+  tenantName: string;
+  roleKey: string;
+  branchLabel: string | null;
+}): Html {
+  return shell({
+    title: 'تغيير كلمة المرور',
+    noIndex: true,
+    script: PASSWORD_SCRIPT,
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="pwmsg" role="alert" hidden><span id="pwmsg-text"></span></div>
+
+  <details class="panel" open>
+    <summary>تغيير كلمة المرور</summary>
+    <div class="panel-body">
+      <form id="pwf" novalidate>
+        <div class="field">
+          <label class="field-label" for="cur">كلمة المرور الحالية</label>
+          <input class="field-input" id="cur" type="password" dir="ltr"
+            autocomplete="current-password" maxlength="1024" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="new1">كلمة المرور الجديدة</label>
+          <input class="field-input" id="new1" type="password" dir="ltr"
+            autocomplete="new-password" maxlength="1024" required>
+          <p class="field-hint">12 حرفًا على الأقل.</p>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="new2">تأكيد كلمة المرور الجديدة</label>
+          <input class="field-input" id="new2" type="password" dir="ltr"
+            autocomplete="new-password" maxlength="1024" required>
+        </div>
+
+        <div class="alert-box">
+          <span>
+            بعد التغيير تُغلق كل الجلسات — على هذا الجهاز وغيره —
+            وتسجّل الدخول من جديد بكلمتك الجديدة.
+          </span>
+        </div>
+
+        <button class="btn-primary" id="pwbtn" type="submit">حفظ كلمة المرور</button>
+      </form>
+    </div>
+  </details>
+</main>
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+const PASSWORD_SCRIPT = `
+${MENU_JS}
+
+(function () {
+  var form = document.getElementById('pwf');
+  var btn = document.getElementById('pwbtn');
+  var box = document.getElementById('pwmsg');
+  var text = document.getElementById('pwmsg-text');
+
+  function say(message, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    text.textContent = message;
+    box.scrollIntoView({ block: 'nearest' });
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+
+    var cur = document.getElementById('cur').value;
+    var n1 = document.getElementById('new1').value;
+    var n2 = document.getElementById('new2').value;
+
+    // التطابق بيتفحص هنا قبل أي رحلة شبكة — غلطة كتابة ما تستاهلش
+    // تروح للخادم وترجع
+    if (n1 !== n2) { say('كلمتا المرور الجديدتان غير متطابقتين.', false); return; }
+    if (n1.length < 12) { say('كلمة المرور الجديدة 12 حرفًا على الأقل.', false); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'جارٍ الحفظ…';
+
+    try {
+      var res = await fetch('/api/auth/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ currentPassword: cur, newPassword: n1 })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      if (res.ok) {
+        say('تم تغيير كلمة المرور. جارٍ نقلك لتسجيل الدخول…', true);
+        form.reset();
+        setTimeout(function () { window.location.href = '/login'; }, 1800);
+        return;
+      }
+
+      say((data && data.error && data.error.message) || 'تعذّر تغيير كلمة المرور.', false);
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'حفظ كلمة المرور';
     }
   });
 })();
