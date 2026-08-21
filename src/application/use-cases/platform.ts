@@ -29,6 +29,7 @@ import type {
   AuthenticatedUser,
   Clock,
   PasswordHasher,
+  TenantCensus,
   TenantOverview,
   TenantRepository,
 } from '../ports';
@@ -385,6 +386,111 @@ export async function setTenantBranchLimit(
     entityId: tenantId,
     metadata: { code: tenant.code, from: tenant.maxBranches, to: limit },
   });
+}
+
+// ─────────── الجرد والمحو النهائي ───────────
+
+/**
+ * جرد المحل — بيتنادى قبل ما شاشة التأكيد تظهر.
+ *
+ * ⚠ ده الاستثناء الوحيد اللي بيشوف فيه مشغّل المنصّة رقم مالي.
+ * وبيشوفه في لحظة واحدة بس: قبل ما يمسح.
+ *
+ * والاستثناء ده مقصود ومحدود: مش تقرير ولا قائمة، رقم إجمالي
+ * واحد بيقول "المحل ده فيه شغل حقيقي ولا فاضي". من غيره، المحو
+ * بيبقى دوسة في الضلمة — ومحل تجربة ومحل زبون بيبانوا زي بعض.
+ */
+export async function getTenantCensus(
+  deps: PlatformDeps,
+  actor: AuthenticatedUser,
+  tenantId: string,
+): Promise<TenantCensus> {
+  assertPlatform(actor, PERMISSIONS.TENANT_MANAGE);
+
+  const census = await deps.tenants.census(tenantId);
+  if (!census) throw Errors.notFound('المحل');
+  return census;
+}
+
+export interface PurgeTenantRequest {
+  /** كود المحل مكتوب بإيد المستخدم — لازم يطابق */
+  confirmCode: string;
+}
+
+export interface PurgeTenantResult {
+  code: string;
+  name: string;
+  deletedUsers: number;
+  deletedSales: number;
+}
+
+/**
+ * محو المحل نهائيًا.
+ *
+ * ══ ⚠ مفيش تراجع ══
+ * مفيش سلّة مهملات ولا نسخة احتياطية جوّه النظام.
+ *
+ * ══ الأقفال الأربعة ══
+ *   1) مشغّل المنصّة بس        ← هنا
+ *   2) المحل لازم يكون موقوف   ← جوّه دالة القاعدة
+ *   3) مفيش مشغّل منصّة جوّاه   ← جوّه دالة القاعدة
+ *   4) تكتب الكود بإيدك        ← هنا
+ *
+ * ══ ليه القفل الرابع هنا مش في الواجهة؟ ══
+ * الواجهة ممكن تتخطّى بطلب من المتصفح مباشرةً. المقارنة لازم
+ * تحصل في الخادم وإلا تبقى لافتة مش قفل.
+ *
+ * ══ ليه كتابة الكود مش "متأكد؟ أيوه"؟ ══
+ * زرار "أيوه" بيتضغط بالعضلة مش بالعقل — إنت ضغطته ألف مرة
+ * قبل كده على حاجات مش خطيرة. كتابة الكود بتجبرك تبصّ على
+ * الصف اللي إنت واقف عليه فعلاً وتقراه.
+ *
+ * تشبيه: فرق بين ما تمضي على ورقة وبين ما تكتب المبلغ بالحروف.
+ * التانية بتخلّيك تقراه.
+ */
+export async function purgeTenant(
+  deps: PlatformDeps,
+  actor: AuthenticatedUser,
+  tenantId: string,
+  input: PurgeTenantRequest,
+): Promise<PurgeTenantResult> {
+  assertPlatform(actor, PERMISSIONS.TENANT_MANAGE);
+
+  const tenant = await deps.tenants.findById(tenantId);
+  if (!tenant) throw Errors.notFound('المحل');
+
+  const typed = String(input.confirmCode ?? '').trim().toUpperCase();
+  if (!typed) throw Errors.validation('اكتب كود المحل للتأكيد.');
+  if (typed !== tenant.code.toUpperCase()) {
+    throw Errors.validation(`الكود مش مطابق. اكتب "${tenant.code}" بالظبط.`);
+  }
+
+  // ⚠ الجرد بيتاخد **قبل** المحو عشان يتسجّل في الملخّص. بعد
+  // المحو مفيش حاجة نعدّها — والرقم اللي بيتقال بعد كده بيبقى
+  // بلا مصدر.
+  const census = await deps.tenants.census(tenantId);
+
+  const result = await deps.tenants.purge(tenantId, actor.id);
+
+  // ⚠ الشاهد الأساسي بيتكتب **جوّه المعاملة** في قاعدة البيانات،
+  // مش هنا. السطر ده إضافي: لو الشبكة قطعت بعد المحو، السجل
+  // اللي في القاعدة يكون اتكتب فعلاً. الاتنين مش تكرار — واحد
+  // مضمون مع المسح والتاني بيشيل تفاصيل الجلسة.
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'tenant.purge.confirmed',
+    entity: 'Tenant',
+    entityId: tenantId,
+    metadata: {
+      code: result.code,
+      name: result.name,
+      deletedUsers: result.deletedUsers,
+      deletedSales: result.deletedSales,
+      salesTotalPiastres: census?.salesTotalPiastres ?? null,
+    },
+  });
+
+  return result;
 }
 
 // ─────────── التأسيس لمرّة واحدة ───────────
