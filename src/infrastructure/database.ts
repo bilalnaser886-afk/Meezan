@@ -599,6 +599,61 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
       if (!row) throw Errors.internal('fn_create_platform_admin: مفيش نتيجة');
       return { id: String(row.user_id) };
     },
+
+    /** جرد المحل — بيتعرض في شاشة التأكيد قبل المحو */
+    async census(id) {
+      const { data: rows, error } = await db.rpc('fn_tenant_census', { p_tenant_id: id });
+      if (error) throw Errors.internal(`fn_tenant_census: ${error.message}`);
+
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) return null;
+
+      return {
+        code: String(row.code),
+        name: String(row.name),
+        isActive: Boolean(row.is_active),
+        branchCount: Number(row.branch_count),
+        userCount: Number(row.user_count),
+        productCount: Number(row.product_count),
+        customerCount: Number(row.customer_count),
+        saleCount: Number(row.sale_count),
+        salesTotalPiastres: Number(row.sales_total_piastres),
+        movementCount: Number(row.movement_count),
+        auditCount: Number(row.audit_count),
+        hasPlatformAdmin: Boolean(row.has_platform_admin),
+      };
+    },
+
+    /**
+     * المحو النهائي.
+     *
+     * ⚠ كل الأقفال جوّه دالة قاعدة البيانات، والرسايل اللي بترجع
+     * منها عربية جاهزة للعرض (MZ400). بنعديها زي ما هي بدل ما
+     * نكتب نسخة تانية منها هنا وتختلف عنها بعد شهرين.
+     */
+    async purge(id, actorId) {
+      const { data: rows, error } = await db.rpc('fn_purge_tenant', {
+        p_tenant_id: id,
+        p_actor_id: actorId,
+      });
+
+      if (error) {
+        if (error.code === 'MZ400') throw Errors.validation(error.message);
+        if (error.code === 'MZ403') throw Errors.forbidden('purge tenant');
+        if (error.code === 'MZ404') throw Errors.notFound('المحل');
+        throw Errors.internal(`fn_purge_tenant: ${error.message}`);
+      }
+
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_purge_tenant: مفيش نتيجة');
+
+      return {
+        code: String(row.purged_code),
+        name: String(row.purged_name),
+        deletedUsers: Number(row.deleted_users),
+        deletedSales: Number(row.deleted_sales),
+      };
+    },
   };
 }
 
