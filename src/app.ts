@@ -335,7 +335,13 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
   const [products, balances, recent, branchLabel] = await Promise.all([
     listSellableProducts(container.products, user),
     listBalances(container.treasury, user),
-    listSales(container.sales, user, 10).catch(() => []),
+    // ⚠ الخطأ ما يصحّش يتبلع في صمت. لو الاستعلام فشل، القائمة
+    // بتفضل فاضية — وشكلها زي "مفيش فواتير" بالظبط. الفرق بين
+    // الاتنين بيظهر في اللوق بس، فلازم يتكتب.
+    listSales(container.sales, user, 10).catch((err) => {
+      console.error('[pos] تعذّر جلب آخر الفواتير:', err);
+      return [];
+    }),
     branchLabelFor(container, user),
   ]);
 
