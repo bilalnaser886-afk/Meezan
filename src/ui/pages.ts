@@ -1941,8 +1941,17 @@ export function posPage(data: PosPageData): Html {
     </div>
   </details>
 
-  ${data.recentSales.length > 0
+  ${data.recentSales.length === 0
     ? html`<details class="panel">
+        <summary>آخر الفواتير</summary>
+        <div class="panel-body">
+          <p class="field-hint">
+            لا توجد فواتير في نطاقك بعد. الفواتير تظهر هنا فور إتمام أول بيع،
+            ومنها يبدأ الاسترجاع.
+          </p>
+        </div>
+      </details>`
+    : html`<details class="panel">
         <summary>آخر الفواتير</summary>
         <div class="panel-body">
           ${data.recentSales.map(
@@ -2015,8 +2024,7 @@ export function posPage(data: PosPageData): Html {
             </div>`,
           )}
         </div>
-      </details>`
-    : ''}
+      </details>`}
 </main>
 
 ${tabBar('pos', {
