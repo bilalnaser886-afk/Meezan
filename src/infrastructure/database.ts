@@ -40,6 +40,7 @@ import type {
   RoleKey,
   SaleDetail,
   SaleItemLine,
+  ReturnRepository,
   SaleRepository,
   SaleSummary,
   SessionRecord,
@@ -1774,6 +1775,128 @@ export function createRateLimiter(db: SupabaseClient): RateLimiter {
 
     async reset(key) {
       await db.rpc('fn_rate_limit_reset', { p_key: key });
+    },
+  };
+}
+
+
+// ═══════════════ المرتجعات ورفّ المراجعة ═══════════════
+
+/**
+ * ترجمة أخطاء دوال المرتجع.
+ *
+ * ⚠ الرسايل بتيجي من قاعدة البيانات **عربية جاهزة** (MZ400).
+ * بنعدّيها زي ما هي بدل ما نكتب نسخة تانية هنا وتختلف عنها بعد
+ * شهرين — وساعتها المستخدم يشوف رسالتين مختلفتين لنفس السبب.
+ */
+function raiseReturnError(error: { code?: string; message?: string }, fn: string): never {
+  const message = error.message?.trim() || 'تعذّر إتمام العملية.';
+
+  switch (error.code) {
+    case 'MZ400':
+      throw Errors.validation(message);
+    case 'MZ403':
+      throw Errors.forbidden(`return scope: ${message}`);
+    case 'MZ404':
+      throw Errors.notFound('العنصر المطلوب');
+    default:
+      // 23514 = قيد في القاعدة رفض السجل (رفّ مراجعة بالسالب مثلاً)
+      if (error.code === '23514') throw Errors.validation('الكمية غير صالحة.');
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
+}
+
+export function createReturnRepository(db: SupabaseClient): ReturnRepository {
+  return {
+    async returnableLines(saleId) {
+      const { data, error } = await db.rpc('fn_sale_returnable', { p_sale_id: saleId });
+      if (error) raiseReturnError(error, 'fn_sale_returnable');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        saleItemId: String(row.sale_item_id),
+        productId: String(row.product_id),
+        productName: String(row.product_name),
+        productType: String(row.product_type),
+        serialNumber: row.serial_number ? String(row.serial_number) : null,
+        quantitySold: Number(row.quantity_sold),
+        quantityReturned: Number(row.quantity_returned),
+        quantityRemaining: Number(row.quantity_remaining),
+        unitPricePiastres: Number(row.unit_price_piastres),
+      }));
+    },
+
+    /**
+     * نداء واحد بيعمل الأربع خطوات.
+     *
+     * مفيش هنا "رجّع البضاعة" وبعدين "طلّع الفلوس" — دي كانت
+     * هتبقى رحلتين، ولو التانية فشلت تبقى البضاعة رجعت والزبون
+     * ماخدش فلوسه.
+     */
+    async create(input) {
+      const { data, error } = await db.rpc('fn_create_return', {
+        p_sale_id: input.saleId,
+        p_actor_id: input.actorId,
+        p_treasury_id: input.treasuryId,
+        p_items: input.items.map((line) => ({
+          sale_item_id: line.saleItemId,
+          quantity: line.quantity,
+          unit_refund_piastres: line.unitRefundPiastres,
+        })),
+        p_reason: input.reason,
+        p_return_date: input.returnDate,
+      });
+
+      if (error) raiseReturnError(error, 'fn_create_return');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_create_return: مفيش نتيجة');
+
+      return {
+        returnId: String(row.return_id),
+        refundedPiastres: Number(row.refunded_piastres),
+        feePiastres: Number(row.fee_piastres),
+        itemCount: Number(row.item_count),
+        movementId: String(row.movement_id),
+      };
+    },
+
+    async quarantineList(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_quarantine_list', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) raiseReturnError(error, 'fn_quarantine_list');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        productId: String(row.product_id),
+        productName: String(row.product_name),
+        productType: String(row.product_type),
+        serialNumber: row.serial_number ? String(row.serial_number) : null,
+        branchId: String(row.branch_id),
+        quarantinedQuantity: Number(row.quarantined_quantity),
+        lastReturnDate: row.last_return_date ? String(row.last_return_date) : null,
+        lastReason: row.last_reason ? String(row.last_reason) : null,
+      }));
+    },
+
+    async review(productId, actorId, quantity, decision) {
+      const { data, error } = await db.rpc('fn_review_quarantine', {
+        p_product_id: productId,
+        p_actor_id: actorId,
+        p_quantity: quantity,
+        p_decision: decision,
+      });
+      if (error) raiseReturnError(error, 'fn_review_quarantine');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_review_quarantine: مفيش نتيجة');
+
+      return {
+        productName: String(row.product_name),
+        movedQuantity: Number(row.moved_quantity),
+        remainingHeld: Number(row.remaining_held),
+        nowOnHand: Number(row.now_on_hand),
+      };
     },
   };
 }
