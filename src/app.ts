@@ -21,6 +21,7 @@ import {
   customerRoutes,
   platformRoutes,
   productRoutes,
+  returnRoutes,
   saleRoutes,
   setupRoutes,
   treasuryRoutes,
@@ -107,6 +108,7 @@ app.route('/api/branches', branchRoutes);
 app.route('/api/treasury', treasuryRoutes);
 app.route('/api/products', productRoutes);
 app.route('/api/sales', saleRoutes);
+app.route('/api/returns', returnRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
@@ -346,6 +348,9 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       roleKey: user.roleKey,
       canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      // ⚠ مدير الفرع والمالك بس. المندوب بيبيع وما بيرجّعش —
+      // اللي بياخد الفلوس مش هو اللي بيردّها.
+      canRefund: user.permissions.includes(PERMISSIONS.SALES_REFUND),
       // ⚠ الخزائن اللي مالهاش فرع (مستوى الشركة) مستبعدة: البيع
       // لازم يتسجّل على فرع، والدالة في قاعدة البيانات بترفضها.
       // إخفاؤها هنا بيمنع الموظّف يختار حاجة هتترفض بعد الضغط.
