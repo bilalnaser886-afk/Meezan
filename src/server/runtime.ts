@@ -20,6 +20,7 @@ import type { BranchDeps } from '../application/use-cases/branches';
 import type { TreasuryDeps } from '../application/use-cases/treasury';
 import type { ProductDeps } from '../application/use-cases/products';
 import type { SaleDeps } from '../application/use-cases/sales';
+import type { ReturnDeps } from '../application/use-cases/returns';
 import type { CustomerDeps } from '../application/use-cases/customers';
 import type { PlatformDeps } from '../application/use-cases/platform';
 import type { BranchRepository } from '../application/ports';
@@ -37,6 +38,7 @@ import {
   createMovementRepository,
   createProductRepository,
   createRateLimiter,
+  createReturnRepository,
   createSaleRepository,
   createSessionRepository,
   createTenantRepository,
@@ -55,6 +57,7 @@ export interface Container {
   treasury: TreasuryDeps;
   products: ProductDeps;
   sales: SaleDeps;
+  returns: ReturnDeps;
   customers: CustomerDeps;
   platform: PlatformDeps;
   branches: BranchRepository;
@@ -71,6 +74,10 @@ export function buildContainer(env: Env): Container {
   const sessionRepo = createSessionRepository(db);
   const treasuryRepo = createTreasuryRepository(db);
   const tenantRepo = createTenantRepository(db);
+  // ⚠ مستودع المبيعات بيتشارك بين البيع والمرتجع.
+  // نسخة واحدة عشان الاتنين يقروا من نفس المكان — لو عملنا
+  // نسختين، أي تعديل مستقبلي في واحدة بيسيب التانية وراه.
+  const saleRepo = createSaleRepository(db);
 
   return {
     db,
@@ -119,9 +126,16 @@ export function buildContainer(env: Env): Container {
       audit,
     },
     sales: {
-      sales: createSaleRepository(db),
+      sales: saleRepo,
       treasuries: treasuryRepo,
       users: userRepo,
+      clock: systemClock,
+      audit,
+    },
+    returns: {
+      returns: createReturnRepository(db),
+      sales: saleRepo,
+      treasuries: treasuryRepo,
       clock: systemClock,
       audit,
     },
