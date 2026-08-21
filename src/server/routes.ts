@@ -56,7 +56,9 @@ import {
 import {
   bootstrapPlatformAdmin,
   createTenant,
+  getTenantCensus,
   listTenants,
+  purgeTenant,
   setTenantActive,
   setTenantBranchLimit,
 } from '../application/use-cases/platform';
@@ -1144,6 +1146,53 @@ platformRoutes.post(
     );
 
     return c.json({ ok: true });
+  },
+);
+
+/**
+ * جرد المحل — بيتنادى قبل ما شاشة التأكيد تظهر.
+ *
+ * `touchActivity: false` عشان الفحص ده ما يحسبش نشاط.
+ */
+platformRoutes.get(
+  '/:id/census',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المحل مفقود.');
+
+    const container = buildContainer(c.env);
+    const census = await getTenantCensus(container.platform, c.get('user'), id);
+
+    return c.json({ ok: true, census });
+  },
+);
+
+/**
+ * المحو النهائي.
+ *
+ * ⚠ فعل بلا رجعة. الأقفال الأربعة متوزّعة عن قصد:
+ *   • الصلاحية والكود المكتوب  ← في حالة الاستخدام
+ *   • الإيقاف ومشغّل المنصّة   ← جوّه دالة قاعدة البيانات
+ *
+ * التوزيع ده مش تكرار عبثي: نداء جاي من أي مكان تاني في المستقبل
+ * (سكربت، أداة إدارية) هيفضل محروس بقفلين على الأقل.
+ */
+platformRoutes.post(
+  '/:id/purge',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المحل مفقود.');
+
+    const body = await readJson<{ confirmCode?: string }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await purgeTenant(container.platform, c.get('user'), id, {
+      confirmCode: String(body.confirmCode ?? ''),
+    });
+
+    return c.json({ ok: true, purged: result });
   },
 );
 
