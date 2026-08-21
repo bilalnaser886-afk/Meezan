@@ -345,7 +345,8 @@ export type MovementType =
   | 'EXPENSE'
   | 'ADVANCE'
   | 'ADJUSTMENT'
-  | 'SALE';
+  | 'SALE'
+  | 'REFUND';
 
 /**
  * الأنواع اللي المستخدم يقدر يسجّلها **بإيده** من شاشة الخزينة.
@@ -360,7 +361,7 @@ export type MovementType =
  * `Exclude` هنا بتخلّي ده **خطأ في وقت البناء** مش خطأ وقت التشغيل.
  * تشبيه: مش لافتة مكتوب عليها "ممنوع الدخول"، ده حيط.
  */
-export type ManualMovementType = Exclude<MovementType, 'SALE'>;
+export type ManualMovementType = Exclude<MovementType, 'SALE' | 'REFUND'>;
 
 export type MovementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -670,6 +671,96 @@ export interface SaleFilter {
   /** لو موجود، بيحصر النتيجة في فواتير موظّف واحد (`sales.view_own`) */
   staffId?: string;
   limit: number;
+}
+
+// ─────────── المرتجعات ورفّ المراجعة ───────────
+
+/**
+ * بند قابل للاسترجاع من فاتورة.
+ *
+ * ⚠ `quantityRemaining` هو الرقم اللي بيحكم. اللي اترجّع قبل كده
+ * محسوب فيه، فالبند اللي خلص بيرجع بصفر والواجهة بتعرضه باهت.
+ * من غير الرقم ده، حد يقدر يرجّع ٣ من حاجة اتباع منها ٢.
+ */
+export interface ReturnableLine {
+  saleItemId: string;
+  productId: string;
+  productName: string;
+  productType: string;
+  serialNumber: string | null;
+  quantitySold: number;
+  quantityReturned: number;
+  quantityRemaining: number;
+  unitPricePiastres: number;
+}
+
+export interface ReturnLineInput {
+  saleItemId: string;
+  quantity: number;
+  /** المرتجع للوحدة — ممكن يكون أقل من سعر البيع، والفرق رسوم */
+  unitRefundPiastres: number;
+}
+
+export interface CreateReturnInput {
+  saleId: string;
+  actorId: string;
+  treasuryId: string;
+  items: ReturnLineInput[];
+  reason: string | null;
+  /** فاضي = النهاردة بتوقيت القاهرة */
+  returnDate: string | null;
+}
+
+export interface CreateReturnResult {
+  returnId: string;
+  refundedPiastres: number;
+  /** الفرق اللي ما خرجش من الدرج — إيراد رسوم استرجاع */
+  feePiastres: number;
+  itemCount: number;
+  movementId: string;
+}
+
+/** صف في رفّ المراجعة — مرتجع مستنّي قرار */
+export interface QuarantineRow {
+  productId: string;
+  productName: string;
+  productType: string;
+  serialNumber: string | null;
+  branchId: string;
+  quarantinedQuantity: number;
+  lastReturnDate: string | null;
+  lastReason: string | null;
+}
+
+export type QuarantineDecision = 'RELEASE' | 'SCRAP';
+
+export interface QuarantineReviewResult {
+  productName: string;
+  movedQuantity: number;
+  remainingHeld: number;
+  nowOnHand: number;
+}
+
+export interface ReturnRepository {
+  /** البنود القابلة للاسترجاع في فاتورة — قراءة بس */
+  returnableLines(saleId: string): Promise<ReturnableLine[]>;
+  /**
+   * الاسترجاع في عملية واحدة لا تتجزّأ.
+   *
+   * الأربع خطوات (فحص المتبقي · رفّ المراجعة · سجل المرتجع ·
+   * حركة الخزينة) بتحصل جوّه دالة قاعدة البيانات: يا كلها يا
+   * ولا واحدة. مفيش حالة "الفلوس طلعت والبضاعة ما رجعتش".
+   */
+  create(input: CreateReturnInput): Promise<CreateReturnResult>;
+  /** رفّ المراجعة — المرتجعات اللي لسه مستنية قرار */
+  quarantineList(tenantId: string, branchId: string | null): Promise<QuarantineRow[]>;
+  /** سليم (يرجع للبيع) أو تالف (يتشطب) */
+  review(
+    productId: string,
+    actorId: string,
+    quantity: number,
+    decision: QuarantineDecision,
+  ): Promise<QuarantineReviewResult>;
 }
 
 export interface SaleRepository {
