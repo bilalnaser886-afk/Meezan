@@ -1446,6 +1446,7 @@ export interface TreasuryMovementView {
 
 const TYPE_LABEL: Record<string, string> = {
   SALE: 'بيع',
+  REFUND: 'استرجاع',
   DEPOSIT: 'إيداع',
   WITHDRAWAL: 'سحب',
   EXPENSE: 'مصروف',
@@ -1768,6 +1769,8 @@ export interface PosPageData {
   roleKey: string;
   canViewProducts: boolean;
   canUseTreasury: boolean;
+  /** ⚠ مدير الفرع والمالك بس. المندوب بيبيع وما بيرجّعش. */
+  canRefund: boolean;
   treasuries: Array<{ treasuryId: string; name: string; type: string }>;
   products: Array<{
     id: string;
@@ -1957,7 +1960,47 @@ export function posPage(data: PosPageData): Html {
                       تاريخ الخروج
                     </button>`
                   : ''}
+                ${data.canRefund
+                  ? html`<button class="btn-mini" type="button" data-ret-open="${s.id}">
+                      استرجاع
+                    </button>`
+                  : ''}
               </div>
+
+              ${data.canRefund
+                ? html`<div class="exit-edit" id="ret-${s.id}" hidden>
+                    <p class="field-hint" id="ret-msg-${s.id}">جارٍ قراءة بنود الفاتورة…</p>
+                    <div id="ret-lines-${s.id}"></div>
+
+                    <div id="ret-form-${s.id}" hidden>
+                      <div class="mv-row" style="border:none;padding:6px 0">
+                        <span class="mv-sub">يخرج من الدرج</span>
+                        <span class="mv-amount" data-dir="OUT" id="ret-total-${s.id}">0.00</span>
+                      </div>
+                      <p class="field-hint" id="ret-fee-${s.id}"></p>
+
+                      <label class="field-label" for="ret-tre-${s.id}">الخزينة</label>
+                      <select class="field-input" id="ret-tre-${s.id}">
+                        ${data.treasuries.map(
+                          (t) => html`<option value="${t.treasuryId}">${t.name}</option>`,
+                        )}
+                      </select>
+
+                      <label class="field-label" for="ret-why-${s.id}">السبب</label>
+                      <input class="field-input" id="ret-why-${s.id}" type="text"
+                        placeholder="مقاس غلط" autocomplete="off" maxlength="200">
+
+                      <p class="field-hint">
+                        البنود المرتجعة تذهب إلى رفّ المراجعة في المخزون — لا تُباع
+                        مرة أخرى قبل فحصها.
+                      </p>
+
+                      <button class="btn-mini" type="button" data-ret-go="${s.id}">
+                        تأكيد الاسترجاع
+                      </button>
+                    </div>
+                  </div>`
+                : ''}
 
               ${s.canEditExit
                 ? html`<div class="exit-edit" id="exit-${s.id}" hidden>
@@ -2367,6 +2410,254 @@ ${TIME_JS}
     }
   });
 
+  // ══════════ الاسترجاع ══════════
+  //
+  // ⚠ البنود بتتجاب من الخادم مش من الصفحة. الصفحة عندها إجمالي
+  // الفاتورة بس؛ المتبقي في كل بند (بعد أي مرتجع سابق) حساب
+  // الخادم لوحده. لو بنيناه هنا، مرتجعين ورا بعض من تابين
+  // مفتوحين كانوا هيرجّعوا أكتر من اللي اتباع.
+  var retLines = {};
+
+  function retSay(id, text, ok) {
+    var el = document.getElementById('ret-msg-' + id);
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = ok ? '' : 'var(--danger, #9E2B3E)';
+  }
+
+  function retRecalc(id) {
+    var lines = retLines[id] || [];
+    var refund = 0, original = 0, picked = 0;
+
+    for (var i = 0; i < lines.length; i++) {
+      var box = document.getElementById('ret-pick-' + id + '-' + i);
+      if (!box || !box.checked) continue;
+
+      var qEl = document.getElementById('ret-q-' + id + '-' + i);
+      var uEl = document.getElementById('ret-u-' + id + '-' + i);
+      var q = parseInt(qEl ? qEl.value : '0', 10);
+      var u = Math.round(parseFloat(uEl ? uEl.value : '0') * 100);
+
+      if (!isFinite(q) || q <= 0) continue;
+      if (!isFinite(u) || u < 0) u = 0;
+
+      refund += u * q;
+      original += lines[i].unitPricePiastres * q;
+      picked += 1;
+    }
+
+    var totalEl = document.getElementById('ret-total-' + id);
+    var feeEl = document.getElementById('ret-fee-' + id);
+    var formEl = document.getElementById('ret-form-' + id);
+
+    if (totalEl) totalEl.textContent = '-' + money(refund);
+    if (feeEl) {
+      feeEl.textContent = original > refund
+        ? 'قيمة البنود ' + money(original) + ' · رسوم استرجاع ' + money(original - refund)
+        : '';
+    }
+    if (formEl) formEl.hidden = picked === 0;
+  }
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-ret-open]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-ret-open');
+    var panel = document.getElementById('ret-' + id);
+    if (!panel) return;
+
+    if (!panel.hidden) { panel.hidden = true; return; }
+    panel.hidden = false;
+
+    if (retLines[id]) return;   // اتجابت قبل كده
+
+    retSay(id, 'جارٍ قراءة بنود الفاتورة…', true);
+    try {
+      var res = await fetch('/api/returns/sale/' + encodeURIComponent(id), {
+        credentials: 'same-origin'
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        retSay(id, (data && data.error && data.error.message) || 'تعذّر قراءة الفاتورة.', false);
+        return;
+      }
+
+      retLines[id] = data.lines || [];
+      var host = document.getElementById('ret-lines-' + id);
+      if (!host) return;
+      host.textContent = '';
+
+      if (retLines[id].length === 0) {
+        retSay(id, 'لا توجد بنود في هذه الفاتورة.', false);
+        return;
+      }
+
+      var any = false;
+      for (var i = 0; i < retLines[id].length; i++) {
+        var ln = retLines[id][i];
+        var done = ln.quantityRemaining <= 0;
+        if (!done) any = true;
+
+        var row = document.createElement('div');
+        row.className = 'mv-row';
+        if (done) row.style.opacity = '0.5';
+
+        var head = document.createElement('label');
+        head.style.display = 'flex';
+        head.style.gap = '8px';
+        head.style.alignItems = 'flex-start';
+
+        var pick = document.createElement('input');
+        pick.type = 'checkbox';
+        pick.id = 'ret-pick-' + id + '-' + i;
+        pick.disabled = done;
+        pick.setAttribute('data-ret-calc', id);
+        head.appendChild(pick);
+
+        var info = document.createElement('div');
+        var t = document.createElement('span');
+        t.className = 'mv-title';
+        t.textContent = ln.productName;
+        info.appendChild(t);
+
+        var sub = document.createElement('span');
+        sub.className = 'mv-sub';
+        sub.textContent = done
+          ? 'اترجّع بالكامل'
+          : 'متبقٍ ' + ln.quantityRemaining + ' من ' + ln.quantitySold +
+            ' · سعر الوحدة ' + money(ln.unitPricePiastres) +
+            (ln.serialNumber ? ' · ' + ln.serialNumber : '');
+        info.appendChild(sub);
+        head.appendChild(info);
+        row.appendChild(head);
+
+        if (!done) {
+          var fields = document.createElement('div');
+          fields.style.display = 'flex';
+          fields.style.gap = '8px';
+          fields.style.marginTop = '6px';
+
+          var q = document.createElement('input');
+          q.className = 'field-input';
+          q.id = 'ret-q-' + id + '-' + i;
+          q.type = 'number';
+          q.min = '1';
+          q.max = String(ln.quantityRemaining);
+          q.value = '1';
+          q.dir = 'ltr';
+          q.setAttribute('data-ret-calc', id);
+          fields.appendChild(q);
+
+          var u = document.createElement('input');
+          u.className = 'field-input';
+          u.id = 'ret-u-' + id + '-' + i;
+          u.type = 'text';
+          u.inputMode = 'decimal';
+          u.dir = 'ltr';
+          u.value = money(ln.unitPricePiastres);
+          u.setAttribute('data-ret-calc', id);
+          fields.appendChild(u);
+
+          row.appendChild(fields);
+        }
+
+        host.appendChild(row);
+      }
+
+      retSay(id, any ? 'اختر البنود المرتجعة والمبلغ لكل وحدة.'
+                     : 'كل بنود الفاتورة اترجّعت بالفعل.', any);
+      retRecalc(id);
+    } catch (err) {
+      retSay(id, 'تعذّر الاتصال بالخادم.', false);
+    }
+  });
+
+  // إعادة الحساب مع أي تغيير — الرقم اللي بيطلع من الدرج لازم
+  // يفضل صحيح لحظة بلحظة، مش وقت الضغط بس.
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (el && el.getAttribute && el.getAttribute('data-ret-calc')) {
+      retRecalc(el.getAttribute('data-ret-calc'));
+    }
+  });
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (el && el.getAttribute && el.getAttribute('data-ret-calc')) {
+      retRecalc(el.getAttribute('data-ret-calc'));
+    }
+  });
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-ret-go]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-ret-go');
+    var lines = retLines[id] || [];
+    var items = [];
+
+    for (var i = 0; i < lines.length; i++) {
+      var box = document.getElementById('ret-pick-' + id + '-' + i);
+      if (!box || !box.checked) continue;
+
+      var q = parseInt((document.getElementById('ret-q-' + id + '-' + i) || {}).value, 10);
+      var u = Math.round(parseFloat((document.getElementById('ret-u-' + id + '-' + i) || {}).value) * 100);
+
+      if (!isFinite(q) || q <= 0) { retSay(id, 'كمية غير صالحة.', false); return; }
+      if (!isFinite(u) || u < 0) { retSay(id, 'مبلغ غير صالح.', false); return; }
+      if (q > lines[i].quantityRemaining) {
+        retSay(id, 'الكمية أكبر من المتبقي في «' + lines[i].productName + '».', false);
+        return;
+      }
+
+      items.push({ saleItemId: lines[i].saleItemId, quantity: q, unitRefundPiastres: u });
+    }
+
+    if (items.length === 0) { retSay(id, 'اختر بندًا واحدًا على الأقل.', false); return; }
+
+    var tre = document.getElementById('ret-tre-' + id);
+    if (!tre || !tre.value) { retSay(id, 'اختر الخزينة.', false); return; }
+
+    if (!confirm('تأكيد الاسترجاع؟ الفلوس هتطلع من الخزينة والبضاعة هتروح لرفّ المراجعة.')) return;
+
+    var why = document.getElementById('ret-why-' + id);
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+      var res = await fetch('/api/returns/sale/' + encodeURIComponent(id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          treasuryId: tre.value,
+          items: items,
+          reason: why ? why.value : null
+        })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      boxEl.hidden = false;
+      if (res.ok && data && data.ok) {
+        boxEl.setAttribute('data-tone', 'ok');
+        textEl.textContent = 'تم الاسترجاع — خرج ' + money(data.refundedPiastres) +
+          (data.feePiastres > 0 ? ' · رسوم ' + money(data.feePiastres) : '');
+        setTimeout(function () { window.location.reload(); }, 1100);
+        return;
+      }
+      boxEl.removeAttribute('data-tone');
+      textEl.textContent = (data && data.error && data.error.message) || 'تعذّر الاسترجاع.';
+    } catch (err) {
+      boxEl.hidden = false;
+      boxEl.removeAttribute('data-tone');
+      textEl.textContent = 'تعذّر الاتصال بالخادم.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
   render();
 })();
 `;
@@ -2647,6 +2938,19 @@ export function productsPage(data: ProductsPageData): Html {
   <div class="alert-box" id="prodmsg" role="alert" hidden><span id="prodmsg-text"></span></div>
 
   ${addPanel}
+
+  ${data.canEdit
+    ? html`<details class="panel" id="qr-panel" hidden>
+        <summary>رفّ المراجعة <span id="qr-count"></span></summary>
+        <div class="panel-body">
+          <p class="field-hint">
+            بضاعة رجعت من عملاء ولسه ما اتفحصتش. مش معروضة للبيع حاليًا —
+            راجعها وقرّر: سليمة ترجع للمخزون، أو تالفة تتشطب.
+          </p>
+          <div id="qr-rows"></div>
+        </div>
+      </details>`
+    : ''}
 
   <details class="panel" open>
     <summary>المخزون (${String(data.products.length)})</summary>
@@ -2964,6 +3268,148 @@ ${MENU_JS}
       }
     });
   }
+
+  // ══════════ رفّ المراجعة ══════════
+  //
+  // اللوحة مخفية افتراضيًا وبتظهر لو فيه حاجة مستنية بس.
+  // لوحة فاضية دايمة بتتحوّل لأثاث — العين بتتعوّد عليها وتبطّل
+  // تشوفها، وأول ما يبقى فيها حاجة مهمة ما حدش هيلاحظ.
+  var qrPanel = document.getElementById('qr-panel');
+  var qrRows  = document.getElementById('qr-rows');
+  var qrCount = document.getElementById('qr-count');
+
+  async function loadQuarantine() {
+    if (!qrPanel || !qrRows) return;
+
+    try {
+      var res = await fetch('/api/returns/quarantine', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var rows = data.rows || [];
+      if (rows.length === 0) { qrPanel.hidden = true; return; }
+
+      qrPanel.hidden = false;
+      if (qrCount) qrCount.textContent = '(' + rows.length + ')';
+      qrRows.textContent = '';
+
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+
+        var row = document.createElement('div');
+        row.className = 'prod-row';
+
+        var main = document.createElement('div');
+        main.className = 'prod-row-main';
+
+        var name = document.createElement('span');
+        name.className = 'prod-row-name';
+        name.textContent = r.productName;
+        main.appendChild(name);
+
+        var sub = document.createElement('span');
+        sub.className = 'prod-row-sub';
+        sub.textContent = 'محجوز ' + r.quarantinedQuantity +
+          (r.serialNumber ? ' · ' + r.serialNumber : '') +
+          (r.lastReturnDate ? ' · رجع ' + r.lastReturnDate : '') +
+          (r.lastReason ? ' · ' + r.lastReason : '');
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        var acts = document.createElement('div');
+        acts.className = 'prod-edit-actions';
+
+        var qty = document.createElement('input');
+        qty.className = 'field-input';
+        qty.type = 'number';
+        qty.min = '1';
+        qty.max = String(r.quarantinedQuantity);
+        qty.value = String(r.quarantinedQuantity);
+        qty.dir = 'ltr';
+        qty.id = 'qr-q-' + r.productId;
+        acts.appendChild(qty);
+
+        var ok = document.createElement('button');
+        ok.className = 'btn-mini';
+        ok.type = 'button';
+        ok.textContent = 'سليم';
+        ok.setAttribute('data-qr', r.productId);
+        ok.setAttribute('data-qr-do', 'RELEASE');
+        acts.appendChild(ok);
+
+        var bad = document.createElement('button');
+        bad.className = 'btn-mini';
+        bad.type = 'button';
+        bad.textContent = 'تالف';
+        bad.setAttribute('data-danger', 'true');
+        bad.setAttribute('data-qr', r.productId);
+        bad.setAttribute('data-qr-do', 'SCRAP');
+        acts.appendChild(bad);
+
+        row.appendChild(acts);
+        qrRows.appendChild(row);
+      }
+    } catch (err) {
+      // فشل قراءة الرفّ ما يصحّش يعطّل شاشة المنتجات كلها
+    }
+  }
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-qr-do]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-qr');
+    var decision = btn.getAttribute('data-qr-do');
+    var qEl = document.getElementById('qr-q-' + id);
+    var qty = parseInt(qEl ? qEl.value : '0', 10);
+
+    if (!isFinite(qty) || qty <= 0) {
+      box.hidden = false;
+      box.removeAttribute('data-tone');
+      text.textContent = 'الكمية غير صالحة.';
+      return;
+    }
+
+    // ⚠ الشطب خسارة مخزون ما بترجعش. تأكيد إضافي على التالف بس —
+    // "سليم" فعل قابل للتراجع (ترجّعه للرفّ باسترجاع تاني)،
+    // والتالف لأ.
+    if (decision === 'SCRAP' && !confirm('شطب ' + qty + ' نهائيًا من المخزون؟')) return;
+
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+      var res = await fetch('/api/returns/quarantine/' + encodeURIComponent(id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ quantity: qty, decision: decision })
+      });
+      var data = await res.json().catch(function () { return null; });
+
+      box.hidden = false;
+      if (res.ok && data && data.ok) {
+        box.setAttribute('data-tone', 'ok');
+        text.textContent = decision === 'RELEASE'
+          ? 'رجع للمخزون — المتاح الآن ' + data.nowOnHand
+          : 'تم الشطب.';
+        setTimeout(function () { window.location.reload(); }, 900);
+        return;
+      }
+      box.removeAttribute('data-tone');
+      text.textContent = (data && data.error && data.error.message) || 'تعذّر تنفيذ القرار.';
+    } catch (err) {
+      box.hidden = false;
+      box.removeAttribute('data-tone');
+      text.textContent = 'تعذّر الاتصال بالخادم.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
+  loadQuarantine();
 })();
 `;
 }
