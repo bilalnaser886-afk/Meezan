@@ -538,7 +538,39 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
       if (error) {
         if (error.code === 'MZ400') throw Errors.validation(error.message);
         if (error.code === '23505') {
-          throw Errors.validation('كود المحل أو اسم المستخدم مستخدم بالفعل.');
+          // ⚠ الرسالة لازم تقول **أنهي** قيد اتكسر، مش تخمّن.
+          //
+          // الإصدار القديم كان بيقول "كود المحل أو اسم المستخدم"
+          // على طول لأنهم أشهر حالتين — والتخمين ده ضيّع وقت
+          // تشخيص كامل لما التعارض الحقيقي كان في أسباب الصرف.
+          //
+          // بوستجرس بيقول اسم القيد في نص الخطأ. بنقراه منه.
+          const constraint =
+            /constraint "([^"]+)"/.exec(`${error.message} ${error.details ?? ''}`)?.[1] ?? '';
+
+          if (constraint.includes('tenants_code')) {
+            throw Errors.validation('كود المحل ده مستخدم بالفعل.');
+          }
+          if (constraint.includes('users_tenant_username') || constraint.includes('username')) {
+            throw Errors.validation('اسم المستخدم ده مستخدم بالفعل داخل هذا المحل.');
+          }
+          if (constraint.includes('branches_tenant_code')) {
+            throw Errors.validation('كود الفرع مكرّر داخل المحل.');
+          }
+          if (constraint.includes('expense_reasons')) {
+            throw Errors.validation(
+              'تعارض في أسباب الصرف: القيد الحالي لا يفرّق بين المحلات. شغّل ملف 15_uniqueness_fix.sql.',
+            );
+          }
+          if (constraint.includes('treasur')) {
+            throw Errors.validation(
+              'تعارض في الخزائن: القيد الحالي لا يفرّق بين المحلات. شغّل ملف 15_uniqueness_fix.sql.',
+            );
+          }
+          throw Errors.validation(
+            `تعارض في قيد التفرّد: ${constraint || 'غير محدّد'}`,
+            error.message,
+          );
         }
         throw Errors.internal(`fn_create_tenant: ${error.message}`);
       }
