@@ -3402,6 +3402,35 @@ export function platformPage(data: PlatformPageData): Html {
                       ${t.isActive ? 'إيقاف الاشتراك' : 'إعادة التفعيل'}
                     </button>`}
               </div>
+
+              ${t.id === data.currentTenantId
+                ? html``
+                : t.isActive
+                  ? html`<p class="field-hint">
+                      المحو النهائي متاح بعد إيقاف الاشتراك — خطوتان منفصلتان عمدًا.
+                    </p>`
+                  : html`<div class="field">
+                      <button class="btn-mini" data-danger="true" type="button"
+                        data-tpurge="${t.id}">محو نهائي…</button>
+
+                      <div id="purgep-${t.id}" hidden>
+                        <p class="field-hint" id="purgec-${t.id}"></p>
+
+                        <label class="field-label" for="purgek-${t.id}">
+                          اكتب كود المحل «${t.code}» للتأكيد
+                        </label>
+                        <input class="field-input" id="purgek-${t.id}" type="text"
+                          dir="ltr" autocomplete="off" spellcheck="false"
+                          placeholder="${t.code}">
+                        <p class="field-hint">
+                          هذا الإجراء لا يمكن التراجع عنه. تُمحى الفروع والحسابات
+                          والمنتجات والعملاء والفواتير وحركات الخزينة نهائيًا.
+                        </p>
+
+                        <button class="btn-mini" data-danger="true" type="button"
+                          data-tpurgego="${t.id}">تأكيد المحو — بلا رجعة</button>
+                      </div>
+                    </div>`}
             </div>
           </div>`,
         )}`;
@@ -3627,6 +3656,93 @@ ${MENU_JS}
     if (result) {
       say(isOn ? 'تم إيقاف الاشتراك.' : 'تمت إعادة التفعيل.', true);
       setTimeout(function () { window.location.reload(); }, 900);
+    }
+  });
+
+  // ── المحو النهائي، خطوة ١: الجرد ──
+  //
+  // ⚠ الأرقام دي هي القفل التالت. محل تجربة كله أصفار، ومحل
+  // زبون حقيقي هيوريك فواتير بمبلغ. الفرق لازم يبان **قبل**
+  // الدوسة مش بعدها.
+  function money(piastres) {
+    var neg = piastres < 0;
+    var abs = Math.abs(Math.trunc(piastres));
+    var pounds = Math.floor(abs / 100);
+    var rest = abs % 100;
+    return (neg ? '-' : '') + pounds.toLocaleString('en-US') +
+      '.' + String(rest).padStart(2, '0');
+  }
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tpurge]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-tpurge');
+    var panel = document.getElementById('purgep-' + id);
+    var line = document.getElementById('purgec-' + id);
+    if (!panel || !line) return;
+
+    if (!panel.hidden) {
+      panel.hidden = true;
+      btn.textContent = 'محو نهائي…';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'جارٍ الجرد…';
+    try {
+      var res = await fetch('/api/platform/' + encodeURIComponent(id) + '/census', {
+        credentials: 'same-origin'
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        say((data && data.error && data.error.message) || 'تعذّر جرد المحل.', false);
+        return;
+      }
+
+      var c = data.census;
+      line.textContent =
+        'سيُمحى: ' + c.branchCount + ' فرع · ' + c.userCount + ' حساب · ' +
+        c.productCount + ' منتج · ' + c.customerCount + ' عميل · ' +
+        c.saleCount + ' فاتورة بإجمالي ' + money(c.salesTotalPiastres) + ' ج.م · ' +
+        c.movementCount + ' حركة خزينة · ' + c.auditCount + ' سطر تدقيق.';
+
+      panel.hidden = false;
+      btn.textContent = 'إخفاء';
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    } finally {
+      btn.disabled = false;
+      if (panel.hidden) btn.textContent = 'محو نهائي…';
+    }
+  });
+
+  // ── المحو النهائي، خطوة ٢: التأكيد بالكود ──
+  //
+  // ⚠ المقارنة الحقيقية في الخادم. اللي هنا بيوفّر رحلة شبكة
+  // ورسالة أوضح — مش هو القفل.
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tpurgego]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-tpurgego');
+    var input = document.getElementById('purgek-' + id);
+    if (!input || !input.value.trim()) {
+      say('اكتب كود المحل للتأكيد.', false);
+      return;
+    }
+
+    if (!confirm('محو نهائي بلا رجعة. متأكد؟')) return;
+
+    var result = await send(
+      '/api/platform/' + encodeURIComponent(id) + '/purge',
+      { confirmCode: input.value },
+      btn, 'جارٍ المحو…'
+    );
+    if (result) {
+      var p = result.purged || {};
+      say('تم محو المحل ' + (p.code || '') + ' نهائيًا.', true);
+      setTimeout(function () { window.location.reload(); }, 1200);
     }
   });
 
