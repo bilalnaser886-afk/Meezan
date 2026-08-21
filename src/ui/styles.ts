@@ -143,8 +143,16 @@ button{font:inherit}
 /* ═══ الشريط العلوي ═══
    الخط النحاسي تحته هو خيط الأمان في ورقة البنكنوت — أرفع تفصيلة
    في الشاشة وأكترها تكرارًا. */
+/* ⚠ وسم viewport فيه viewport-fit=cover، يعني الصفحة بتتمد تحت
+   شريط حالة الموبايل (الساعة والبطارية) بدل ما تقف تحته.
+   من غير الحشوة دي، اسم المستخدم بيتخبّي ورا النوتش في الأيفون.
+   env() بترجّع صفر على أي جهاز مالوش نوتش — فويندوز وأندرويد
+   القديم ما بيتأثروش. */
 .app-bar{position:sticky;top:0;z-index:50;display:flex;align-items:center;
-  justify-content:space-between;gap:12px;padding:11px var(--pad);
+  justify-content:space-between;gap:12px;
+  padding:11px calc(var(--pad) + env(safe-area-inset-right))
+          11px calc(var(--pad) + env(safe-area-inset-left));
+  padding-top:calc(11px + env(safe-area-inset-top));
   background:var(--ground);color:#fff;border-bottom:1.5px solid var(--brand)}
 .who{display:flex;align-items:center;gap:9px;min-width:0}
 .who .brandmark{color:var(--brand-soft)}
@@ -216,6 +224,7 @@ button{font:inherit}
 
 /* ═══ الشريط السفلي ═══ إبهامك بيوصله من غير ما تمد إيدك */
 .tabbar{position:fixed;inset-inline:0;bottom:0;z-index:40;display:flex;
+  padding-inline:env(safe-area-inset-left) env(safe-area-inset-right);
   background:var(--card);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom)}
 .tabbar a{flex:1;padding:11px 4px 13px;text-align:center;text-decoration:none;
@@ -225,7 +234,10 @@ button{font:inherit}
    الأخضر محجوز لحاجة بتحصل لما تدوس عليها. */
 .tabbar a[aria-current="page"]{color:var(--brand);border-top-color:var(--brand)}
 .tabbar-icon{display:block;font-family:var(--font-mono);font-size:17px;margin-bottom:2px}
-.shell{max-width:640px;margin:0 auto;padding:14px var(--pad) 96px}
+/* الجوانب مهمة في الوضع الأفقي: النوتش بياكل من الشمال أو اليمين */
+.shell{max-width:640px;margin:0 auto;
+  padding:14px calc(var(--pad) + env(safe-area-inset-right))
+          96px calc(var(--pad) + env(safe-area-inset-left))}
 
 /* ═══ الحقول ═══ */
 .field{margin-bottom:15px}
@@ -325,6 +337,8 @@ select.field-input{appearance:none;
 
 /* ═══ نافذة الإعلان الإلزامي ═══ */
 .gate-backdrop{position:fixed;inset:0;z-index:100;display:grid;place-items:center;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
   padding:18px;background:rgba(14,42,51,.76);backdrop-filter:blur(3px)}
 .gate-panel{width:100%;max-width:520px;max-height:88dvh;display:flex;flex-direction:column;
   background:var(--card);border-radius:var(--r);overflow:hidden}
@@ -352,6 +366,8 @@ select.field-input{appearance:none;
 
 /* ═══ قفل الشاشة ═══ */
 .lock-screen{position:fixed;inset:0;z-index:200;display:grid;place-items:center;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
   padding:24px;background:var(--ground);color:#fff}
 .lock-card{width:100%;max-width:320px;text-align:center}
 .lock-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;
