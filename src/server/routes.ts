@@ -54,6 +54,12 @@ import {
   updateSaleExitDate,
 } from '../application/use-cases/sales';
 import {
+  createReturn,
+  getReturnableLines,
+  listQuarantine,
+  reviewQuarantine,
+} from '../application/use-cases/returns';
+import {
   bootstrapPlatformAdmin,
   createTenant,
   getTenantCensus,
@@ -970,6 +976,112 @@ saleRoutes.post(
     const result = await updateSaleExitDate(container.sales, c.get('user'), id, body.exitDate);
 
     return c.json({ ok: true, exitDate: result.exitDate });
+  },
+);
+
+
+// ═══════════════════ 7.5) المرتجعات ورفّ المراجعة ═══════════════════
+
+export const returnRoutes = new Hono<AppBindings>();
+
+/**
+ * البنود القابلة للاسترجاع في فاتورة.
+ *
+ * `touchActivity: false` — الشاشة بتنادي ده وهي بتفتح، ومش
+ * المفروض يعتبر نشاط بشري.
+ */
+returnRoutes.get(
+  '/sale/:id',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_REFUND], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const container = buildContainer(c.env);
+    const lines = await getReturnableLines(container.returns, c.get('user'), id);
+
+    return c.json({ ok: true, lines });
+  },
+);
+
+/**
+ * تنفيذ الاسترجاع.
+ *
+ * ⚠ صلاحية `sales.refund` مش عند المندوب. اللي بيبيع مش هو اللي
+ * بيرجّع الفلوس — ودي فصل مهام مش تعقيد.
+ */
+returnRoutes.post(
+  '/sale/:id',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_REFUND] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const body = await readJson<{
+      treasuryId?: string;
+      items?: Array<{ saleItemId?: string; quantity?: number; unitRefundPiastres?: number }>;
+      reason?: string | null;
+      returnDate?: string | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await createReturn(container.returns, c.get('user'), id, {
+      treasuryId: String(body.treasuryId ?? ''),
+      items: (body.items ?? []).map((line) => ({
+        saleItemId: String(line?.saleItemId ?? ''),
+        quantity: Number(line?.quantity),
+        unitRefundPiastres: Number(line?.unitRefundPiastres),
+      })),
+      reason: body.reason ?? null,
+      returnDate: body.returnDate ?? null,
+    });
+
+    return c.json({ ok: true, ...result });
+  },
+);
+
+/** رفّ المراجعة — المرتجعات المستنية قرار */
+returnRoutes.get(
+  '/quarantine',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const rows = await listQuarantine(container.returns, c.get('user'));
+
+    return c.json({ ok: true, rows });
+  },
+);
+
+/**
+ * القرار: سليم (يرجع للبيع) أو تالف (يتشطب).
+ *
+ * ⚠ الصلاحية هنا `inventory.adjust` مش `sales.refund`.
+ * دول فعلين مختلفين: الاسترجاع قرار مالي، والمراجعة قرار مخزني.
+ */
+returnRoutes.post(
+  '/quarantine/:productId',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const productId = c.req.param('productId');
+    if (!productId) throw Errors.validation('معرّف المنتج مفقود.');
+
+    const body = await readJson<{ quantity?: number; decision?: string }>(c);
+    const decision = String(body.decision ?? '');
+
+    if (decision !== 'RELEASE' && decision !== 'SCRAP') {
+      throw Errors.validation('القرار غير صحيح.');
+    }
+
+    const container = buildContainer(c.env);
+    const result = await reviewQuarantine(
+      container.returns,
+      c.get('user'),
+      productId,
+      Number(body.quantity),
+      decision,
+    );
+
+    return c.json({ ok: true, ...result });
   },
 );
 
