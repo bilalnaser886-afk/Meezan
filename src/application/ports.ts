@@ -258,6 +258,32 @@ export interface CreateTenantInput {
   users: TenantUserInput[];
 }
 
+/**
+ * جرد المحل قبل المحو.
+ *
+ * ⚠ ده الاستثناء الوحيد اللي بيوصل فيه رقم مالي لمشغّل المنصّة،
+ * وبيوصل في لحظة واحدة بس: شاشة تأكيد الحذف.
+ *
+ * السبب إنه **مش تقرير**، ده عدّاد خطورة. الفرق بين محل تجربة
+ * ومحل زبون حقيقي بيبان في رقم واحد — وبدونه المحو بيبقى دوسة
+ * في الضلمة.
+ */
+export interface TenantCensus {
+  code: string;
+  name: string;
+  isActive: boolean;
+  branchCount: number;
+  userCount: number;
+  productCount: number;
+  customerCount: number;
+  saleCount: number;
+  salesTotalPiastres: number;
+  movementCount: number;
+  auditCount: number;
+  /** لو true، المحو مرفوض: الحساب ده جوّاه ومسحه بيقفلك بره */
+  hasPlatformAdmin: boolean;
+}
+
 export interface TenantRepository {
   findById(id: string): Promise<TenantRecord | null>;
   findByCode(code: string): Promise<TenantRecord | null>;
@@ -287,6 +313,20 @@ export interface TenantRepository {
     passwordHash: string;
     passkeyHash: string;
   }): Promise<{ id: string }>;
+  /** جرد قبل المحو — قراءة بس، ما بتغيّرش ولا صف */
+  census(id: string): Promise<TenantCensus | null>;
+  /**
+   * المحو النهائي. **مفيش تراجع.**
+   *
+   * الأقفال الأربعة كلها متطبّقة جوّه دالة قاعدة البيانات كمان،
+   * مش هنا بس — عشان أي نداء من أي مكان يفضل محروس.
+   */
+  purge(id: string, actorId: string): Promise<{
+    code: string;
+    name: string;
+    deletedUsers: number;
+    deletedSales: number;
+  }>;
 }
 
 // ═══════════════════ الخزينة ═══════════════════
