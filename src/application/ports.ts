@@ -519,6 +519,14 @@ export interface ProductRecord {
   pricePiastres: number | null;
   costPiastres?: number;
   quantityOnHand: number;
+  /**
+   * الحد الأدنى للتنبيه. **صفر = معطّل** وهو الافتراضي.
+   * للإكسسوارات فقط — الجهاز كميته 1 وبتبقى صفر بعد البيع،
+   * وده بيع ناجح مش نقص مخزون.
+   */
+  reorderPoint: number;
+  /** مرتجع مستنّي المراجعة — مش متاح للبيع */
+  quarantinedQuantity: number;
   isActive: boolean;
 }
 
@@ -545,6 +553,8 @@ export interface UpdateProductInput {
   source?: string | null;
   serialNumber?: string | null;
   entryDate?: string;
+  /** محكوم بصلاحية `inventory.reorder_point` — صاحب المحل وحده */
+  reorderPoint?: number;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
@@ -739,6 +749,32 @@ export interface QuarantineReviewResult {
   movedQuantity: number;
   remainingHeld: number;
   nowOnHand: number;
+}
+
+// ─────────── التنبيهات ───────────
+
+/**
+ * ⚠ التنبيه **بيتحسب** لحظة الطلب، مش بيتقرا من جدول.
+ *
+ * السبب: كل التنبيهات دي بتوصف حالة قائمة ("باقي ٢")، مش حدث
+ * حصل. ولو خزّنّاها، هتفضل معلّقة بعد ما المشكلة تتحل.
+ *
+ * نفس مبدأ رصيد الخزينة: ناتج جمع، مش رقم مخزّن.
+ */
+export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE';
+export type AlertSeverity = 'HIGH' | 'MEDIUM';
+
+export interface AlertRow {
+  alertType: AlertType;
+  severity: AlertSeverity;
+  entityId: string;
+  title: string;
+  detail: string;
+  metric: number;
+}
+
+export interface AlertRepository {
+  list(tenantId: string, branchId: string | null): Promise<AlertRow[]>;
 }
 
 // ─────────── التقارير ───────────
