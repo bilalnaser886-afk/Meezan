@@ -76,6 +76,11 @@ export interface UpdateProductRequest {
   entryDate?: string | null;
   /** ⚠ محكوم بصلاحية منفصلة — شوف updateProduct */
   reorderPoint?: number | null;
+  customsCleared?: boolean;
+  /** 0–100. null = ما اتقاسش. */
+  batteryHealth?: number | null;
+  /** "256GB" · "8/256" · "1TB" */
+  storageCapacity?: string | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -309,6 +314,9 @@ export async function updateProduct(
     serialNumber?: string | null;
     entryDate?: string;
     reorderPoint?: number;
+    customsCleared?: boolean;
+    batteryHealth?: number | null;
+    storageCapacity?: string | null;
     updatedById: string;
   } = { updatedById: actor.id };
 
@@ -345,6 +353,37 @@ export async function updateProduct(
     }
 
     patch.reorderPoint = point;
+  }
+
+  // ══ تفاصيل الجهاز ══
+  //
+  // الأعمدة دي بتتكتب على الملصق، فالزبون بيقرا منها. غلطة هنا
+  // بتوصل لإيده مطبوعة — عشان كده الفحص أصرم من باقي الحقول.
+  if (input.customsCleared !== undefined) {
+    patch.customsCleared = Boolean(input.customsCleared);
+  }
+
+  if (input.batteryHealth !== undefined) {
+    if (input.batteryHealth === null || input.batteryHealth === ('' as unknown)) {
+      // ⚠ الفاضي معناه "ما اتقاسش" مش صفر. المسح مقصود ومسموح.
+      patch.batteryHealth = null;
+    } else {
+      const battery = Number(input.batteryHealth);
+      if (!Number.isInteger(battery) || battery < 0 || battery > 100) {
+        throw Errors.validation('صحة البطارية رقم من 0 إلى 100، أو اتركها فارغة.');
+      }
+      patch.batteryHealth = battery;
+    }
+  }
+
+  if (input.storageCapacity !== undefined) {
+    const storage = String(input.storageCapacity ?? '').trim();
+    if (!storage) {
+      patch.storageCapacity = null;
+    } else {
+      if (storage.length > 32) throw Errors.validation('المساحة أطول من الحد المسموح.');
+      patch.storageCapacity = storage;
+    }
   }
 
   if (input.name !== undefined) {
