@@ -53,6 +53,7 @@ import {
   listSales,
   updateSaleExitDate,
 } from '../application/use-cases/sales';
+import { getIncomeReport } from '../application/use-cases/reports';
 import {
   createReturn,
   getReturnableLines,
@@ -1082,6 +1083,36 @@ returnRoutes.post(
     );
 
     return c.json({ ok: true, ...result });
+  },
+);
+
+
+// ═══════════════════ 7.6) التقارير ═══════════════════
+
+export const reportRoutes = new Hono<AppBindings>();
+
+/**
+ * قائمة الدخل.
+ *
+ * ⚠ `touchActivity: false` — التقرير بيتحدّث لما تغيّر الفترة،
+ * ومش المفروض يعتبر نشاط بشري كل مرة.
+ *
+ * والصلاحية `report.view_branch`: صاحب المحل ومدير الفرع بس.
+ * المندوب ما عندوش، فالمسار ده مقفول في وشه من الحارس.
+ */
+reportRoutes.get(
+  '/income',
+  requireAuth({ requireAll: [PERMISSIONS.REPORT_VIEW_BRANCH], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const report = await getIncomeReport(
+      container.reports,
+      c.get('user'),
+      c.req.query('from') ?? null,
+      c.req.query('to') ?? null,
+    );
+
+    return c.json({ ok: true, ...report });
   },
 );
 
