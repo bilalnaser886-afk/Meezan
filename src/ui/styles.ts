@@ -199,6 +199,46 @@ button{font:inherit}
    على الأيفون وفي وضع التطبيق المثبّت. */
 #print-root{display:none}
 
+/* ═══ شبكة رسم النمط ═══
+   ٩ نقط، بتتوصّل بالسحب أو الضغط. القيمة بتتخزّن كتسلسل
+   أرقام "1-2-3-6-9" — مش صورة، عشان تتقرا وتتعدّل بالكتابة
+   لو المستخدم عايز. */
+.pat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+  width:200px;margin:8px auto;padding:14px;background:var(--card);
+  border:1px solid var(--line);border-radius:var(--r);touch-action:none}
+.pat-dot{aspect-ratio:1;border-radius:50%;background:var(--line);
+  border:2px solid transparent;display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:12px;color:transparent;cursor:pointer}
+.pat-dot[data-on="true"]{background:var(--brand);border-color:var(--ground);
+  color:var(--ground)}
+.pat-out{text-align:center;font-family:var(--font-mono);font-size:14px;
+  letter-spacing:2px;direction:ltr;margin-top:4px}
+
+/* ═══ عرض بيانات الفتح ═══
+   النمط بيتعاد رسمه متحرّك بدل ما يتعرض كأرقام. الرقم
+   "1-2-3-6-9" لازم تترجمه في دماغك لشكل؛ الرسم بيوريه على طول. */
+.unlock-wrap{position:fixed;inset:0;z-index:250;display:grid;place-items:center;
+  background:rgba(0,0,0,.85);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.unlock-panel{background:var(--card);border-radius:var(--r);padding:20px;
+  width:min(92vw,340px);text-align:center}
+.unlock-title{font-family:var(--font-display);font-size:15px;margin-bottom:14px}
+.unlock-pass{font-family:var(--font-mono);font-size:24px;letter-spacing:3px;
+  direction:ltr;padding:14px;background:var(--ground);color:#fff;
+  border-radius:var(--r);word-break:break-all}
+
+/* مسرح رسم النمط: النقط والخط فوق بعض */
+.pat-play{position:relative;width:220px;height:220px;margin:0 auto}
+.pat-play svg{position:absolute;inset:0;width:100%;height:100%}
+.pat-play-dot{position:absolute;width:22px;height:22px;border-radius:50%;
+  background:var(--line);transform:translate(-50%,-50%);
+  transition:background .18s,box-shadow .18s}
+.pat-play-dot[data-on="true"]{background:var(--brand);
+  box-shadow:0 0 0 5px rgba(176,141,61,.25)}
+.pat-play-seq{font-family:var(--font-mono);font-size:15px;letter-spacing:3px;
+  direction:ltr;margin-top:12px}
+
 /* ═══ الماسح بالكاميرا ═══ */
 .scan-wrap{position:fixed;inset:0;z-index:300;display:grid;place-items:center;
   background:rgba(0,0,0,.88);
