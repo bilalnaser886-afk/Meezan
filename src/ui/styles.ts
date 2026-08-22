@@ -183,6 +183,16 @@ button{font:inherit}
 .menu-item[data-danger]{color:var(--debit)}
 
 /* ═══ شريط الانتباه ═══ بيقول حاجة واحدة: فيه حاجة مستنياك ولا لأ */
+/* ⚠ قاعدة عامة إلزامية — اقراها قبل ما تضيف أي عنصر بـ hidden
+   خاصية hidden في HTML بتشتغل عن طريق قاعدة [hidden]{display:none}
+   في المتصفح نفسه. وأي كلاس عندنا بيحدّد display (زي display:flex)
+   **بيغلبها**، لأن أنماط الصفحة دايمًا أقوى من أنماط المتصفح.
+   النتيجة: عنصر مكتوب عليه hidden وظاهر على الشاشة.
+
+   حصلت فعلاً مع شريط التنبيهات: ظهر فاضي وهو المفروض مخفي.
+   القاعدة دي بتقفل الباب للأبد بدل ما نفتكر نكتب سطر لكل كلاس. */
+[hidden]{display:none !important}
+
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
   border-radius:var(--r);margin-bottom:14px;background:var(--card);
   border:1px solid var(--line)}
