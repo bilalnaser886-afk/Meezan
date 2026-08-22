@@ -74,6 +74,8 @@ export interface UpdateProductRequest {
   source?: string | null;
   serialNumber?: string | null;
   entryDate?: string | null;
+  /** ⚠ محكوم بصلاحية منفصلة — شوف updateProduct */
+  reorderPoint?: number | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -306,10 +308,44 @@ export async function updateProduct(
     source?: string | null;
     serialNumber?: string | null;
     entryDate?: string;
+    reorderPoint?: number;
     updatedById: string;
   } = { updatedById: actor.id };
 
   let changedPrice = false;
+
+  /**
+   * ══ الحد الأدنى — صلاحية منفصلة عن تعديل الكمية ══
+   *
+   * المندوب ومدير الفرع عندهم `inventory.adjust`، يعني بيعدّلوا
+   * الكميات كل يوم. لكن **تحديد الحد** قرار سياسة مش عملية
+   * يومية — مين يقرر إن الجراب لازم يفضل منه ٥؟ صاحب المحل.
+   *
+   * ⚠ صلاحية مش فحص دور: لو حبيت بكرة تدّي مدير فرع واحد الحق
+   * ده، استثناء فردي في `user_permissions` يكفي — من غير ما
+   * تعمله صاحب محل ويشوف التكلفة والأرباح.
+   */
+  if (input.reorderPoint !== undefined && input.reorderPoint !== null) {
+    if (!actor.permissions.includes(PERMISSIONS.INVENTORY_REORDER_POINT)) {
+      throw Errors.forbidden(PERMISSIONS.INVENTORY_REORDER_POINT);
+    }
+
+    const point = Number(input.reorderPoint);
+    if (!Number.isInteger(point) || point < 0) {
+      throw Errors.validation('الحد الأدنى لازم يكون رقمًا صحيحًا غير سالب.');
+    }
+    if (point > MAX_QUANTITY) {
+      throw Errors.validation('الحد الأدنى أكبر من المسموح.');
+    }
+
+    // ⚠ الأجهزة مستبعدة. الجهاز كميته 1 وبتبقى صفر بعد البيع —
+    // ده بيع ناجح مش نقص. حدّ على جهاز معناه إنذار مع كل بيعة.
+    if (existing.productType === 'device' && point > 0) {
+      throw Errors.validation('الحد الأدنى للإكسسوارات فقط — الجهاز قطعة واحدة.');
+    }
+
+    patch.reorderPoint = point;
+  }
 
   if (input.name !== undefined) {
     const name = input.name.trim();
