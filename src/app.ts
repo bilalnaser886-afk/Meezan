@@ -434,6 +434,9 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       roleKey: user.roleKey,
       canEdit,
       canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
+      // ⚠ صلاحية منفصلة عن inventory.adjust: تعديل الكمية
+      // عملية يومية، وتحديد الحد قرار سياسة.
+      canSetReorder: user.permissions.includes(PERMISSIONS.INVENTORY_REORDER_POINT),
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       branches,
