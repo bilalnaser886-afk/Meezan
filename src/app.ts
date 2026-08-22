@@ -22,6 +22,7 @@ import {
   platformRoutes,
   productRoutes,
   reportRoutes,
+  transferRoutes,
   returnRoutes,
   saleRoutes,
   setupRoutes,
@@ -112,6 +113,7 @@ app.route('/api/products', productRoutes);
 app.route('/api/sales', saleRoutes);
 app.route('/api/returns', returnRoutes);
 app.route('/api/reports', reportRoutes);
+app.route('/api/transfers', transferRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
@@ -415,12 +417,18 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
   const idleRule = idleRuleFor(user.roleKey);
   const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
 
-  const [products, branches, branchLabel] = await Promise.all([
+  const [products, branches, allBranches, branchLabel] = await Promise.all([
     listProducts(container.products, user),
-    // قائمة الفروع للمالك بس — غيره مقفول على فرعه والاختيار
-    // مالوش معنى عنده
+    // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
+    // والاختيار مالوش معنى عنده
     user.roleKey === 'SUPER_ADMIN' && canEdit
       ? listBranchesForActor(container.users, user).catch(() => [])
+      : Promise.resolve([]),
+    // ⚠ قائمة منفصلة للتحويل. دي بتتجاب **لكل الأدوار** لأن
+    // المندوب كمان بيحوّل، ومحتاج يشوف أسماء فروع محله.
+    // أسماء الفروع مش بيانات حسّاسة — دي فروعه هو.
+    canEdit
+      ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
     branchLabelFor(container, user),
   ]);
@@ -440,6 +448,14 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       branches,
+      // ⚠ فروع التحويل غير قائمة الإضافة: هنا بنستبعد فرع
+      // المستخدم نفسه — تحويل لفرعك مالوش معنى، والقاعدة
+      // بترفضه أصلاً بقيد صريح.
+      // فرع المستخدم مستبعد — تحويل لفرعك مالوش معنى، والقاعدة
+      // بترفضه بقيد صريح أصلاً
+      transferTargets: allBranches
+        .filter((b) => b.id !== user.branchId)
+        .map((b) => ({ id: b.id, name: b.name })),
       products,
       today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
