@@ -41,6 +41,7 @@ import type {
   SaleDetail,
   SaleItemLine,
   AlertRepository,
+  SupplierRepository,
   TransferRepository,
   AlertRow,
   ReportRepository,
@@ -1954,6 +1955,7 @@ export function createReportRepository(db: SupabaseClient): ReportRepository {
           netProfitPiastres: includeCost ? 0 : null,
           expensesPiastres: 0,
           advancesPiastres: 0,
+          inventoryPurchasesPiastres: 0,
         };
       }
 
@@ -1972,6 +1974,7 @@ export function createReportRepository(db: SupabaseClient): ReportRepository {
         netProfitPiastres: maybe(row.net_profit_piastres),
         expensesPiastres: Number(row.expenses_piastres),
         advancesPiastres: Number(row.advances_piastres),
+        inventoryPurchasesPiastres: Number(row.inventory_purchases_piastres ?? 0),
       };
     },
 
@@ -2098,6 +2101,121 @@ export function createTransferRepository(db: SupabaseClient): TransferRepository
         createdAt: String(row.created_at),
         createdBy: String(row.created_by),
       }));
+    },
+  };
+}
+
+
+// ═══════════════ الموردين والديون ═══════════════
+
+function raiseSupplierError(error: { code?: string; message?: string }, fn: string): never {
+  const message = error.message?.trim() || 'تعذّر إتمام العملية.';
+  switch (error.code) {
+    case 'MZ400': throw Errors.validation(message);
+    case 'MZ403': throw Errors.forbidden('supplier scope');
+    case 'MZ404': throw Errors.notFound('المورّد');
+    case 'MZ500': throw Errors.internal(message);
+    default:
+      if (error.code === '23505') throw Errors.validation('اسم المورّد ده مسجّل بالفعل.');
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
+}
+
+export function createSupplierRepository(db: SupabaseClient): SupplierRepository {
+  return {
+    async listBalances(tenantId) {
+      const { data, error } = await db.rpc('fn_supplier_balances', { p_tenant_id: tenantId });
+      if (error) raiseSupplierError(error, 'fn_supplier_balances');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        supplierId: String(row.supplier_id),
+        name: String(row.name),
+        phone: row.phone ? String(row.phone) : null,
+        notes: row.notes ? String(row.notes) : null,
+        isActive: Boolean(row.is_active),
+        productCount: Number(row.product_count),
+        debtPiastres: Number(row.debt_piastres),
+        paidPiastres: Number(row.paid_piastres),
+        balancePiastres: Number(row.balance_piastres),
+        lastMovement: row.last_movement ? String(row.last_movement).slice(0, 10) : null,
+      }));
+    },
+
+    async create(data) {
+      const { data: rows, error } = await db
+        .from('suppliers')
+        .insert({
+          tenant_id: data.tenantId,
+          name: data.name,
+          phone: data.phone,
+          notes: data.notes,
+          created_by_id: data.createdById,
+        })
+        .select('id');
+
+      if (error) raiseSupplierError(error, 'suppliers.insert');
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('suppliers.insert: مفيش نتيجة');
+      return { id: String(row.id) };
+    },
+
+    async update(id, data) {
+      const patch: Record<string, unknown> = {};
+      if (data.name !== undefined) patch.name = data.name;
+      if (data.phone !== undefined) patch.phone = data.phone;
+      if (data.notes !== undefined) patch.notes = data.notes;
+      if (data.isActive !== undefined) patch.is_active = data.isActive;
+
+      const { error } = await db
+        .from('suppliers').update(patch).eq('id', id).is('deleted_at', null);
+      if (error) raiseSupplierError(error, 'suppliers.update');
+    },
+
+    async findById(id) {
+      const { data, error } = await db
+        .from('suppliers').select('id, tenant_id, name')
+        .eq('id', id).is('deleted_at', null).maybeSingle();
+
+      if (error) raiseSupplierError(error, 'suppliers.findById');
+      if (!data) return null;
+
+      const row = data as Record<string, unknown>;
+      return { id: String(row.id), tenantId: String(row.tenant_id), name: String(row.name) };
+    },
+
+    async recordDebt(input) {
+      const { data, error } = await db.rpc('fn_supplier_debt', {
+        p_supplier_id: input.supplierId,
+        p_actor_id: input.actorId,
+        p_amount: input.amountPiastres,
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseSupplierError(error, 'fn_supplier_debt');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_supplier_debt: مفيش نتيجة');
+      return { movementId: String(row.movement_id), newBalance: Number(row.new_balance) };
+    },
+
+    async recordPayment(input) {
+      const { data, error } = await db.rpc('fn_supplier_payment', {
+        p_supplier_id: input.supplierId,
+        p_actor_id: input.actorId,
+        p_treasury_id: input.treasuryId,
+        p_amount: input.amountPiastres,
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseSupplierError(error, 'fn_supplier_payment');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_supplier_payment: مفيش نتيجة');
+      return {
+        movementId: String(row.movement_id),
+        treasuryMovementId: String(row.treasury_movement_id),
+        newBalance: Number(row.new_balance),
+      };
     },
   };
 }
