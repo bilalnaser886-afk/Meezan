@@ -56,6 +56,19 @@ import {
 import { getIncomeReport } from '../application/use-cases/reports';
 import { listAlerts } from '../application/use-cases/alerts';
 import {
+  createRepairShop,
+  createTicket,
+  getShopHistory,
+  getTicketUnlock,
+  listMaintenanceRecords,
+  listRepairShops,
+  listTickets,
+  returnFromMaintenance,
+  sendToMaintenance,
+  updateTicket,
+  updateTicketUnlock,
+} from '../application/use-cases/maintenance';
+import {
   createSupplier,
   listSuppliers,
   recordSupplierDebt,
@@ -1280,6 +1293,165 @@ supplierRoutes.post(
         : await recordSupplierPayment(container.suppliers, c.get('user'), id, input);
 
     return c.json({ ok: true, ...result });
+  },
+);
+
+
+// ═══════════════════ 7.9) الصيانة ═══════════════════
+
+export const maintenanceRoutes = new Hono<AppBindings>();
+
+const VIEW = { requireAll: [PERMISSIONS.MAINTENANCE_VIEW], touchActivity: false };
+const MANAGE = { requireAll: [PERMISSIONS.MAINTENANCE_MANAGE] };
+
+/** كل بيانات الشاشة في رحلة واحدة */
+maintenanceRoutes.get('/', requireAuth(VIEW), async (c) => {
+  const container = buildContainer(c.env);
+  const user = c.get('user');
+  const openOnly = c.req.query('all') !== '1';
+
+  const [shops, records, tickets] = await Promise.all([
+    listRepairShops(container.maintenance, user),
+    listMaintenanceRecords(container.maintenance, user, openOnly),
+    listTickets(container.maintenance, user, openOnly, c.req.query('q') ?? null),
+  ]);
+
+  return c.json({ ok: true, shops, records, tickets });
+});
+
+maintenanceRoutes.get('/shops/:id/history', requireAuth(VIEW), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الورشة مفقود.');
+
+  const container = buildContainer(c.env);
+  const history = await getShopHistory(container.maintenance, c.get('user'), id);
+  return c.json({ ok: true, history });
+});
+
+maintenanceRoutes.post('/shops', requireAuth(MANAGE), async (c) => {
+  const body = await readJson<{ name?: string; phone?: string; notes?: string }>(c);
+  const container = buildContainer(c.env);
+  const created = await createRepairShop(container.maintenance, c.get('user'), {
+    name: String(body.name ?? ''),
+    phone: body.phone ?? null,
+    notes: body.notes ?? null,
+  });
+  return c.json({ ok: true, ...created });
+});
+
+/** إرسال جهاز المحل — بيخصم من المخزون */
+maintenanceRoutes.post('/product/:id', requireAuth(MANAGE), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف المنتج مفقود.');
+
+  const body = await readJson<{ shopId?: string; fault?: string; cost?: string }>(c);
+  const container = buildContainer(c.env);
+  const result = await sendToMaintenance(container.maintenance, c.get('user'), id, {
+    shopId: body.shopId ?? null,
+    fault: String(body.fault ?? ''),
+    cost: body.cost ?? null,
+  });
+  return c.json({ ok: true, ...result });
+});
+
+maintenanceRoutes.post('/record/:id/return', requireAuth(MANAGE), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف السجل مفقود.');
+
+  const body = await readJson<{ status?: string; cost?: string; note?: string }>(c);
+  const container = buildContainer(c.env);
+  const result = await returnFromMaintenance(container.maintenance, c.get('user'), id, {
+    status: String(body.status ?? ''),
+    cost: body.cost ?? null,
+    note: body.note ?? null,
+  });
+  return c.json({ ok: true, ...result });
+});
+
+/**
+ * استلام جهاز عميل.
+ *
+ * ⚠ صلاحية العرض كافية — المندوب هو اللي بيستلم على الكاونتر.
+ * الإدارة (الحالة والتكلفة) هي المحصورة.
+ */
+maintenanceRoutes.post('/tickets', requireAuth({ requireAll: [PERMISSIONS.MAINTENANCE_VIEW] }),
+  async (c) => {
+    const body = await readJson<Record<string, string | null>>(c);
+    const container = buildContainer(c.env);
+    const created = await createTicket(container.maintenance, c.get('user'), {
+      customerName: String(body.customerName ?? ''),
+      customerPhone: body.customerPhone ?? null,
+      deviceName: String(body.deviceName ?? ''),
+      serialNumber: body.serialNumber ?? null,
+      deviceColor: body.deviceColor ?? null,
+      conditionNote: body.conditionNote ?? null,
+      complaint: String(body.complaint ?? ''),
+      unlockKind: String(body.unlockKind ?? 'NONE'),
+      unlockValue: body.unlockValue ?? null,
+      repairShopId: body.repairShopId ?? null,
+      cost: body.cost ?? null,
+      promisedDate: body.promisedDate ?? null,
+      parentTicketId: body.parentTicketId ?? null,
+    });
+    return c.json({ ok: true, ...created });
+  },
+);
+
+maintenanceRoutes.post('/tickets/:id', requireAuth(MANAGE), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف التذكرة مفقود.');
+
+  const body = await readJson<Record<string, string | null>>(c);
+  const container = buildContainer(c.env);
+  await updateTicket(container.maintenance, c.get('user'), id, {
+    status: body.status ?? undefined,
+    cost: body.cost ?? undefined,
+    workNote: body.workNote ?? undefined,
+    repairShopId: body.repairShopId ?? undefined,
+  });
+  return c.json({ ok: true });
+});
+
+/**
+ * تعديل بيانات فتح الجهاز.
+ *
+ * ⚠ صلاحية **العرض** كافية، مش الإدارة.
+ *
+ * الموظّف اللي كتب الرقم غلط لازم يصلّح غلطته فورًا. لو خلّيناها
+ * للمدير، الرقم الغلط هيفضل مكتوب لحد ما المدير يفضى — والجهاز
+ * مقفول طول الوقت ده.
+ */
+maintenanceRoutes.post('/tickets/:id/unlock',
+  requireAuth({ requireAll: [PERMISSIONS.MAINTENANCE_VIEW] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف التذكرة مفقود.');
+
+    const body = await readJson<{ unlockKind?: string; unlockValue?: string }>(c);
+    const container = buildContainer(c.env);
+    await updateTicketUnlock(container.maintenance, c.get('user'), id, {
+      unlockKind: String(body.unlockKind ?? 'NONE'),
+      unlockValue: body.unlockValue ?? null,
+    });
+    return c.json({ ok: true });
+  },
+);
+
+/**
+ * بيانات فتح الجهاز.
+ *
+ * ⚠ نداء منفصل عن القائمة عن قصد — عشان القراءة تبقى فعل ليه
+ * صاحب ووقت، مش حاجة بتيجي مع كل تحميل شاشة. وكل نداء بيتسجّل.
+ */
+maintenanceRoutes.get('/tickets/:id/unlock',
+  requireAuth({ requireAll: [PERMISSIONS.MAINTENANCE_VIEW] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف التذكرة مفقود.');
+
+    const container = buildContainer(c.env);
+    const unlock = await getTicketUnlock(container.maintenance, c.get('user'), id);
+    return c.json({ ok: true, ...unlock });
   },
 );
 
