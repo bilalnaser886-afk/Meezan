@@ -41,6 +41,7 @@ import type {
   SaleDetail,
   SaleItemLine,
   AlertRepository,
+  TransferRepository,
   AlertRow,
   ReportRepository,
   ReturnRepository,
@@ -956,7 +957,8 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
-  'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, is_active';
+  'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
+  'customs_cleared, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -975,6 +977,7 @@ interface RawProduct {
   quantity_on_hand: number | string;
   quarantined_quantity: number | string | null;
   reorder_point: number | string | null;
+  customs_cleared: boolean | null;
   is_active: boolean;
   cost_piastres?: number | string;
 }
@@ -998,6 +1001,7 @@ function toProduct(raw: RawProduct): ProductRecord {
     quantityOnHand: Number(raw.quantity_on_hand),
     quarantinedQuantity: Number(raw.quarantined_quantity ?? 0),
     reorderPoint: Number(raw.reorder_point ?? 0),
+    customsCleared: Boolean(raw.customs_cleared),
     isActive: raw.is_active,
   };
 
@@ -1103,6 +1107,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       // ⚠ محكوم بصلاحية `inventory.reorder_point` في حالة الاستخدام،
       // مش هنا. المستودع بينفّذ، والقرار فوق.
       if (data.reorderPoint !== undefined) patch.reorder_point = data.reorderPoint;
+      if (data.customsCleared !== undefined) patch.customs_cleared = data.customsCleared;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
@@ -2013,6 +2018,85 @@ export function createAlertRepository(db: SupabaseClient): AlertRepository {
         title: String(row.title),
         detail: String(row.detail),
         metric: Number(row.metric),
+      }));
+    },
+  };
+}
+
+
+// ═══════════════ التحويل بين الفروع ═══════════════
+
+function raiseTransferError(error: { code?: string; message?: string }, fn: string): never {
+  const message = error.message?.trim() || 'تعذّر إتمام التحويل.';
+  switch (error.code) {
+    case 'MZ400': throw Errors.validation(message);
+    case 'MZ403': throw Errors.forbidden(`transfer scope: ${message}`);
+    case 'MZ404': throw Errors.notFound('العنصر المطلوب');
+    default:
+      if (error.code === '23514') throw Errors.validation('الكمية غير صالحة.');
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
+}
+
+export function createTransferRepository(db: SupabaseClient): TransferRepository {
+  return {
+    async create(input) {
+      const { data, error } = await db.rpc('fn_create_transfer', {
+        p_product_id: input.productId,
+        p_actor_id: input.actorId,
+        p_to_branch_id: input.toBranchId,
+        p_quantity: input.quantity,
+        p_note: input.note,
+      });
+      if (error) raiseTransferError(error, 'fn_create_transfer');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_create_transfer: مفيش نتيجة');
+
+      return {
+        transferId: String(row.transfer_id),
+        productName: String(row.product_name),
+        moved: Number(row.moved),
+      };
+    },
+
+    async resolve(transferId, actorId, decision) {
+      const { data, error } = await db.rpc('fn_resolve_transfer', {
+        p_transfer_id: transferId,
+        p_actor_id: actorId,
+        p_decision: decision,
+      });
+      if (error) raiseTransferError(error, 'fn_resolve_transfer');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_resolve_transfer: مفيش نتيجة');
+
+      return {
+        productName: String(row.product_name),
+        moved: Number(row.moved),
+        finalStatus: String(row.final_status),
+      };
+    },
+
+    async listPending(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_pending_transfers', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) raiseTransferError(error, 'fn_pending_transfers');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        id: String(row.id),
+        direction: String(row.direction) as 'IN' | 'OUT' | 'BOTH',
+        productName: String(row.product_name),
+        productType: String(row.product_type),
+        serialNumber: row.serial_number ? String(row.serial_number) : null,
+        quantity: Number(row.quantity),
+        fromBranch: String(row.from_branch),
+        toBranch: String(row.to_branch),
+        note: row.note ? String(row.note) : null,
+        createdAt: String(row.created_at),
+        createdBy: String(row.created_by),
       }));
     },
   };
