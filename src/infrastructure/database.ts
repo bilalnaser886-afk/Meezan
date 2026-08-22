@@ -40,6 +40,7 @@ import type {
   RoleKey,
   SaleDetail,
   SaleItemLine,
+  ReportRepository,
   ReturnRepository,
   SaleRepository,
   SaleSummary,
@@ -1897,6 +1898,83 @@ export function createReturnRepository(db: SupabaseClient): ReturnRepository {
         remainingHeld: Number(row.remaining_held),
         nowOnHand: Number(row.now_on_hand),
       };
+    },
+  };
+}
+
+
+// ═══════════════ التقارير ═══════════════
+
+/**
+ * ⚠ الدالتين دول **قراءة بس**. مفيش ولا سطر بيتكتب.
+ *
+ * وحجب التكلفة بيحصل في قاعدة البيانات: لو `includeCost` false،
+ * أعمدة التكلفة والربح بترجع فاضية ومش بتتحسب أصلاً. يعني مفيش
+ * حاجة تتخبّى في الواجهة — الرقم ما وصلش الخادم أصلاً.
+ */
+export function createReportRepository(db: SupabaseClient): ReportRepository {
+  return {
+    async incomeStatement(tenantId, branchId, from, to, includeCost) {
+      const { data, error } = await db.rpc('fn_income_statement', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+        p_from: from,
+        p_to: to,
+        p_include_cost: includeCost,
+      });
+      if (error) throw Errors.internal(`fn_income_statement: ${error.message}`);
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      // فترة بلا حركة بترجّع صف بأصفار، مش صف ناقص — بس نحرس برضه
+      if (!row) {
+        return {
+          salesCount: 0,
+          salesPiastres: 0,
+          refundsCount: 0,
+          refundsPiastres: 0,
+          refundFeesPiastres: 0,
+          netSalesPiastres: 0,
+          cogsPiastres: includeCost ? 0 : null,
+          returnedCogsPiastres: includeCost ? 0 : null,
+          grossProfitPiastres: includeCost ? 0 : null,
+          netProfitPiastres: includeCost ? 0 : null,
+          expensesPiastres: 0,
+          advancesPiastres: 0,
+        };
+      }
+
+      const maybe = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+
+      return {
+        salesCount: Number(row.sales_count),
+        salesPiastres: Number(row.sales_piastres),
+        refundsCount: Number(row.refunds_count),
+        refundsPiastres: Number(row.refunds_piastres),
+        refundFeesPiastres: Number(row.refund_fees_piastres),
+        netSalesPiastres: Number(row.net_sales_piastres),
+        cogsPiastres: maybe(row.cogs_piastres),
+        returnedCogsPiastres: maybe(row.returned_cogs_piastres),
+        grossProfitPiastres: maybe(row.gross_profit_piastres),
+        netProfitPiastres: maybe(row.net_profit_piastres),
+        expensesPiastres: Number(row.expenses_piastres),
+        advancesPiastres: Number(row.advances_piastres),
+      };
+    },
+
+    async expenseBreakdown(tenantId, branchId, from, to) {
+      const { data, error } = await db.rpc('fn_expense_breakdown', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+        p_from: from,
+        p_to: to,
+      });
+      if (error) throw Errors.internal(`fn_expense_breakdown: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        reasonName: String(row.reason_name),
+        movementCount: Number(row.movement_count),
+        totalPiastres: Number(row.total_piastres),
+      }));
     },
   };
 }
