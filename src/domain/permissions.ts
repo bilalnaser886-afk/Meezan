@@ -54,6 +54,13 @@ export const PERMISSIONS = {
   RECORD_RESTORE: 'record.restore',
   RECORD_HARD_DELETE: 'record.hard_delete',
 
+  // ── الموردين ──
+  /**
+   * ⚠ صاحب المحل ومدير الفرع. أسماء الموردين نفسها بتتقرا مع
+   * المنتجات بلا صلاحية — دي للأرصدة والديون والسداد.
+   */
+  SUPPLIER_MANAGE: 'supplier.manage',
+
   // ── الفروع ──
   BRANCH_VIEW: 'branch.view',
   BRANCH_MANAGE: 'branch.manage',
@@ -109,6 +116,10 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
   [PERMISSIONS.RECORD_VIEW_DELETED]: { group: 'الأرشيف', description: 'عرض السجلات المؤرشفة' },
   [PERMISSIONS.RECORD_RESTORE]: { group: 'الأرشيف', description: 'استرجاع سجل مؤرشف' },
   [PERMISSIONS.RECORD_HARD_DELETE]: { group: 'الأرشيف', description: 'حذف نهائي لأي سجل' },
+  [PERMISSIONS.SUPPLIER_MANAGE]: {
+    group: 'الموردين',
+    description: 'إدارة الموردين والديون والسداد',
+  },
   [PERMISSIONS.BRANCH_VIEW]: { group: 'الفروع', description: 'عرض الفروع' },
   [PERMISSIONS.BRANCH_MANAGE]: { group: 'الفروع', description: 'إضافة وتعديل الفروع' },
   [PERMISSIONS.TENANT_VIEW]: { group: 'المنصّة', description: 'عرض المحلات المشتركة' },
@@ -184,6 +195,7 @@ export const ROLE_PERMISSIONS: Record<
     PERMISSIONS.USER_CREATE,
     PERMISSIONS.USER_EDIT,
     PERMISSIONS.USER_SOFT_DELETE,
+    PERMISSIONS.SUPPLIER_MANAGE,
     PERMISSIONS.BRANCH_VIEW,
     PERMISSIONS.ANNOUNCEMENT_VIEW,
     PERMISSIONS.ALERT_VIEW,
