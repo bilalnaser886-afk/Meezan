@@ -564,6 +564,13 @@ app.get('/maintenance', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const idleRule = idleRuleFor(user.roleKey);
 
+  // ⚠ للمالك بس: هو مالوش فرع، فلازم يختار. غيره مقفول على
+  // فرعه والاختيار مالوش معنى عنده.
+  const branches =
+    user.roleKey === 'SUPER_ADMIN'
+      ? await container.branches.listActive(user.tenantId).catch(() => [])
+      : [];
+
   return c.html(
     maintenancePage({
       fullName: user.fullName,
@@ -575,6 +582,7 @@ app.get('/maintenance', requireAuth({ redirectOnFail: true }), async (c) => {
       canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       canManage: user.permissions.includes(PERMISSIONS.MAINTENANCE_MANAGE),
+      branches: branches.map((b) => ({ id: b.id, name: b.name })),
       today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
