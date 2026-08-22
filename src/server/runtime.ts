@@ -22,6 +22,7 @@ import type { ProductDeps } from '../application/use-cases/products';
 import type { SaleDeps } from '../application/use-cases/sales';
 import type { ReturnDeps } from '../application/use-cases/returns';
 import type { ReportDeps } from '../application/use-cases/reports';
+import type { AlertDeps } from '../application/use-cases/alerts';
 import type { CustomerDeps } from '../application/use-cases/customers';
 import type { PlatformDeps } from '../application/use-cases/platform';
 import type { BranchRepository } from '../application/ports';
@@ -39,6 +40,7 @@ import {
   createMovementRepository,
   createProductRepository,
   createRateLimiter,
+  createAlertRepository,
   createReportRepository,
   createReturnRepository,
   createSaleRepository,
@@ -61,6 +63,7 @@ export interface Container {
   sales: SaleDeps;
   returns: ReturnDeps;
   reports: ReportDeps;
+  alerts: AlertDeps;
   customers: CustomerDeps;
   platform: PlatformDeps;
   branches: BranchRepository;
@@ -146,6 +149,10 @@ export function buildContainer(env: Env): Container {
       reports: createReportRepository(db),
       clock: systemClock,
       audit,
+    },
+    alerts: {
+      alerts: createAlertRepository(db),
+      clock: systemClock,
     },
     customers: {
       customers: createCustomerRepository(db),
