@@ -54,6 +54,12 @@ export const PERMISSIONS = {
   RECORD_RESTORE: 'record.restore',
   RECORD_HARD_DELETE: 'record.hard_delete',
 
+  // ── الصيانة ──
+  /** العرض للكل — المندوب بيستلم الأجهزة على الكاونتر */
+  MAINTENANCE_VIEW: 'maintenance.view',
+  /** الحالات والتكاليف وإدارة الورش — المالك والمدير */
+  MAINTENANCE_MANAGE: 'maintenance.manage',
+
   // ── الموردين ──
   /**
    * ⚠ صاحب المحل ومدير الفرع. أسماء الموردين نفسها بتتقرا مع
@@ -116,6 +122,14 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
   [PERMISSIONS.RECORD_VIEW_DELETED]: { group: 'الأرشيف', description: 'عرض السجلات المؤرشفة' },
   [PERMISSIONS.RECORD_RESTORE]: { group: 'الأرشيف', description: 'استرجاع سجل مؤرشف' },
   [PERMISSIONS.RECORD_HARD_DELETE]: { group: 'الأرشيف', description: 'حذف نهائي لأي سجل' },
+  [PERMISSIONS.MAINTENANCE_VIEW]: {
+    group: 'الصيانة',
+    description: 'عرض تذاكر وسجلات الصيانة',
+  },
+  [PERMISSIONS.MAINTENANCE_MANAGE]: {
+    group: 'الصيانة',
+    description: 'إدارة الورش والحالات والتكاليف',
+  },
   [PERMISSIONS.SUPPLIER_MANAGE]: {
     group: 'الموردين',
     description: 'إدارة الموردين والديون والسداد',
@@ -196,6 +210,8 @@ export const ROLE_PERMISSIONS: Record<
     PERMISSIONS.USER_EDIT,
     PERMISSIONS.USER_SOFT_DELETE,
     PERMISSIONS.SUPPLIER_MANAGE,
+    PERMISSIONS.MAINTENANCE_VIEW,
+    PERMISSIONS.MAINTENANCE_MANAGE,
     PERMISSIONS.BRANCH_VIEW,
     PERMISSIONS.ANNOUNCEMENT_VIEW,
     PERMISSIONS.ALERT_VIEW,
@@ -240,6 +256,7 @@ export const ROLE_PERMISSIONS: Record<
     PERMISSIONS.EXPENSE_CREATE,
     PERMISSIONS.INVENTORY_VIEW,
     PERMISSIONS.INVENTORY_ADJUST,
+    PERMISSIONS.MAINTENANCE_VIEW,
     PERMISSIONS.ANNOUNCEMENT_VIEW,
   ],
 };
