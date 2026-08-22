@@ -56,6 +56,12 @@ import {
 import { getIncomeReport } from '../application/use-cases/reports';
 import { listAlerts } from '../application/use-cases/alerts';
 import {
+  createSupplier,
+  listSuppliers,
+  recordSupplierDebt,
+  recordSupplierPayment,
+} from '../application/use-cases/suppliers';
+import {
   createTransfer,
   listPendingTransfers,
   resolveTransfer,
@@ -1197,6 +1203,81 @@ transferRoutes.post(
 
     const container = buildContainer(c.env);
     const result = await resolveTransfer(container.transfers, c.get('user'), id, decision);
+
+    return c.json({ ok: true, ...result });
+  },
+);
+
+
+// ═══════════════════ 7.8) الموردين والديون ═══════════════════
+
+export const supplierRoutes = new Hono<AppBindings>();
+
+supplierRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const suppliers = await listSuppliers(container.suppliers, c.get('user'));
+    return c.json({ ok: true, suppliers });
+  },
+);
+
+supplierRoutes.post(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; phone?: string; notes?: string }>(c);
+    const container = buildContainer(c.env);
+    const created = await createSupplier(container.suppliers, c.get('user'), {
+      name: String(body.name ?? ''),
+      phone: body.phone ?? null,
+      notes: body.notes ?? null,
+    });
+    return c.json({ ok: true, ...created });
+  },
+);
+
+/**
+ * حركة على حساب المورّد.
+ *
+ * ⚠ النوعين في مسار واحد عن قصد: الاتنين بيغيّروا نفس الرصيد،
+ * والفرق بينهم إن السداد بيمسّ الخزينة كمان. فصلهم لمسارين كان
+ * هيخلّي الواجهة تختار المسار — والاختيار ده منطق مالي مكانه
+ * الخادم.
+ */
+supplierRoutes.post(
+  '/:id/movement',
+  requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المورّد مفقود.');
+
+    const body = await readJson<{
+      kind?: string;
+      amount?: string;
+      note?: string;
+      date?: string;
+      treasuryId?: string;
+    }>(c);
+
+    const kind = String(body.kind ?? '');
+    if (kind !== 'DEBT' && kind !== 'PAYMENT') {
+      throw Errors.validation('نوع الحركة غير صحيح.');
+    }
+
+    const container = buildContainer(c.env);
+    const input = {
+      amount: String(body.amount ?? ''),
+      note: body.note ?? null,
+      date: body.date ?? null,
+      treasuryId: body.treasuryId,
+    };
+
+    const result =
+      kind === 'DEBT'
+        ? await recordSupplierDebt(container.suppliers, c.get('user'), id, input)
+        : await recordSupplierPayment(container.suppliers, c.get('user'), id, input);
 
     return c.json({ ok: true, ...result });
   },
