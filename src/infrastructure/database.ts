@@ -959,7 +959,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
-  'customs_cleared, is_active';
+  'customs_cleared, battery_health, storage_capacity, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -979,6 +979,8 @@ interface RawProduct {
   quarantined_quantity: number | string | null;
   reorder_point: number | string | null;
   customs_cleared: boolean | null;
+  battery_health: number | string | null;
+  storage_capacity: string | null;
   is_active: boolean;
   cost_piastres?: number | string;
 }
@@ -1003,6 +1005,9 @@ function toProduct(raw: RawProduct): ProductRecord {
     quarantinedQuantity: Number(raw.quarantined_quantity ?? 0),
     reorderPoint: Number(raw.reorder_point ?? 0),
     customsCleared: Boolean(raw.customs_cleared),
+    batteryHealth: raw.battery_health === null || raw.battery_health === undefined
+      ? null : Number(raw.battery_health),
+    storageCapacity: raw.storage_capacity ? String(raw.storage_capacity) : null,
     isActive: raw.is_active,
   };
 
@@ -1109,6 +1114,8 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       // مش هنا. المستودع بينفّذ، والقرار فوق.
       if (data.reorderPoint !== undefined) patch.reorder_point = data.reorderPoint;
       if (data.customsCleared !== undefined) patch.customs_cleared = data.customsCleared;
+      if (data.batteryHealth !== undefined) patch.battery_health = data.batteryHealth;
+      if (data.storageCapacity !== undefined) patch.storage_capacity = data.storageCapacity;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
