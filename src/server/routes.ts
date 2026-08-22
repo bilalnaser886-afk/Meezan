@@ -1392,6 +1392,7 @@ maintenanceRoutes.post('/tickets', requireAuth({ requireAll: [PERMISSIONS.MAINTE
       cost: body.cost ?? null,
       promisedDate: body.promisedDate ?? null,
       parentTicketId: body.parentTicketId ?? null,
+      branchId: body.branchId ?? null,
     });
     return c.json({ ok: true, ...created });
   },
