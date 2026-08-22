@@ -896,6 +896,8 @@ export interface DashboardData {
   canSeeCost: boolean;
   /** supplier.manage — صاحب المحل ومدير الفرع */
   canManageSuppliers: boolean;
+  /** maintenance.view — الكل */
+  canViewMaintenance: boolean;
   canBroadcast: boolean;
   canViewUsers: boolean;
   canCreateUsers: boolean;
@@ -1273,6 +1275,13 @@ export function dashboardPage(data: DashboardData): Html {
       <span class="tile-note">
         ${data.canSeeCost ? 'كسبت كام هذا الشهر' : 'حركة فرعك هذا الشهر'}
       </span>
+    </a>`);
+  }
+
+  if (data.canViewMaintenance) {
+    tiles.push(html`<a class="tile" href="/maintenance">
+      <span class="tile-label">الصيانة</span>
+      <span class="tile-note">أجهزة العملاء والورش</span>
     </a>`);
   }
 
@@ -5988,6 +5997,801 @@ ${shared}
       setTimeout(function () { window.location.reload(); }, 800);
     }
   });
+
+  load();
+})();
+`;
+}
+
+
+// ═══════════════════ شاشة الصيانة ═══════════════════
+
+export interface MaintenancePageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  tenantName: string;
+  roleKey: string;
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  /** maintenance.manage — الحالات والتكاليف وإدارة الورش */
+  canManage: boolean;
+  today: string;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * الصيانة — تبويبين لنوعين مختلفين تمامًا.
+ *
+ * أجهزة العملاء أولًا لأنها الأكتر يوميًا: الزبون بيقف على
+ * الكاونتر مستني. أجهزة المحل بتروح للورشة مرة كل فترة.
+ */
+export function maintenancePage(data: MaintenancePageData): Html {
+  return shell({
+    title: 'الصيانة',
+    script: maintenanceScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.canManage,
+    ),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="mtmsg" role="alert" hidden><span id="mtmsg-text"></span></div>
+
+  <details class="panel">
+    <summary>استلام جهاز عميل</summary>
+    <div class="panel-body">
+      <label class="field-label" for="tk-cname">اسم العميل</label>
+      <input class="field-input" id="tk-cname" type="text" maxlength="80" autocomplete="off">
+
+      <label class="field-label" for="tk-cphone">هاتف العميل</label>
+      <input class="field-input" id="tk-cphone" type="text" dir="ltr" maxlength="32"
+        autocomplete="off">
+
+      <label class="field-label" for="tk-device">الجهاز</label>
+      <input class="field-input" id="tk-device" type="text" maxlength="80" autocomplete="off">
+
+      <label class="field-label" for="tk-serial">السريال (اختياري)</label>
+      <input class="field-input" id="tk-serial" type="text" dir="ltr" maxlength="64"
+        autocomplete="off">
+
+      <label class="field-label" for="tk-color">اللون</label>
+      <input class="field-input" id="tk-color" type="text" maxlength="32" autocomplete="off">
+
+      <label class="field-label" for="tk-cond">حالة الجهاز عند الاستلام</label>
+      <input class="field-input" id="tk-cond" type="text" maxlength="500"
+        placeholder="خدش في الزاوية · الشاشة سليمة" autocomplete="off">
+      <p class="field-hint">
+        اكتبها بدقة — هي التي تحمي الطرفين لو حصل خلاف عند التسليم.
+      </p>
+
+      <label class="field-label" for="tk-complaint">شكوى العميل</label>
+      <input class="field-input" id="tk-complaint" type="text" maxlength="1000"
+        autocomplete="off">
+
+      <label class="field-label" for="tk-unlock-kind">فتح الجهاز</label>
+      <select class="field-input" id="tk-unlock-kind">
+        <option value="NONE">مفتوح / لم يُعطِ البيانات</option>
+        <option value="PASSWORD">كلمة مرور</option>
+        <option value="PATTERN">نمط</option>
+      </select>
+
+      <div id="tk-pass-wrap" hidden>
+        <label class="field-label" for="tk-pass">كلمة المرور</label>
+        <input class="field-input" id="tk-pass" type="text" dir="ltr" maxlength="200"
+          autocomplete="off">
+      </div>
+
+      <div id="tk-pattern-wrap" hidden>
+        <label class="field-label">ارسم النمط</label>
+        <div class="pat-grid" id="tk-pattern">
+          <div class="pat-dot" data-dot="1">1</div><div class="pat-dot" data-dot="2">2</div>
+          <div class="pat-dot" data-dot="3">3</div><div class="pat-dot" data-dot="4">4</div>
+          <div class="pat-dot" data-dot="5">5</div><div class="pat-dot" data-dot="6">6</div>
+          <div class="pat-dot" data-dot="7">7</div><div class="pat-dot" data-dot="8">8</div>
+          <div class="pat-dot" data-dot="9">9</div>
+        </div>
+        <p class="pat-out" id="tk-pattern-out">—</p>
+        <button class="btn-mini" type="button" id="tk-pattern-clear">مسح النمط</button>
+      </div>
+
+      <label class="field-label" for="tk-shop">محل الصيانة</label>
+      <select class="field-input" id="tk-shop"><option value="">— داخليًا —</option></select>
+
+      <label class="field-label" for="tk-cost">التكلفة المتوقّعة</label>
+      <input class="field-input" id="tk-cost" type="text" inputmode="decimal" dir="ltr">
+
+      <label class="field-label" for="tk-promised">تاريخ التسليم المتوقّع</label>
+      <input class="field-input" id="tk-promised" type="date" dir="ltr">
+
+      <button class="btn-mini" type="button" id="tk-add">استلام الجهاز</button>
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>أجهزة العملاء <span id="tk-count"></span></summary>
+    <div class="panel-body">
+      <input class="field-input" id="tk-search" type="search"
+        placeholder="اسم أو هاتف أو سريال" autocomplete="off">
+      <label class="field-label" style="display:flex;gap:8px;align-items:center">
+        <input type="checkbox" id="tk-all"> عرض المسلَّمة والملغاة
+      </label>
+      <div id="tk-rows"><p class="field-hint">جارٍ التحميل…</p></div>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>أجهزة المحل في الورش <span id="mr-count"></span></summary>
+    <div class="panel-body">
+      <p class="field-hint">
+        الجهاز المُرسَل تُخصم كميته من المخزون — لا يصحّ أن يُباع وهو في الورشة.
+        الإرسال يتم من شاشة المنتجات.
+      </p>
+      <div id="mr-rows"></div>
+    </div>
+  </details>
+
+  ${data.canManage
+    ? html`<details class="panel">
+        <summary>محلات الصيانة <span id="rs-count"></span></summary>
+        <div class="panel-body">
+          <label class="field-label" for="rs-name">اسم المحل</label>
+          <input class="field-input" id="rs-name" type="text" maxlength="80" autocomplete="off">
+          <label class="field-label" for="rs-phone">الهاتف</label>
+          <input class="field-input" id="rs-phone" type="text" dir="ltr" maxlength="32"
+            autocomplete="off">
+          <button class="btn-mini" type="button" id="rs-add">إضافة</button>
+          <div id="rs-rows"></div>
+        </div>
+      </details>`
+    : ''}
+</main>
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function maintenanceScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  canManage: boolean,
+): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+(function () {
+  var CAN_MANAGE = ${JSON.stringify(canManage)};
+
+  var box  = document.getElementById('mtmsg');
+  var text = document.getElementById('mtmsg-text');
+
+  var STATUS = {
+    CHECKING: 'قيد الفحص',
+    WAITING_PART: 'بانتظار قطعة غيار',
+    READY: 'جاهز للتسليم',
+    DELIVERED: 'تم التسليم',
+    CANCELLED: 'ملغاة'
+  };
+
+  function say(msg, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok'); else box.removeAttribute('data-tone');
+    text.textContent = msg;
+  }
+
+  function money(p) {
+    var abs = Math.abs(Math.trunc(p || 0));
+    return Math.floor(abs / 100).toLocaleString('en-US') + '.' + String(abs % 100).padStart(2, '0');
+  }
+
+  async function send(url, body, btn, busy, method) {
+    var original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = busy; }
+    try {
+      var res = await fetch(url, {
+        method: method || 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (res.ok && data && data.ok) return data;
+      say((data && data.error && data.error.message) || 'تعذّر تنفيذ الطلب.', false);
+      return null;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return null;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
+
+  // ══════════ رسم النمط ══════════
+  //
+  // ⚠ التسلسل بيتخزّن كأرقام "1-2-3-6-9" مش كصورة.
+  // السبب: النص بيتقرا ويتعدّل بالكتابة لو الشبكة ما اشتغلتش
+  // على جهاز معيّن، والصورة بتبقى طريق واحد بلا مخرج.
+  var pattern = [];
+
+  function paintPattern() {
+    var dots = document.querySelectorAll('#tk-pattern .pat-dot');
+    for (var i = 0; i < dots.length; i++) {
+      dots[i].setAttribute('data-on',
+        pattern.indexOf(dots[i].getAttribute('data-dot')) !== -1 ? 'true' : 'false');
+    }
+    var out = document.getElementById('tk-pattern-out');
+    if (out) out.textContent = pattern.length ? pattern.join('-') : '—';
+  }
+
+  function touchDot(el) {
+    if (!el || !el.getAttribute) return;
+    var d = el.getAttribute('data-dot');
+    // النقطة ما بتتكررش — النمط في أندرويد ما بيعديش على نفس
+    // النقطة مرتين
+    if (!d || pattern.indexOf(d) !== -1) return;
+    pattern.push(d);
+    paintPattern();
+  }
+
+  var grid = document.getElementById('tk-pattern');
+  if (grid) {
+    var drawing = false;
+    grid.addEventListener('pointerdown', function (e) {
+      drawing = true;
+      touchDot(e.target.closest('.pat-dot'));
+    });
+    grid.addEventListener('pointermove', function (e) {
+      if (!drawing) return;
+      // السحب على الموبايل: العنصر تحت الإصبع مش اللي بدأنا منه
+      var el = document.elementFromPoint(e.clientX, e.clientY);
+      if (el && el.classList && el.classList.contains('pat-dot')) touchDot(el);
+    });
+    window.addEventListener('pointerup', function () { drawing = false; });
+
+    var clr = document.getElementById('tk-pattern-clear');
+    if (clr) clr.addEventListener('click', function () { pattern = []; paintPattern(); });
+  }
+
+  // إظهار الحقل المناسب لنوع الفتح
+  var kindEl = document.getElementById('tk-unlock-kind');
+  if (kindEl) {
+    kindEl.addEventListener('change', function () {
+      document.getElementById('tk-pass-wrap').hidden = kindEl.value !== 'PASSWORD';
+      document.getElementById('tk-pattern-wrap').hidden = kindEl.value !== 'PATTERN';
+    });
+  }
+
+  // ══════════ عرض بيانات الفتح ══════════
+  //
+  // ⚠ النمط بيتعاد **رسمه**، مش بيتعرض كأرقام.
+  //
+  // "1-2-3-6-9" رقم لازم تترجمه في دماغك لشكل قبل ما تقدر
+  // ترسمه على الجهاز. والترجمة دي بتتعمل غلط بسهولة — تحت ضغط
+  // وقدّام زبون مستني.
+  //
+  // الرسم المتحرّك بيوري الشكل واتجاه السحب مرة واحدة.
+
+  var PAT_TIMERS = [];
+
+  function clearPatternTimers() {
+    for (var i = 0; i < PAT_TIMERS.length; i++) clearTimeout(PAT_TIMERS[i]);
+    PAT_TIMERS = [];
+  }
+
+  // مكان النقطة في مربع 300×300 — نفس ترتيب لوحة الرسم
+  function dotXY(n) {
+    var idx = parseInt(n, 10) - 1;
+    return { x: (idx % 3) * 100 + 50, y: Math.floor(idx / 3) * 100 + 50 };
+  }
+
+  function playPattern(seq, stage, svg) {
+    clearPatternTimers();
+
+    var dots = stage.querySelectorAll('.pat-play-dot');
+    for (var i = 0; i < dots.length; i++) dots[i].setAttribute('data-on', 'false');
+    svg.textContent = '';
+
+    var steps = String(seq || '').split('-').filter(function (x) { return x; });
+    if (steps.length === 0) return;
+
+    // النقطة الأولى بتنوّر فورًا، وكل خط بعدها بمهلة
+    var STEP = 380;
+
+    steps.forEach(function (n, k) {
+      PAT_TIMERS.push(setTimeout(function () {
+        var dot = stage.querySelector('[data-play="' + n + '"]');
+        if (dot) dot.setAttribute('data-on', 'true');
+
+        if (k > 0) {
+          var a = dotXY(steps[k - 1]);
+          var b = dotXY(n);
+          var ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          ln.setAttribute('x1', a.x); ln.setAttribute('y1', a.y);
+          ln.setAttribute('x2', b.x); ln.setAttribute('y2', b.y);
+          ln.setAttribute('stroke', 'var(--brand)');
+          ln.setAttribute('stroke-width', '5');
+          ln.setAttribute('stroke-linecap', 'round');
+          svg.appendChild(ln);
+        }
+      }, k * STEP));
+    });
+  }
+
+  function showUnlock(kind, value, ticketId) {
+    var wrap = document.createElement('div');
+    wrap.className = 'unlock-wrap';
+
+    var body = '';
+    if (kind === 'PATTERN') {
+      var dotsHtml = '';
+      for (var n = 1; n <= 9; n++) {
+        var p = dotXY(n);
+        dotsHtml += '<div class="pat-play-dot" data-play="' + n +
+          '" style="left:' + (p.x / 3) + '%;top:' + (p.y / 3) + '%"></div>';
+      }
+      body =
+        '<div class="pat-play" id="patstage">' +
+          '<svg viewBox="0 0 300 300" id="patsvg"></svg>' + dotsHtml +
+        '</div>' +
+        '<p class="pat-play-seq">' + (value || '—') + '</p>' +
+        '<button class="btn-mini" type="button" data-replay>إعادة الرسم</button>';
+    } else if (kind === 'PASSWORD') {
+      body = '<div class="unlock-pass">' + (value || '—') + '</div>';
+    } else {
+      body = '<p class="field-hint">لا توجد بيانات فتح محفوظة.</p>';
+    }
+
+    // ⚠ التعديل جوّه نفس النافذة عن قصد: الموظّف اللي شاف الرقم
+    // غلط بيصلّحه في نفس اللحظة، مش بيقفل ويدوّر على شاشة تانية.
+    var edit =
+      '<details class="panel" style="margin-top:14px;text-align:right">' +
+        '<summary>تعديل</summary>' +
+        '<div class="panel-body">' +
+          '<label class="field-label">النوع</label>' +
+          '<select class="field-input" id="uk-kind">' +
+            '<option value="NONE"' + (kind === 'NONE' ? ' selected' : '') +
+              '>مفتوح / لا بيانات</option>' +
+            '<option value="PASSWORD"' + (kind === 'PASSWORD' ? ' selected' : '') +
+              '>كلمة مرور</option>' +
+            '<option value="PATTERN"' + (kind === 'PATTERN' ? ' selected' : '') +
+              '>نمط</option>' +
+          '</select>' +
+          '<label class="field-label" for="uk-val">القيمة</label>' +
+          '<input class="field-input" id="uk-val" type="text" dir="ltr" maxlength="200" ' +
+            'value="' + (value || '') + '" placeholder="للنمط: 1-2-3-6-9">' +
+          '<p class="field-hint">' +
+            'النمط يُكتب أرقامًا بالترتيب مفصولة بشرطة، حسب مواضع النقاط أعلاه.' +
+          '</p>' +
+          '<button class="btn-mini" type="button" data-uk-save>حفظ</button>' +
+        '</div>' +
+      '</details>';
+
+    wrap.innerHTML =
+      '<div class="unlock-panel">' +
+        '<div class="unlock-title">' +
+          (kind === 'PATTERN' ? 'نمط فتح الجهاز'
+            : kind === 'PASSWORD' ? 'كلمة مرور الجهاز' : 'بيانات فتح الجهاز') +
+        '</div>' + body + edit +
+        '<button class="btn-mini" type="button" data-close style="margin-top:14px">إغلاق</button>' +
+      '</div>';
+
+    document.body.appendChild(wrap);
+
+    var stage = wrap.querySelector('#patstage');
+    var svg   = wrap.querySelector('#patsvg');
+
+    function play() { if (stage && svg) playPattern(value, stage, svg); }
+    play();
+
+    var again = wrap.querySelector('[data-replay]');
+    if (again) again.addEventListener('click', play);
+
+    function close() {
+      clearPatternTimers();
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    }
+    wrap.querySelector('[data-close]').addEventListener('click', close);
+
+    wrap.querySelector('[data-uk-save]').addEventListener('click', async function () {
+      var k = wrap.querySelector('#uk-kind').value;
+      var v = wrap.querySelector('#uk-val').value;
+
+      var ok = await send('/api/maintenance/tickets/' + encodeURIComponent(ticketId) + '/unlock',
+        { unlockKind: k, unlockValue: v }, this, '…');
+
+      if (ok) {
+        close();
+        say('تم تحديث بيانات الفتح.', true);
+        load();
+      }
+    });
+  }
+
+  // ══════════ التحميل ══════════
+  var shops = [];
+
+  async function load() {
+    var q = (document.getElementById('tk-search') || {}).value || '';
+    var all = (document.getElementById('tk-all') || {}).checked ? '1' : '0';
+
+    try {
+      var res = await fetch('/api/maintenance?q=' + encodeURIComponent(q) + '&all=' + all,
+        { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        say((data && data.error && data.error.message) || 'تعذّر التحميل.', false);
+        return;
+      }
+
+      shops = data.shops || [];
+      fillShops();
+      renderTickets(data.tickets || []);
+      renderRecords(data.records || []);
+      renderShops();
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    }
+  }
+
+  function fillShops() {
+    var sel = document.getElementById('tk-shop');
+    if (!sel) return;
+    sel.textContent = '';
+    var none = document.createElement('option');
+    none.value = ''; none.textContent = '— داخليًا —';
+    sel.appendChild(none);
+    for (var i = 0; i < shops.length; i++) {
+      var o = document.createElement('option');
+      o.value = shops[i].id; o.textContent = shops[i].name;
+      sel.appendChild(o);
+    }
+  }
+
+  function row(main, sub) {
+    var r = document.createElement('div');
+    r.className = 'prod-row';
+    var m = document.createElement('div');
+    m.className = 'prod-row-main';
+    var a = document.createElement('span');
+    a.className = 'prod-row-name'; a.textContent = main;
+    var b = document.createElement('span');
+    b.className = 'prod-row-sub'; b.textContent = sub;
+    m.appendChild(a); m.appendChild(b); r.appendChild(m);
+    return r;
+  }
+
+  function renderTickets(list) {
+    var host = document.getElementById('tk-rows');
+    var cnt = document.getElementById('tk-count');
+    if (cnt) cnt.textContent = '(' + list.length + ')';
+    host.textContent = '';
+
+    if (list.length === 0) {
+      var e = document.createElement('p');
+      e.className = 'field-hint';
+      e.textContent = 'لا توجد أجهزة عملاء مطابقة.';
+      host.appendChild(e);
+      return;
+    }
+
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
+      var visit = t.visitNumber > 1 ? ' · زيارة ' + t.visitNumber : '';
+      var r = row(
+        t.deviceName + ' — ' + t.customerName + visit,
+        STATUS[t.status] + ' · ' + t.receivedDate +
+          (t.shopName ? ' · ' + t.shopName : ' · داخليًا') +
+          (t.customerPhone ? ' · ' + t.customerPhone : '') +
+          (t.costPiastres > 0 ? ' · ' + money(t.costPiastres) : '') +
+          ' · ' + t.daysOpen + ' يوم'
+      );
+
+      var acts = document.createElement('div');
+      acts.className = 'prod-edit-actions';
+
+      // ⚠ متاح لأي حد عنده صلاحية الصيانة. وبيظهر حتى لو مفيش
+      // بيانات محفوظة — عشان يقدر يضيفها لو الزبون ادّاها بعدين.
+      var u = document.createElement('button');
+      u.className = 'btn-mini'; u.type = 'button';
+      u.textContent = t.hasUnlock ? 'بيانات الفتح' : 'إضافة بيانات فتح';
+      u.setAttribute('data-unlock', t.id);
+      u.setAttribute('data-has', t.hasUnlock ? 'true' : 'false');
+      acts.appendChild(u);
+
+      if (CAN_MANAGE && t.status !== 'DELIVERED' && t.status !== 'CANCELLED') {
+        var e2 = document.createElement('button');
+        e2.className = 'btn-mini'; e2.type = 'button';
+        e2.textContent = 'تحديث';
+        e2.setAttribute('data-tk-edit', t.id);
+        acts.appendChild(e2);
+      }
+
+      // الزيارة التانية: تذكرة جديدة مربوطة بالقديمة
+      var again = document.createElement('button');
+      again.className = 'btn-mini'; again.type = 'button';
+      again.textContent = 'رجع تاني';
+      again.setAttribute('data-tk-again', t.id);
+      again.setAttribute('data-cname', t.customerName);
+      again.setAttribute('data-cphone', t.customerPhone || '');
+      again.setAttribute('data-device', t.deviceName);
+      again.setAttribute('data-serial', t.serialNumber || '');
+      again.setAttribute('data-color', t.deviceColor || '');
+      acts.appendChild(again);
+
+      r.appendChild(acts);
+      host.appendChild(r);
+
+      var panel = document.createElement('div');
+      panel.className = 'exit-edit';
+      panel.id = 'tke-' + t.id;
+      panel.hidden = true;
+      panel.innerHTML =
+        '<p class="field-hint">' + t.complaint +
+          (t.conditionNote ? ' · حالة الاستلام: ' + t.conditionNote : '') + '</p>' +
+        '<label class="field-label">الحالة</label>' +
+        '<select class="field-input" id="tks-' + t.id + '">' +
+          '<option value="CHECKING">قيد الفحص</option>' +
+          '<option value="WAITING_PART">بانتظار قطعة غيار</option>' +
+          '<option value="READY">جاهز للتسليم</option>' +
+          '<option value="DELIVERED">تم التسليم</option>' +
+          '<option value="CANCELLED">ملغاة</option>' +
+        '</select>' +
+        '<label class="field-label">التكلفة</label>' +
+        '<input class="field-input" id="tkc-' + t.id + '" type="text" inputmode="decimal" ' +
+          'dir="ltr" value="' + money(t.costPiastres) + '">' +
+        '<label class="field-label">ملاحظة العمل</label>' +
+        '<input class="field-input" id="tkn-' + t.id + '" type="text" maxlength="1000" value="' +
+          (t.workNote || '') + '">' +
+        '<button class="btn-mini" type="button" data-tk-save="' + t.id + '">حفظ</button>';
+      host.appendChild(panel);
+    }
+  }
+
+  function renderRecords(list) {
+    var host = document.getElementById('mr-rows');
+    var cnt = document.getElementById('mr-count');
+    if (cnt) cnt.textContent = '(' + list.length + ')';
+    host.textContent = '';
+
+    if (list.length === 0) {
+      var e = document.createElement('p');
+      e.className = 'field-hint';
+      e.textContent = 'لا توجد أجهزة للمحل في الورش.';
+      host.appendChild(e);
+      return;
+    }
+
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      var r = row(
+        m.productName + (m.serialNumber ? ' · ' + m.serialNumber : ''),
+        m.faultNote + ' · ' + (m.shopName || 'داخليًا') + ' · ' + m.sentDate +
+          ' · ' + m.daysOut + ' يوم' +
+          (m.costPiastres > 0 ? ' · ' + money(m.costPiastres) : '')
+      );
+
+      if (CAN_MANAGE && m.status === 'SENT') {
+        var acts = document.createElement('div');
+        acts.className = 'prod-edit-actions';
+        var ok = document.createElement('button');
+        ok.className = 'btn-mini'; ok.type = 'button';
+        ok.textContent = 'رجع'; ok.setAttribute('data-mr', m.id);
+        ok.setAttribute('data-mr-status', 'RETURNED');
+        acts.appendChild(ok);
+
+        var no = document.createElement('button');
+        no.className = 'btn-mini'; no.type = 'button';
+        no.setAttribute('data-danger', 'true');
+        no.textContent = 'ما اتصلحش'; no.setAttribute('data-mr', m.id);
+        no.setAttribute('data-mr-status', 'CANCELLED');
+        acts.appendChild(no);
+        r.appendChild(acts);
+      }
+      host.appendChild(r);
+    }
+  }
+
+  function renderShops() {
+    var host = document.getElementById('rs-rows');
+    if (!host) return;
+    var cnt = document.getElementById('rs-count');
+    if (cnt) cnt.textContent = '(' + shops.length + ')';
+    host.textContent = '';
+
+    for (var i = 0; i < shops.length; i++) {
+      var sp = shops[i];
+      var r = row(sp.name, sp.phone || '—');
+      var acts = document.createElement('div');
+      acts.className = 'prod-edit-actions';
+      var h = document.createElement('button');
+      h.className = 'btn-mini'; h.type = 'button';
+      h.textContent = 'السجل'; h.setAttribute('data-rs-hist', sp.id);
+      acts.appendChild(h);
+      r.appendChild(acts);
+      host.appendChild(r);
+
+      var panel = document.createElement('div');
+      panel.className = 'exit-edit';
+      panel.id = 'rsh-' + sp.id;
+      panel.hidden = true;
+      host.appendChild(panel);
+    }
+  }
+
+  // ══════════ التفاعلات ══════════
+  document.addEventListener('click', async function (e) {
+    var el = e.target.closest ? e.target : null;
+    if (!el || !el.closest) return;
+
+    var unlockBtn = el.closest('[data-unlock]');
+    if (unlockBtn) {
+      var tid = unlockBtn.getAttribute('data-unlock');
+      var res = await fetch('/api/maintenance/tickets/' + encodeURIComponent(tid) + '/unlock',
+        { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) {
+        say((d && d.error && d.error.message) || 'تعذّر عرض البيانات.', false);
+        return;
+      }
+      showUnlock(d.kind, d.value, tid);
+      return;
+    }
+
+    var editBtn = el.closest('[data-tk-edit]');
+    if (editBtn) {
+      var p = document.getElementById('tke-' + editBtn.getAttribute('data-tk-edit'));
+      if (p) p.hidden = !p.hidden;
+      return;
+    }
+
+    var saveBtn = el.closest('[data-tk-save]');
+    if (saveBtn) {
+      var id = saveBtn.getAttribute('data-tk-save');
+      var ok2 = await send('/api/maintenance/tickets/' + encodeURIComponent(id), {
+        status: (document.getElementById('tks-' + id) || {}).value,
+        cost: (document.getElementById('tkc-' + id) || {}).value,
+        workNote: (document.getElementById('tkn-' + id) || {}).value
+      }, saveBtn, '…');
+      if (ok2) { say('تم الحفظ.', true); load(); }
+      return;
+    }
+
+    // الزيارة التانية: بنملا الفورم ببيانات الجهاز ونربط التذكرة
+    var againBtn = el.closest('[data-tk-again]');
+    if (againBtn) {
+      document.getElementById('tk-cname').value = againBtn.getAttribute('data-cname') || '';
+      document.getElementById('tk-cphone').value = againBtn.getAttribute('data-cphone') || '';
+      document.getElementById('tk-device').value = againBtn.getAttribute('data-device') || '';
+      document.getElementById('tk-serial').value = againBtn.getAttribute('data-serial') || '';
+      document.getElementById('tk-color').value = againBtn.getAttribute('data-color') || '';
+      document.getElementById('tk-complaint').value = '';
+      document.getElementById('tk-add').setAttribute('data-parent',
+        againBtn.getAttribute('data-tk-again'));
+      say('اكتب الشكوى الجديدة — الجهاز مربوط بزيارته السابقة.', true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    var mrBtn = el.closest('[data-mr]');
+    if (mrBtn) {
+      var note = prompt('ملاحظة النتيجة (اختياري):') || '';
+      var ok3 = await send('/api/maintenance/record/' +
+        encodeURIComponent(mrBtn.getAttribute('data-mr')) + '/return',
+        { status: mrBtn.getAttribute('data-mr-status'), note: note }, mrBtn, '…');
+      if (ok3) { say('تم — الكمية رجعت للمخزون.', true); load(); }
+      return;
+    }
+
+    var histBtn = el.closest('[data-rs-hist]');
+    if (histBtn) {
+      var sid = histBtn.getAttribute('data-rs-hist');
+      var panel2 = document.getElementById('rsh-' + sid);
+      if (!panel2) return;
+      if (!panel2.hidden) { panel2.hidden = true; return; }
+
+      var hres = await fetch('/api/maintenance/shops/' + encodeURIComponent(sid) + '/history',
+        { credentials: 'same-origin' });
+      var hd = await hres.json().catch(function () { return null; });
+      if (!hres.ok || !hd || !hd.ok) { say('تعذّر جلب السجل.', false); return; }
+
+      panel2.textContent = '';
+      var rows2 = hd.history || [];
+      if (rows2.length === 0) {
+        var em = document.createElement('p');
+        em.className = 'field-hint'; em.textContent = 'لا سجل بعد.';
+        panel2.appendChild(em);
+      } else {
+        for (var j = 0; j < rows2.length; j++) {
+          var it = rows2[j];
+          var line = document.createElement('p');
+          line.className = 'field-hint';
+          line.textContent = (it.kind === 'OWN' ? '🏪 ' : '👤 ') + it.title +
+            ' · ' + it.detail + ' · ' + it.onDate +
+            (it.costPiastres > 0 ? ' · ' + money(it.costPiastres) : '');
+          panel2.appendChild(line);
+        }
+      }
+      panel2.hidden = false;
+      return;
+    }
+  });
+
+  var addBtn = document.getElementById('tk-add');
+  if (addBtn) {
+    addBtn.addEventListener('click', async function () {
+      var kind = (document.getElementById('tk-unlock-kind') || {}).value || 'NONE';
+      var value = null;
+      if (kind === 'PASSWORD') value = document.getElementById('tk-pass').value;
+      if (kind === 'PATTERN') value = pattern.join('-');
+
+      var result = await send('/api/maintenance/tickets', {
+        customerName: document.getElementById('tk-cname').value,
+        customerPhone: document.getElementById('tk-cphone').value,
+        deviceName: document.getElementById('tk-device').value,
+        serialNumber: document.getElementById('tk-serial').value,
+        deviceColor: document.getElementById('tk-color').value,
+        conditionNote: document.getElementById('tk-cond').value,
+        complaint: document.getElementById('tk-complaint').value,
+        unlockKind: kind,
+        unlockValue: value,
+        repairShopId: document.getElementById('tk-shop').value,
+        cost: document.getElementById('tk-cost').value,
+        promisedDate: document.getElementById('tk-promised').value,
+        parentTicketId: addBtn.getAttribute('data-parent')
+      }, addBtn, 'جارٍ الاستلام…');
+
+      if (result) {
+        say('تم استلام الجهاز.', true);
+        setTimeout(function () { window.location.reload(); }, 900);
+      }
+    });
+  }
+
+  var rsAdd = document.getElementById('rs-add');
+  if (rsAdd) {
+    rsAdd.addEventListener('click', async function () {
+      var r = await send('/api/maintenance/shops', {
+        name: document.getElementById('rs-name').value,
+        phone: document.getElementById('rs-phone').value
+      }, rsAdd, 'جارٍ الإضافة…');
+      if (r) { say('تمت الإضافة.', true); load(); }
+    });
+  }
+
+  var searchEl = document.getElementById('tk-search');
+  if (searchEl) {
+    var timer = null;
+    searchEl.addEventListener('input', function () {
+      clearTimeout(timer);
+      // ⚠ البحث على الخادم (التذاكر ممكن تكون مئات)، فبنستنى
+      // شوية بعد آخر حرف بدل نداء مع كل ضغطة
+      timer = setTimeout(load, 350);
+    });
+  }
+  var allEl = document.getElementById('tk-all');
+  if (allEl) allEl.addEventListener('change', load);
 
   load();
 })();
