@@ -29,6 +29,11 @@ export const PERMISSIONS = {
   INVENTORY_VIEW: 'inventory.view',
   INVENTORY_ADJUST: 'inventory.adjust',
   INVENTORY_AUDIT: 'inventory.audit',
+  /**
+   * ⚠ صاحب المحل وحده. تعديل **الكمية** عملية يومية
+   * (`inventory.adjust`)، لكن تحديد **الحد** قرار سياسة.
+   */
+  INVENTORY_REORDER_POINT: 'inventory.reorder_point',
 
   // ── التقارير والأرباح ──
   // الفرق الجوهري: المدير يرى "الهامش المعلن"، والمالك وحده يرى التكلفة الحقيقية.
@@ -85,6 +90,10 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
   [PERMISSIONS.INVENTORY_VIEW]: { group: 'المخزون', description: 'عرض أرصدة المخزون' },
   [PERMISSIONS.INVENTORY_ADJUST]: { group: 'المخزون', description: 'تسوية كميات المخزون' },
   [PERMISSIONS.INVENTORY_AUDIT]: { group: 'المخزون', description: 'تنفيذ جرد ومطابقة' },
+  [PERMISSIONS.INVENTORY_REORDER_POINT]: {
+    group: 'المخزون',
+    description: 'تحديد الحد الأدنى للمخزون',
+  },
   [PERMISSIONS.REPORT_VIEW_BRANCH]: { group: 'التقارير', description: 'تقارير الفرع' },
   [PERMISSIONS.REPORT_VIEW_GLOBAL]: { group: 'التقارير', description: 'تقارير كل فروع المحل' },
   [PERMISSIONS.PROFIT_VIEW_DISPLAY]: { group: 'التقارير', description: 'عرض الهامش المعلن' },
