@@ -40,6 +40,8 @@ import type {
   RoleKey,
   SaleDetail,
   SaleItemLine,
+  AlertRepository,
+  AlertRow,
   ReportRepository,
   ReturnRepository,
   SaleRepository,
@@ -954,7 +956,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
-  'price_piastres, quantity_on_hand, is_active';
+  'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -971,6 +973,8 @@ interface RawProduct {
   entry_date: string;
   price_piastres: number | string | null;
   quantity_on_hand: number | string;
+  quarantined_quantity: number | string | null;
+  reorder_point: number | string | null;
   is_active: boolean;
   cost_piastres?: number | string;
 }
@@ -992,6 +996,8 @@ function toProduct(raw: RawProduct): ProductRecord {
     // لو حوّلناها صفر، Number(null) هيدّي 0 والفرق يضيع.
     pricePiastres: raw.price_piastres === null ? null : Number(raw.price_piastres),
     quantityOnHand: Number(raw.quantity_on_hand),
+    quarantinedQuantity: Number(raw.quarantined_quantity ?? 0),
+    reorderPoint: Number(raw.reorder_point ?? 0),
     isActive: raw.is_active,
   };
 
@@ -1094,6 +1100,9 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       if (data.source !== undefined) patch.source = data.source;
       if (data.serialNumber !== undefined) patch.serial_number = data.serialNumber;
       if (data.entryDate !== undefined) patch.entry_date = data.entryDate;
+      // ⚠ محكوم بصلاحية `inventory.reorder_point` في حالة الاستخدام،
+      // مش هنا. المستودع بينفّذ، والقرار فوق.
+      if (data.reorderPoint !== undefined) patch.reorder_point = data.reorderPoint;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
@@ -1974,6 +1983,36 @@ export function createReportRepository(db: SupabaseClient): ReportRepository {
         reasonName: String(row.reason_name),
         movementCount: Number(row.movement_count),
         totalPiastres: Number(row.total_piastres),
+      }));
+    },
+  };
+}
+
+
+// ═══════════════ التنبيهات ═══════════════
+
+/**
+ * ⚠ مفيش جدول تنبيهات. الدالة بتحسب الحالة الحالية كل مرة.
+ *
+ * لو خزّنّاها، تنبيه "مخزون منخفض" اتكتب الساعة ٣ هيفضل معلّق
+ * بعد ما توّرد الساعة ٤. الشاشة تقول حاجة والمخزن يقول حاجة.
+ */
+export function createAlertRepository(db: SupabaseClient): AlertRepository {
+  return {
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_alerts', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_alerts: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        alertType: String(row.alert_type) as AlertRow['alertType'],
+        severity: String(row.severity) as AlertRow['severity'],
+        entityId: String(row.entity_id),
+        title: String(row.title),
+        detail: String(row.detail),
+        metric: Number(row.metric),
       }));
     },
   };
