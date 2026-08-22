@@ -22,6 +22,7 @@ import {
   platformRoutes,
   productRoutes,
   reportRoutes,
+  maintenanceRoutes,
   supplierRoutes,
   transferRoutes,
   returnRoutes,
@@ -56,6 +57,7 @@ import {
   posPage,
   productsPage,
   reportPage,
+  maintenancePage,
   suppliersPage,
   setupPage,
   treasuryPage,
@@ -117,6 +119,7 @@ app.route('/api/returns', returnRoutes);
 app.route('/api/reports', reportRoutes);
 app.route('/api/transfers', transferRoutes);
 app.route('/api/suppliers', supplierRoutes);
+app.route('/api/maintenance', maintenanceRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
@@ -313,6 +316,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       canViewReport: user.permissions.includes(PERMISSIONS.REPORT_VIEW_BRANCH),
       canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
       canManageSuppliers: user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE),
+      canViewMaintenance: user.permissions.includes(PERMISSIONS.MAINTENANCE_VIEW),
       canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
       canViewUsers,
       canCreateUsers,
@@ -536,6 +540,42 @@ app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
         purchaseCount: cst.purchaseCount,
         totalPiastres: cst.totalPiastres,
       })),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * صفحة الصيانة.
+ *
+ * ⚠ كل البيانات بتتجاب بالجافاسكربت — الشاشة فيها بحث وفلترة
+ * بتتغيّر كتير، وتحميلها مع الصفحة كان معناه إعادة تحميل كاملة
+ * مع كل بحث.
+ */
+app.get('/maintenance', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.MAINTENANCE_VIEW)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+
+  return c.html(
+    maintenancePage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel: await branchLabelFor(container, user),
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      canManage: user.permissions.includes(PERMISSIONS.MAINTENANCE_MANAGE),
+      today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
