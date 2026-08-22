@@ -26,6 +26,7 @@ import { PERMISSIONS } from '../../domain/permissions';
 import type {
   AuditLogger,
   AuthenticatedUser,
+  BranchRepository,
   Clock,
   MaintenanceRecord,
   MaintenanceRepository,
@@ -37,6 +38,8 @@ import type {
 
 export interface MaintenanceDeps {
   maintenance: MaintenanceRepository;
+  /** لازم للتحقق إن الفرع اللي المالك اختاره جوّه محله */
+  branches: BranchRepository;
   clock: Clock;
   audit: AuditLogger;
 }
@@ -217,6 +220,8 @@ export interface TicketInput {
   promisedDate?: string | null;
   /** لو موجود، دي زيارة تانية لنفس الجهاز */
   parentTicketId?: string | null;
+  /** مطلوب من صاحب المحل بس — غيره مقفول على فرعه */
+  branchId?: string | null;
 }
 
 export async function listTickets(
@@ -247,8 +252,32 @@ export async function createTicket(
 ): Promise<{ id: string }> {
   assertView(actor);
 
-  if (!actor.branchId && actor.roleKey !== 'SUPER_ADMIN') {
-    throw Errors.forbidden('branch scope');
+  /**
+   * ══ 🔴 الفرع — الغلطة اللي وقعنا فيها هنا ══
+   *
+   * الحارس القديم كان بيعدّي صاحب المحل من غير فرع، وبعدين
+   * `branch_id` بيتبعت `null` لعمود **إلزامي** في الجدول.
+   * النتيجة: خطأ 500 غامض "حدث خطأ غير متوقّع".
+   *
+   * صاحب المحل مالوش فرع بطبيعته (بيشوف كل فروعه)، فلازم
+   * **يختار** الفرع — نفس نمط المنتجات والعملاء بالظبط.
+   *
+   * ⚠ الدرس: عمود not null + قيمة nullable من الجلسة = عطل
+   * بيظهر عند أول استخدام حقيقي مش وقت الكتابة.
+   */
+  let targetBranchId: string;
+
+  if (actor.roleKey === 'SUPER_ADMIN') {
+    if (!input.branchId) throw Errors.validation('اختر الفرع.');
+
+    // المحل جزء من الفحص مش سياق حواليه — من غيره، معرّف
+    // مخمَّن يقدر يربط تذكرة بفرع محل تاني
+    const exists = await deps.branches.exists(actor.tenantId, input.branchId);
+    if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
+    targetBranchId = input.branchId;
+  } else {
+    if (!actor.branchId) throw Errors.forbidden('branch scope');
+    targetBranchId = actor.branchId;
   }
 
   const customerName = String(input.customerName ?? '').trim();
@@ -291,7 +320,7 @@ export async function createTicket(
 
   const created = await deps.maintenance.createTicket({
     tenant_id: actor.tenantId,
-    branch_id: actor.branchId,
+    branch_id: targetBranchId,
     customer_name: customerName,
     customer_phone: text(input.customerPhone, 32, 'رقم الهاتف طويل جدًا.'),
     device_name: deviceName,
