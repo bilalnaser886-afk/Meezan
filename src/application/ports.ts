@@ -758,6 +758,60 @@ export interface QuarantineReviewResult {
   nowOnHand: number;
 }
 
+// ─────────── الموردين والديون ───────────
+
+export interface SupplierBalance {
+  supplierId: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  isActive: boolean;
+  productCount: number;
+  debtPiastres: number;
+  paidPiastres: number;
+  /** الدين = الزيادات ناقص السداد. ناتج جمع مش رقم مخزّن. */
+  balancePiastres: number;
+  lastMovement: string | null;
+}
+
+export interface SupplierRepository {
+  listBalances(tenantId: string): Promise<SupplierBalance[]>;
+  create(data: {
+    tenantId: string;
+    name: string;
+    phone: string | null;
+    notes: string | null;
+    createdById: string;
+  }): Promise<{ id: string }>;
+  update(
+    id: string,
+    data: { name?: string; phone?: string | null; notes?: string | null; isActive?: boolean },
+  ): Promise<void>;
+  findById(id: string): Promise<{ id: string; tenantId: string; name: string } | null>;
+  /** دين — ما بيمسّش الخزينة */
+  recordDebt(input: {
+    supplierId: string;
+    actorId: string;
+    amountPiastres: number;
+    note: string | null;
+    date: string | null;
+  }): Promise<{ movementId: string; newBalance: number }>;
+  /**
+   * سداد — **بيمسّ الخزينة ذريًا**.
+   *
+   * الفلوس بتطلع من الدرج فعلاً. لو سجّلناه في دفتر الموردين
+   * بس، رصيد الخزينة يبقى أكبر من الحقيقة بمقدار كل ما دفعته.
+   */
+  recordPayment(input: {
+    supplierId: string;
+    actorId: string;
+    treasuryId: string;
+    amountPiastres: number;
+    note: string | null;
+    date: string | null;
+  }): Promise<{ movementId: string; treasuryMovementId: string; newBalance: number }>;
+}
+
 // ─────────── التحويل بين الفروع ───────────
 
 /**
@@ -865,6 +919,13 @@ export interface IncomeStatement {
    * مرة كسُلفة ومرة لما الراتب يتصرف.
    */
   advancesPiastres: number;
+  /**
+   * ⚠ بره الحساب لنفس السبب. شرا البضاعة تحويل فلوس لمخزون —
+   * أصل بيتحوّل لأصل تاني، مش مصروف. والتكلفة بتتحسب وقت البيع
+   * في `cogsPiastres`. لو حسبناها الاتنين، كل بضاعة تشتريها
+   * بتقلّل أرباحك المعروضة مرتين.
+   */
+  inventoryPurchasesPiastres: number;
 }
 
 export interface ExpenseLine {
