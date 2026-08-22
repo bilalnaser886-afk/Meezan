@@ -2766,7 +2766,10 @@ export interface ProductsPageData {
     quantityOnHand: number;
     isActive: boolean;
     reorderPoint: number;
+    customsCleared: boolean;
   }>;
+  /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
+  transferTargets: Array<{ id: string; name: string }>;
   /** تاريخ النهاردة بتوقيت القاهرة — قيمة افتراضية لحقل التاريخ */
   today: string;
   idleTimeoutSeconds: number;
@@ -2914,6 +2917,48 @@ export function productsPage(data: ProductsPageData): Html {
                       </div>`
                     : ''}
 
+                  ${isDevice
+                    ? html`<div class="field">
+                        <label class="field-label" for="customs-${p.id}">
+                          خلوّ الجمارك
+                        </label>
+                        <select class="field-input" id="customs-${p.id}">
+                          <option value="false" ${p.customsCleared ? '' : 'selected'}>
+                            غير مؤكّد
+                          </option>
+                          <option value="true" ${p.customsCleared ? 'selected' : ''}>
+                            مخلّص جمركيًا
+                          </option>
+                        </select>
+                        <p class="field-hint">
+                          تسجيل يدوي من المستلم. لا يوجد ربط بأي جهة خارجية.
+                        </p>
+                      </div>`
+                    : ''}
+
+                  ${data.transferTargets.length > 0
+                    ? html`<div class="field">
+                        <label class="field-label" for="trto-${p.id}">تحويل إلى فرع</label>
+                        <select class="field-input" id="trto-${p.id}">
+                          <option value="">— اختر الفرع —</option>
+                          ${data.transferTargets.map(
+                            (b) => html`<option value="${b.id}">${b.name}</option>`,
+                          )}
+                        </select>
+                        ${isDevice
+                          ? ''
+                          : html`<input class="field-input" id="trq-${p.id}" type="number"
+                              min="1" dir="ltr" value="1" placeholder="الكمية">`}
+                        <button class="btn-mini" type="button" data-tr-send="${p.id}"
+                          data-device="${isDevice ? 'true' : 'false'}">
+                          إرسال التحويل
+                        </button>
+                        <p class="field-hint">
+                          تُخصم الكمية فورًا — البضاعة تركت الرفّ ولا يصحّ أن تُباع.
+                        </p>
+                      </div>`
+                    : ''}
+
                   <div class="prod-edit-actions">
                     ${isDevice
                       ? html`<button class="btn-mini" type="button" data-save-details="${p.id}">
@@ -3028,6 +3073,17 @@ export function productsPage(data: ProductsPageData): Html {
   <div class="alert-box" id="prodmsg" role="alert" hidden><span id="prodmsg-text"></span></div>
 
   ${addPanel}
+
+  <details class="panel" id="tr-panel" hidden>
+    <summary>تحويلات معلّقة <span id="tr-count"></span></summary>
+    <div class="panel-body">
+      <p class="field-hint">
+        بضاعة بالطريق بين الفروع. الكمية اتخصمت من الفرع المُرسِل بالفعل،
+        ومش هتظهر في مخزون المستقبِل إلا بعد تأكيد الاستلام.
+      </p>
+      <div id="tr-rows"></div>
+    </div>
+  </details>
 
   ${data.canEdit
     ? html`<details class="panel" id="qr-panel" hidden>
@@ -3244,6 +3300,9 @@ ${MENU_JS}
     if (reorderEl && reorderEl.value !== '') {
       body.reorderPoint = parseInt(reorderEl.value, 10);
     }
+
+    var customsEl = document.getElementById('customs-' + id);
+    if (customsEl) body.customsCleared = customsEl.value === 'true';
 
     var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
     if (result) {
@@ -3506,6 +3565,136 @@ ${MENU_JS}
     }
   });
 
+  // ══════════ التحويل بين الفروع ══════════
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tr-send]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-tr-send');
+    var isDevice = btn.getAttribute('data-device') === 'true';
+    var toEl = document.getElementById('trto-' + id);
+    if (!toEl || !toEl.value) { say('اختر الفرع المستقبِل.', false); return; }
+
+    // الجهاز قطعة واحدة — مفيش خانة كمية أصلاً
+    var qty = 1;
+    if (!isDevice) {
+      var qEl = document.getElementById('trq-' + id);
+      qty = parseInt(qEl ? qEl.value : '0', 10);
+      if (!isFinite(qty) || qty <= 0) { say('الكمية غير صالحة.', false); return; }
+    }
+
+    if (!confirm('إرسال التحويل؟ الكمية هتتخصم من فرعك فورًا.')) return;
+
+    var result = await send(
+      '/api/transfers/product/' + encodeURIComponent(id),
+      { toBranchId: toEl.value, quantity: qty },
+      btn, 'جارٍ الإرسال…'
+    );
+    if (result) {
+      say('تم إرسال ' + result.moved + ' من ' + result.productName + '.', true);
+      setTimeout(function () { window.location.reload(); }, 1000);
+    }
+  });
+
+  var trPanel = document.getElementById('tr-panel');
+  var trRows  = document.getElementById('tr-rows');
+  var trCount = document.getElementById('tr-count');
+
+  async function loadTransfers() {
+    if (!trPanel || !trRows) return;
+
+    try {
+      var res = await fetch('/api/transfers', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var rows = data.transfers || [];
+      if (rows.length === 0) { trPanel.hidden = true; return; }
+
+      trPanel.hidden = false;
+      if (trCount) trCount.textContent = '(' + rows.length + ')';
+      trRows.textContent = '';
+
+      for (var i = 0; i < rows.length; i++) {
+        var t = rows[i];
+
+        var row = document.createElement('div');
+        row.className = 'prod-row';
+
+        var main = document.createElement('div');
+        main.className = 'prod-row-main';
+
+        var name = document.createElement('span');
+        name.className = 'prod-row-name';
+        name.textContent = t.productName + ' × ' + t.quantity;
+        main.appendChild(name);
+
+        var sub = document.createElement('span');
+        sub.className = 'prod-row-sub';
+        sub.textContent = 'من ' + t.fromBranch + ' إلى ' + t.toBranch +
+          ' · ' + t.createdBy +
+          (t.serialNumber ? ' · ' + t.serialNumber : '') +
+          (t.note ? ' · ' + t.note : '');
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        var acts = document.createElement('div');
+        acts.className = 'prod-edit-actions';
+
+        // ⚠ الاستلام للجاي، والإلغاء للرايح.
+        // صاحب المحل (BOTH) بيشوف الاتنين لأن الفرعين بتوعه.
+        if (t.direction === 'IN' || t.direction === 'BOTH') {
+          var ok = document.createElement('button');
+          ok.className = 'btn-mini';
+          ok.type = 'button';
+          ok.textContent = 'تأكيد الاستلام';
+          ok.setAttribute('data-tr-do', t.id);
+          ok.setAttribute('data-tr-dec', 'RECEIVE');
+          acts.appendChild(ok);
+        }
+        if (t.direction === 'OUT' || t.direction === 'BOTH') {
+          var no = document.createElement('button');
+          no.className = 'btn-mini';
+          no.type = 'button';
+          no.setAttribute('data-danger', 'true');
+          no.textContent = 'إلغاء';
+          no.setAttribute('data-tr-do', t.id);
+          no.setAttribute('data-tr-dec', 'CANCEL');
+          acts.appendChild(no);
+        }
+
+        row.appendChild(acts);
+        trRows.appendChild(row);
+      }
+    } catch (err) {
+      // فشل القراءة ما يصحّش يعطّل شاشة المنتجات
+    }
+  }
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-tr-do]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-tr-do');
+    var dec = btn.getAttribute('data-tr-dec');
+
+    if (dec === 'CANCEL' && !confirm('إلغاء التحويل؟ البضاعة هترجع لفرع المُرسِل.')) return;
+
+    var result = await send(
+      '/api/transfers/' + encodeURIComponent(id) + '/resolve',
+      { decision: dec },
+      btn, '…'
+    );
+    if (result) {
+      say(dec === 'RECEIVE'
+        ? 'تم استلام ' + result.moved + ' من ' + result.productName + '.'
+        : 'تم إلغاء التحويل.', true);
+      setTimeout(function () { window.location.reload(); }, 1000);
+    }
+  });
+
+  loadTransfers();
   loadQuarantine();
 })();
 `;
