@@ -41,7 +41,10 @@ import type {
   SaleDetail,
   SaleItemLine,
   AlertRepository,
+  MaintenanceRecord,
+  MaintenanceRepository,
   SupplierRepository,
+  TicketStatus,
   TransferRepository,
   AlertRow,
   ReportRepository,
@@ -2222,6 +2225,218 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
         movementId: String(row.movement_id),
         treasuryMovementId: String(row.treasury_movement_id),
         newBalance: Number(row.new_balance),
+      };
+    },
+  };
+}
+
+
+// ═══════════════ الصيانة ═══════════════
+
+function raiseMaintError(error: { code?: string; message?: string }, fn: string): never {
+  const message = error.message?.trim() || 'تعذّر إتمام العملية.';
+  switch (error.code) {
+    case 'MZ400': throw Errors.validation(message);
+    case 'MZ403': throw Errors.forbidden(message);
+    case 'MZ404': throw Errors.notFound('العنصر المطلوب');
+    default:
+      if (error.code === '23505') throw Errors.validation('الاسم ده مسجّل بالفعل.');
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
+}
+
+export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepository {
+  return {
+    // ─── الورش ───
+    async listShops(tenantId) {
+      const { data, error } = await db
+        .from('repair_shops')
+        .select('id, name, phone, notes, is_active')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .order('name');
+
+      if (error) raiseMaintError(error, 'repair_shops.list');
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        id: String(r.id),
+        name: String(r.name),
+        phone: r.phone ? String(r.phone) : null,
+        notes: r.notes ? String(r.notes) : null,
+        isActive: Boolean(r.is_active),
+      }));
+    },
+
+    async createShop(data) {
+      const { data: rows, error } = await db
+        .from('repair_shops')
+        .insert({
+          tenant_id: data.tenantId,
+          name: data.name,
+          phone: data.phone,
+          notes: data.notes,
+          created_by_id: data.createdById,
+        })
+        .select('id');
+
+      if (error) raiseMaintError(error, 'repair_shops.insert');
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('repair_shops.insert: مفيش نتيجة');
+      return { id: String(row.id) };
+    },
+
+    async shopHistory(shopId, tenantId) {
+      const { data, error } = await db.rpc('fn_repair_shop_history', {
+        p_shop_id: shopId,
+        p_tenant_id: tenantId,
+      });
+      if (error) raiseMaintError(error, 'fn_repair_shop_history');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        kind: String(r.kind) as 'OWN' | 'CUSTOMER',
+        refId: String(r.ref_id),
+        title: String(r.title),
+        detail: String(r.detail),
+        costPiastres: Number(r.cost_piastres),
+        onDate: String(r.on_date).slice(0, 10),
+        status: String(r.status),
+      }));
+    },
+
+    // ─── أجهزة المحل ───
+    async sendToShop(input) {
+      const { data, error } = await db.rpc('fn_send_to_maintenance', {
+        p_product_id: input.productId,
+        p_actor_id: input.actorId,
+        p_shop_id: input.shopId,
+        p_fault: input.fault,
+        p_cost: input.costPiastres,
+      });
+      if (error) raiseMaintError(error, 'fn_send_to_maintenance');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_send_to_maintenance: مفيش نتيجة');
+      return { recordId: String(row.record_id), productName: String(row.product_name) };
+    },
+
+    async returnFromShop(recordId, actorId, status, costPiastres, note) {
+      const { data, error } = await db.rpc('fn_return_from_maintenance', {
+        p_record_id: recordId,
+        p_actor_id: actorId,
+        p_status: status,
+        p_cost: costPiastres,
+        p_note: note,
+      });
+      if (error) raiseMaintError(error, 'fn_return_from_maintenance');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_return_from_maintenance: مفيش نتيجة');
+      return { productName: String(row.product_name), finalStatus: String(row.final_status) };
+    },
+
+    async listRecords(tenantId, branchId, openOnly) {
+      const { data, error } = await db.rpc('fn_maintenance_records', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+        p_open_only: openOnly,
+      });
+      if (error) raiseMaintError(error, 'fn_maintenance_records');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        id: String(r.id),
+        productId: String(r.product_id),
+        productName: String(r.product_name),
+        serialNumber: r.serial_number ? String(r.serial_number) : null,
+        shopName: r.shop_name ? String(r.shop_name) : null,
+        faultNote: String(r.fault_note),
+        costPiastres: Number(r.cost_piastres),
+        sentDate: String(r.sent_date).slice(0, 10),
+        returnedDate: r.returned_date ? String(r.returned_date).slice(0, 10) : null,
+        status: String(r.status) as MaintenanceRecord['status'],
+        resultNote: r.result_note ? String(r.result_note) : null,
+        daysOut: Number(r.days_out),
+      }));
+    },
+
+    // ─── تذاكر العملاء ───
+    async listTickets(tenantId, branchId, openOnly, search) {
+      const { data, error } = await db.rpc('fn_tickets', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+        p_open_only: openOnly,
+        p_search: search,
+      });
+      if (error) raiseMaintError(error, 'fn_tickets');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        id: String(r.id),
+        customerName: String(r.customer_name),
+        customerPhone: r.customer_phone ? String(r.customer_phone) : null,
+        deviceName: String(r.device_name),
+        serialNumber: r.serial_number ? String(r.serial_number) : null,
+        deviceColor: r.device_color ? String(r.device_color) : null,
+        conditionNote: r.condition_note ? String(r.condition_note) : null,
+        complaint: String(r.complaint),
+        shopName: r.shop_name ? String(r.shop_name) : null,
+        repairShopId: r.repair_shop_id ? String(r.repair_shop_id) : null,
+        costPiastres: Number(r.cost_piastres),
+        receivedDate: String(r.received_date).slice(0, 10),
+        promisedDate: r.promised_date ? String(r.promised_date).slice(0, 10) : null,
+        deliveredDate: r.delivered_date ? String(r.delivered_date).slice(0, 10) : null,
+        status: String(r.status) as TicketStatus,
+        workNote: r.work_note ? String(r.work_note) : null,
+        hasUnlock: Boolean(r.has_unlock),
+        parentId: r.parent_id ? String(r.parent_id) : null,
+        visitNumber: Number(r.visit_number),
+        createdById: String(r.created_by_id),
+        daysOpen: Number(r.days_open),
+      }));
+    },
+
+    async createTicket(data) {
+      const { data: rows, error } = await db.from('repair_tickets').insert(data).select('id');
+      if (error) raiseMaintError(error, 'repair_tickets.insert');
+      const row = (rows as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('repair_tickets.insert: مفيش نتيجة');
+      return { id: String(row.id) };
+    },
+
+    async updateTicket(id, patch) {
+      const { error } = await db
+        .from('repair_tickets').update(patch).eq('id', id).is('deleted_at', null);
+      if (error) raiseMaintError(error, 'repair_tickets.update');
+    },
+
+    async findTicket(id) {
+      const { data, error } = await db
+        .from('repair_tickets').select('id, tenant_id, branch_id')
+        .eq('id', id).is('deleted_at', null).maybeSingle();
+
+      if (error) raiseMaintError(error, 'repair_tickets.find');
+      if (!data) return null;
+      const r = data as Record<string, unknown>;
+      return { id: String(r.id), tenantId: String(r.tenant_id), branchId: String(r.branch_id) };
+    },
+
+    /**
+     * ⚠ بيانات الفتح.
+     *
+     * `canManage` بيتحسب في حالة الاستخدام من الصلاحيات، ودالة
+     * القاعدة بتفحصه مع هوية اللي استلم الجهاز. الفحص مرتين
+     * عن قصد: نداء مباشر من أي مكان تاني يفضل محروس.
+     */
+    async unlock(ticketId, actorId, canManage) {
+      const { data, error } = await db.rpc('fn_ticket_unlock', {
+        p_ticket_id: ticketId,
+        p_actor_id: actorId,
+        p_can_manage: canManage,
+      });
+      if (error) raiseMaintError(error, 'fn_ticket_unlock');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.notFound('التذكرة');
+      return {
+        kind: String(row.unlock_kind),
+        value: row.unlock_value ? String(row.unlock_value) : null,
       };
     },
   };
