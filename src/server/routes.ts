@@ -56,6 +56,11 @@ import {
 import { getIncomeReport } from '../application/use-cases/reports';
 import { listAlerts } from '../application/use-cases/alerts';
 import {
+  createTransfer,
+  listPendingTransfers,
+  resolveTransfer,
+} from '../application/use-cases/transfers';
+import {
   createReturn,
   getReturnableLines,
   listQuarantine,
@@ -1131,6 +1136,69 @@ reportRoutes.get(
     const container = buildContainer(c.env);
     const summary = await listAlerts(container.alerts, c.get('user'));
     return c.json({ ok: true, ...summary });
+  },
+);
+
+
+// ═══════════════════ 7.7) التحويل بين الفروع ═══════════════════
+
+export const transferRoutes = new Hono<AppBindings>();
+
+/** التحويلات المعلّقة — الجاي والرايح */
+transferRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const transfers = await listPendingTransfers(container.transfers, c.get('user'));
+    return c.json({ ok: true, transfers });
+  },
+);
+
+/** إنشاء تحويل — بيخصم الكمية من فرع المصدر فورًا */
+transferRoutes.post(
+  '/product/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المنتج مفقود.');
+
+    const body = await readJson<{ toBranchId?: string; quantity?: number; note?: string }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await createTransfer(container.transfers, c.get('user'), id, {
+      toBranchId: String(body.toBranchId ?? ''),
+      quantity: Number(body.quantity),
+      note: body.note ?? null,
+    });
+
+    return c.json({ ok: true, ...result });
+  },
+);
+
+/**
+ * استلام أو إلغاء.
+ *
+ * ⚠ الاستلام من الفرع المستقبِل والإلغاء من المُرسِل — الفحص
+ * جوّه دالة القاعدة عشان يفضل شغّال من أي نداء.
+ */
+transferRoutes.post(
+  '/:id/resolve',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف التحويل مفقود.');
+
+    const body = await readJson<{ decision?: string }>(c);
+    const decision = String(body.decision ?? '');
+    if (decision !== 'RECEIVE' && decision !== 'CANCEL') {
+      throw Errors.validation('القرار غير صحيح.');
+    }
+
+    const container = buildContainer(c.env);
+    const result = await resolveTransfer(container.transfers, c.get('user'), id, decision);
+
+    return c.json({ ok: true, ...result });
   },
 );
 
