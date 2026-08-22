@@ -533,6 +533,14 @@ export interface ProductRecord {
    * مش نفي.
    */
   customsCleared: boolean;
+  /**
+   * صحة البطارية من 0 لـ 100.
+   * ⚠ null معناها **"ما اتقاسش"** مش صفر. جهاز جديد ما حدش قاس
+   * بطاريته، وجهاز بطاريته خربانة قيمته 0 — والاتنين مختلفين.
+   */
+  batteryHealth: number | null;
+  /** المساحة كنص: "256GB" · "8/256" · "1TB". نص عشان يستوعب الكل. */
+  storageCapacity: string | null;
   isActive: boolean;
 }
 
@@ -562,6 +570,8 @@ export interface UpdateProductInput {
   /** محكوم بصلاحية `inventory.reorder_point` — صاحب المحل وحده */
   reorderPoint?: number;
   customsCleared?: boolean;
+  batteryHealth?: number | null;
+  storageCapacity?: string | null;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
