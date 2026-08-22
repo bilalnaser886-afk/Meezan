@@ -4056,17 +4056,68 @@ ${MENU_JS}
     }
   });
 
+  // ══════════ البحث ══════════
+  //
+  // ⚠ الفلترة في المتصفح مش على الخادم. الصفحة محمّلة المنتجات
+  // أصلاً، فالفلترة فورية بلا رحلة شبكة — وده اللي بيخلّي
+  // الماسح مفيد: يمسح، السطر يظهر في نفس اللحظة.
+  //
+  // والماسح الموصول بالكمبيوتر بيتصرّف كلوحة مفاتيح: بيكتب
+  // الرقم وبيدوس Enter. فمفيش زرار مسح محتاجينه على ويندوز.
+  var searchEl = document.getElementById('prod-search');
+  var searchNote = document.getElementById('prod-search-note');
+  var DEFAULT_NOTE = 'امسح بالكاميرا، أو بالماسح الموصول بالكمبيوتر، أو اكتب جزءًا من الاسم.';
+
+  function runSearch() {
+    if (!searchEl) return;
+    var q = searchEl.value.trim().toLowerCase();
+    var rows = document.querySelectorAll('.prod-row[data-searchable]');
+    var shown = 0;
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var hay = (row.getAttribute('data-searchable') || '').toLowerCase();
+      var match = !q || hay.indexOf(q) !== -1;
+      row.hidden = !match;
+
+      // لوحة التعديل بتتخفي مع صفها
+      var panel = row.nextElementSibling;
+      if (panel && panel.classList && panel.classList.contains('prod-edit')) {
+        if (!match) panel.hidden = true;
+      }
+      if (match) shown++;
+    }
+
+    if (searchNote) searchNote.textContent = q ? shown + ' نتيجة' : DEFAULT_NOTE;
+  }
+
+  if (searchEl) {
+    searchEl.addEventListener('input', runSearch);
+    // Enter من الماسح ما يصحّش يعمل submit
+    searchEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') e.preventDefault();
+    });
+  }
+
   // ══════════ المسح بالكاميرا ══════════
   var scanBtn = document.getElementById('prod-scan');
-  if (scanBtn && searchEl) {
+  if (scanBtn) {
     scanBtn.addEventListener('click', async function () {
       try {
+        // ⚠ الفحص ده مهم: لو السكربت المشترك ما اتحمّلش لأي
+        // سبب، الزرار كان هيسكت من غير أي رسالة.
+        if (typeof window.scanBarcode !== 'function') {
+          say('الماسح غير متاح على هذا المتصفح.', false);
+          return;
+        }
+
         var code = await window.scanBarcode();
-        if (!code) return;
+        if (!code || !searchEl) return;
+
         // بنحطّه في خانة البحث وبنشغّل الفلترة — نفس ما لو
         // اتكتب بالماسح الموصول بالكمبيوتر
         searchEl.value = code;
-        searchEl.dispatchEvent(new Event('input'));
+        runSearch();
       } catch (err) {
         say(err && err.message ? err.message : 'تعذّر المسح.', false);
       }
@@ -6017,6 +6068,8 @@ export interface MaintenancePageData {
   canUseTreasury: boolean;
   /** maintenance.manage — الحالات والتكاليف وإدارة الورش */
   canManage: boolean;
+  /** فروع المحل — للمالك بس، فاضية لغيره لأنه مقفول على فرعه */
+  branches: Array<{ id: string; name: string }>;
   today: string;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
@@ -6052,6 +6105,17 @@ export function maintenancePage(data: MaintenancePageData): Html {
   <details class="panel">
     <summary>استلام جهاز عميل</summary>
     <div class="panel-body">
+      ${data.branches.length > 0
+        ? html`<label class="field-label" for="tk-branch">الفرع</label>
+            <select class="field-input" id="tk-branch">
+              <option value="">— اختر الفرع —</option>
+              ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+            </select>
+            <p class="field-hint">
+              صاحب المحل يرى كل الفروع، فلا بد أن يحدّد أي فرع استلم الجهاز.
+            </p>`
+        : ''}
+
       <label class="field-label" for="tk-cname">اسم العميل</label>
       <input class="field-input" id="tk-cname" type="text" maxlength="80" autocomplete="off">
 
@@ -6759,7 +6823,8 @@ ${shared}
         repairShopId: document.getElementById('tk-shop').value,
         cost: document.getElementById('tk-cost').value,
         promisedDate: document.getElementById('tk-promised').value,
-        parentTicketId: addBtn.getAttribute('data-parent')
+        parentTicketId: addBtn.getAttribute('data-parent'),
+        branchId: (document.getElementById('tk-branch') || {}).value || null
       }, addBtn, 'جارٍ الاستلام…');
 
       if (result) {
