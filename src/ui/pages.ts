@@ -687,6 +687,8 @@ export interface DashboardData {
   canViewReport: boolean;
   /** profit.view_real — صاحب المحل وحده */
   canSeeCost: boolean;
+  /** supplier.manage — صاحب المحل ومدير الفرع */
+  canManageSuppliers: boolean;
   canBroadcast: boolean;
   canViewUsers: boolean;
   canCreateUsers: boolean;
@@ -1064,6 +1066,13 @@ export function dashboardPage(data: DashboardData): Html {
       <span class="tile-note">
         ${data.canSeeCost ? 'كسبت كام هذا الشهر' : 'حركة فرعك هذا الشهر'}
       </span>
+    </a>`);
+  }
+
+  if (data.canManageSuppliers) {
+    tiles.push(html`<a class="tile" href="/suppliers">
+      <span class="tile-label">الموردين</span>
+      <span class="tile-note">ديون وسداد</span>
     </a>`);
   }
 
@@ -5242,6 +5251,13 @@ ${shared}
         body.appendChild(line('سُلف موظفين (خارج الحساب — تُخصم من الراتب)',
           money(s.advancesPiastres), { muted: true, top: true }));
       }
+      // ⚠ خارج الحساب لنفس سبب السُلف: شرا البضاعة تحويل فلوس
+      // لمخزون، والتكلفة بتتحسب وقت البيع. لو دخلت المصروفات
+      // كانت هتتحسب مرتين.
+      if (s.inventoryPurchasesPiastres > 0) {
+        body.appendChild(line('شراء بضاعة (خارج الحساب — تُحتسب عند البيع)',
+          money(s.inventoryPurchasesPiastres), { muted: true }));
+      }
       if (s.refundFeesPiastres > 0) {
         body.appendChild(line('منها رسوم استرجاع محتجزة',
           money(s.refundFeesPiastres), { muted: true }));
@@ -5268,6 +5284,308 @@ ${shared}
   }
 
   document.getElementById('rep-go').addEventListener('click', load);
+  load();
+})();
+`;
+}
+
+
+// ═══════════════════ شاشة الموردين ═══════════════════
+
+export interface SuppliersPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  tenantName: string;
+  roleKey: string;
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  treasuries: Array<{ treasuryId: string; name: string }>;
+  today: string;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * الموردين والديون.
+ *
+ * ══ ليه القائمة بتتجاب بالجافاسكربت؟ ══
+ * الأرصدة بتتغيّر مع كل حركة في نفس الشاشة. لو اتجابت مع
+ * الصفحة، كل تسجيل دين كان هيحتاج إعادة تحميل كاملة.
+ */
+export function suppliersPage(data: SuppliersPageData): Html {
+  return shell({
+    title: 'الموردين',
+    script: suppliersScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.treasuries,
+    ),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="supmsg" role="alert" hidden><span id="supmsg-text"></span></div>
+
+  <details class="panel">
+    <summary>إضافة مورّد</summary>
+    <div class="panel-body">
+      <label class="field-label" for="sup-name">الاسم</label>
+      <input class="field-input" id="sup-name" type="text" maxlength="80" autocomplete="off">
+
+      <label class="field-label" for="sup-phone">الهاتف</label>
+      <input class="field-input" id="sup-phone" type="text" dir="ltr" maxlength="32"
+        autocomplete="off">
+
+      <label class="field-label" for="sup-notes">ملاحظات</label>
+      <input class="field-input" id="sup-notes" type="text" maxlength="500" autocomplete="off">
+
+      <button class="btn-mini" type="button" id="sup-add">إضافة</button>
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>الموردين <span id="sup-count"></span></summary>
+    <div class="panel-body">
+      <p class="field-hint">
+        الدين محسوب من الحركات: ما استلمته بالأجل ناقص ما سدّدته.
+        السداد يخرج من الخزينة فورًا، ولا يُحتسب مصروفًا في قائمة الدخل —
+        تكلفة البضاعة تُحتسب عند بيعها.
+      </p>
+      <div id="sup-rows"><p class="field-hint">جارٍ التحميل…</p></div>
+    </div>
+  </details>
+</main>
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function suppliersScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  /** ⚠ لازم تتمرّر صراحةً — الدالة دي مالهاش وصول لبيانات الصفحة */
+  treasuries: Array<{ treasuryId: string; name: string }>,
+): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+(function () {
+  var box  = document.getElementById('supmsg');
+  var text = document.getElementById('supmsg-text');
+  var rows = document.getElementById('sup-rows');
+  var countEl = document.getElementById('sup-count');
+
+  function say(msg, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok'); else box.removeAttribute('data-tone');
+    text.textContent = msg;
+  }
+
+  function money(p) {
+    var neg = p < 0, abs = Math.abs(Math.trunc(p));
+    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
+      '.' + String(abs % 100).padStart(2, '0');
+  }
+
+  async function send(url, body, btn, busy) {
+    var original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = busy; }
+    try {
+      var res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (res.ok && data && data.ok) return data;
+      say((data && data.error && data.error.message) || 'تعذّر تنفيذ الطلب.', false);
+      return null;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return null;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
+
+  async function load() {
+    try {
+      var res = await fetch('/api/suppliers', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        rows.textContent = '';
+        say((data && data.error && data.error.message) || 'تعذّر تحميل الموردين.', false);
+        return;
+      }
+
+      var list = data.suppliers || [];
+      if (countEl) countEl.textContent = '(' + list.length + ')';
+      rows.textContent = '';
+
+      if (list.length === 0) {
+        var empty = document.createElement('p');
+        empty.className = 'field-hint';
+        empty.textContent = 'لا يوجد موردون بعد. أضف أول مورّد من الأعلى.';
+        rows.appendChild(empty);
+        return;
+      }
+
+      for (var i = 0; i < list.length; i++) {
+        var sp = list[i];
+
+        var row = document.createElement('div');
+        row.className = 'prod-row';
+
+        var main = document.createElement('div');
+        main.className = 'prod-row-main';
+
+        var nm = document.createElement('span');
+        nm.className = 'prod-row-name';
+        nm.textContent = sp.name;
+        main.appendChild(nm);
+
+        var sub = document.createElement('span');
+        sub.className = 'prod-row-sub';
+        sub.textContent =
+          (sp.phone ? sp.phone + ' · ' : '') +
+          sp.productCount + ' منتج · استلمت ' + money(sp.debtPiastres) +
+          ' · سدّدت ' + money(sp.paidPiastres) +
+          (sp.lastMovement ? ' · آخر حركة ' + sp.lastMovement : '');
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        // ⚠ الرصيد الموجب معناه **عليك** دين. بنعرضه بلون
+        // المنصرف عشان العين تفرّق بين ما لك وما عليك.
+        var bal = document.createElement('span');
+        bal.className = 'mv-amount';
+        bal.setAttribute('data-dir', sp.balancePiastres > 0 ? 'OUT' : 'IN');
+        bal.textContent = money(sp.balancePiastres);
+        row.appendChild(bal);
+
+        var btn = document.createElement('button');
+        btn.className = 'btn-mini';
+        btn.type = 'button';
+        btn.textContent = 'حركة';
+        btn.setAttribute('data-sup-open', sp.supplierId);
+        row.appendChild(btn);
+
+        rows.appendChild(row);
+
+        var panel = document.createElement('div');
+        panel.className = 'exit-edit';
+        panel.id = 'supp-' + sp.supplierId;
+        panel.hidden = true;
+        panel.innerHTML =
+          '<label class="field-label">النوع</label>' +
+          '<select class="field-input" id="supk-' + sp.supplierId + '">' +
+            '<option value="DEBT">استلمت بضاعة بالأجل (دين)</option>' +
+            '<option value="PAYMENT">سدّدت له (يخرج من الخزينة)</option>' +
+          '</select>' +
+          '<label class="field-label">المبلغ</label>' +
+          '<input class="field-input" id="supa-' + sp.supplierId + '" type="text" ' +
+            'inputmode="decimal" dir="ltr" placeholder="1500.00">' +
+          '<div id="supt-wrap-' + sp.supplierId + '" hidden>' +
+            '<label class="field-label">الخزينة</label>' +
+            '<select class="field-input" id="supt-' + sp.supplierId + '">' +
+              ${JSON.stringify(
+                treasuries
+                  .map((t) => `<option value="${t.treasuryId}">${t.name}</option>`)
+                  .join(''),
+              )} +
+            '</select>' +
+          '</div>' +
+          '<label class="field-label">ملاحظة</label>' +
+          '<input class="field-input" id="supn-' + sp.supplierId + '" type="text" maxlength="500">' +
+          '<button class="btn-mini" type="button" data-sup-go="' + sp.supplierId + '">تسجيل</button>';
+
+        rows.appendChild(panel);
+      }
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    }
+  }
+
+  // فتح/قفل لوحة الحركة
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-sup-open]') : null;
+    if (!btn) return;
+    var panel = document.getElementById('supp-' + btn.getAttribute('data-sup-open'));
+    if (panel) panel.hidden = !panel.hidden;
+  });
+
+  // ⚠ خانة الخزينة بتظهر للسداد بس. الدين ما بيمسّش الدرج،
+  // فعرض خزينة معاه كان هيوحي إن فيه فلوس هتتحرّك.
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (!el || !el.id || el.id.indexOf('supk-') !== 0) return;
+    var id = el.id.slice(5);
+    var wrap = document.getElementById('supt-wrap-' + id);
+    if (wrap) wrap.hidden = el.value !== 'PAYMENT';
+  });
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-sup-go]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-sup-go');
+    var kind = (document.getElementById('supk-' + id) || {}).value;
+    var amount = (document.getElementById('supa-' + id) || {}).value;
+    var note = (document.getElementById('supn-' + id) || {}).value;
+
+    if (!amount || !amount.trim()) { say('اكتب المبلغ.', false); return; }
+
+    var body = { kind: kind, amount: amount, note: note };
+    if (kind === 'PAYMENT') {
+      var tre = document.getElementById('supt-' + id);
+      if (!tre || !tre.value) { say('اختر الخزينة.', false); return; }
+      body.treasuryId = tre.value;
+    }
+
+    var result = await send('/api/suppliers/' + encodeURIComponent(id) + '/movement',
+      body, btn, '…');
+    if (result) {
+      say('تم التسجيل — الرصيد الآن ' + money(result.newBalance) + '.', true);
+      setTimeout(function () { window.location.reload(); }, 1000);
+    }
+  });
+
+  document.getElementById('sup-add').addEventListener('click', async function () {
+    var name = document.getElementById('sup-name').value;
+    if (!name || name.trim().length < 2) { say('اكتب اسم المورّد.', false); return; }
+
+    var result = await send('/api/suppliers', {
+      name: name,
+      phone: document.getElementById('sup-phone').value,
+      notes: document.getElementById('sup-notes').value
+    }, this, 'جارٍ الإضافة…');
+
+    if (result) {
+      say('تمت الإضافة.', true);
+      setTimeout(function () { window.location.reload(); }, 800);
+    }
+  });
+
   load();
 })();
 `;
