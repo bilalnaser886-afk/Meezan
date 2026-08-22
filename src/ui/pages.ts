@@ -683,6 +683,10 @@ export interface DashboardData {
   permissions: string[];
   pendingApprovals: number;
   canApproveExpenses: boolean;
+  /** report.view_branch — صاحب المحل ومدير الفرع */
+  canViewReport: boolean;
+  /** profit.view_real — صاحب المحل وحده */
+  canSeeCost: boolean;
   canBroadcast: boolean;
   canViewUsers: boolean;
   canCreateUsers: boolean;
@@ -1037,6 +1041,17 @@ export function dashboardPage(data: DashboardData): Html {
     tiles.push(html`<a class="tile" href="/products">
       <span class="tile-label">المنتجات</span>
       <span class="tile-note">${canManageProducts ? 'أسعار وكميات' : 'عرض المخزون'}</span>
+    </a>`);
+  }
+
+  // ⚠ التقرير بعد الخزينة عن قصد: الخزينة بتتفتح كل يوم،
+  // والتقرير مرة في الأسبوع أو الشهر. الترتيب بيتبع الاستخدام.
+  if (data.canViewReport) {
+    tiles.push(html`<a class="tile" data-wide href="/report">
+      <span class="tile-label">قائمة الدخل</span>
+      <span class="tile-note">
+        ${data.canSeeCost ? 'كسبت كام هذا الشهر' : 'حركة فرعك هذا الشهر'}
+      </span>
     </a>`);
   }
 
@@ -4744,3 +4759,253 @@ ${MENU_JS}
   });
 })();
 `;
+
+
+// ═══════════════════ شاشة قائمة الدخل ═══════════════════
+
+export interface ReportPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  tenantName: string;
+  roleKey: string;
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  /** profit.view_real — بيغيّر شكل القائمة كلها مش سطر فيها */
+  canSeeCost: boolean;
+  from: string;
+  to: string;
+  today: string;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * قائمة الدخل.
+ *
+ * ══ ليه الأرقام بتتجاب بالجافاسكربت مش مع الصفحة؟ ══
+ * عشان تغيير الفترة ما يعملش تحميل كامل للصفحة. الجدول بيتحدّث
+ * مكانه، والفترة بتفضل في العنوان.
+ *
+ * ══ وليه القائمة شكلين مش شكل واحد؟ ══
+ * صاحب المحل بيشوف التكلفة والربح. مدير الفرع بيشوف الحركة بلا
+ * هامش، والسطر الأخير عنده مكتوب عليه صراحةً إن التكلفة **مش**
+ * محسوبة — عشان ما يفتكرهاش ربح.
+ */
+export function reportPage(data: ReportPageData): Html {
+  return shell({
+    title: 'قائمة الدخل',
+    script: reportScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="repmsg" role="alert" hidden><span id="repmsg-text"></span></div>
+
+  <details class="panel" open>
+    <summary>الفترة</summary>
+    <div class="panel-body">
+      <label class="field-label" for="rep-from">من</label>
+      <input class="field-input" id="rep-from" type="date" dir="ltr"
+        value="${data.from}" max="${data.today}">
+
+      <label class="field-label" for="rep-to">إلى</label>
+      <input class="field-input" id="rep-to" type="date" dir="ltr"
+        value="${data.to}" max="${data.today}">
+
+      <button class="btn-mini" type="button" id="rep-go">عرض</button>
+      <p class="field-hint" id="rep-scope"></p>
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>القائمة</summary>
+    <div class="panel-body">
+      <div id="rep-body">
+        <p class="field-hint">جارٍ الحساب…</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>المصروفات بالتفصيل</summary>
+    <div class="panel-body">
+      <div id="rep-exp">
+        <p class="field-hint">—</p>
+      </div>
+    </div>
+  </details>
+
+  ${data.canSeeCost
+    ? html`<p class="field-hint">
+        رصيد الخزينة يقول كم مالًا لديك الآن. هذه القائمة تقول كم ربحت.
+        الرقمان مختلفان: قد يكون الدرج ممتلئًا وأنت خاسر، إن كانت البضاعة
+        المباعة أغلى مما قبضته.
+      </p>`
+    : html`<p class="field-hint">
+        هذه القائمة لا تتضمن تكلفة البضاعة، لذا الرقم الأخير ليس ربحًا —
+        هو الفرق بين ما دخل وما خرج فقط.
+      </p>`}
+</main>
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function reportScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+(function () {
+  var box  = document.getElementById('repmsg');
+  var text = document.getElementById('repmsg-text');
+  var body = document.getElementById('rep-body');
+  var expEl = document.getElementById('rep-exp');
+  var scopeEl = document.getElementById('rep-scope');
+
+  function money(piastres) {
+    if (piastres === null || piastres === undefined) return '—';
+    var neg = piastres < 0;
+    var abs = Math.abs(Math.trunc(piastres));
+    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
+      '.' + String(abs % 100).padStart(2, '0');
+  }
+
+  // سطر في القائمة. strong = سطر إجمالي بخط أعرض وفاصل فوقه.
+  function line(label, value, opts) {
+    opts = opts || {};
+    var row = document.createElement('div');
+    row.className = 'mv-row';
+    if (opts.strong) row.style.fontWeight = '500';
+    if (opts.top) row.style.borderTop = '1px solid var(--line, #ddd)';
+    if (opts.muted) row.style.opacity = '0.7';
+
+    var l = document.createElement('span');
+    l.className = 'mv-sub';
+    l.textContent = label;
+    row.appendChild(l);
+
+    var v = document.createElement('span');
+    v.className = 'mv-amount';
+    if (opts.dir) v.setAttribute('data-dir', opts.dir);
+    if (opts.big) v.style.fontSize = '18px';
+    v.textContent = value;
+    row.appendChild(v);
+
+    return row;
+  }
+
+  async function load() {
+    var from = document.getElementById('rep-from').value;
+    var to   = document.getElementById('rep-to').value;
+
+    body.textContent = '';
+    body.appendChild(line('جارٍ الحساب…', ''));
+
+    try {
+      var res = await fetch('/api/reports/income?from=' + encodeURIComponent(from) +
+        '&to=' + encodeURIComponent(to), { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+
+      if (!res.ok || !data || !data.ok) {
+        body.textContent = '';
+        box.hidden = false;
+        box.removeAttribute('data-tone');
+        text.textContent = (data && data.error && data.error.message) || 'تعذّر حساب القائمة.';
+        return;
+      }
+      box.hidden = true;
+
+      var s = data.statement;
+      if (scopeEl) {
+        scopeEl.textContent = 'النطاق: ' + data.scopeLabel +
+          ' · ' + s.salesCount + ' فاتورة · ' + s.refundsCount + ' مرتجع';
+      }
+
+      body.textContent = '';
+      body.appendChild(line('المبيعات', money(s.salesPiastres), { dir: 'IN' }));
+
+      if (s.refundsPiastres > 0) {
+        body.appendChild(line('المرتجعات', '-' + money(s.refundsPiastres), { dir: 'OUT' }));
+      }
+      body.appendChild(line('صافي المبيعات', money(s.netSalesPiastres), { strong: true, top: true }));
+
+      // ⚠ الجزء ده بيظهر لصاحب profit.view_real بس. القيم بترجع
+      // null من الخادم لغيره، فمفيش حاجة تتخبّى هنا — مش موجودة.
+      if (s.cogsPiastres !== null && s.cogsPiastres !== undefined) {
+        var netCogs = s.cogsPiastres - (s.returnedCogsPiastres || 0);
+        body.appendChild(line('تكلفة البضاعة المباعة', '-' + money(netCogs), { dir: 'OUT' }));
+        body.appendChild(line('مجمل الربح', money(s.grossProfitPiastres),
+          { strong: true, top: true }));
+      }
+
+      body.appendChild(line('المصروفات', '-' + money(s.expensesPiastres), { dir: 'OUT' }));
+
+      if (s.netProfitPiastres !== null && s.netProfitPiastres !== undefined) {
+        body.appendChild(line('صافي الربح', money(s.netProfitPiastres),
+          { strong: true, top: true, big: true,
+            dir: s.netProfitPiastres >= 0 ? 'IN' : 'OUT' }));
+
+        if (s.netSalesPiastres > 0) {
+          var margin = Math.round((s.grossProfitPiastres / s.netSalesPiastres) * 1000) / 10;
+          body.appendChild(line('هامش مجمل الربح', margin + '٪', { muted: true }));
+        }
+      } else {
+        var diff = s.netSalesPiastres - s.expensesPiastres;
+        body.appendChild(line('صافي النشاط (التكلفة غير محسوبة)', money(diff),
+          { strong: true, top: true, big: true }));
+      }
+
+      // ⚠ السُلفة بره الحساب عن قصد: دَين على الموظّف بيتخصم من
+      // راتبه، مش مصروف على المحل. لو دخلت الحساب هتتحسب مرتين.
+      if (s.advancesPiastres > 0) {
+        body.appendChild(line('سُلف موظفين (خارج الحساب — تُخصم من الراتب)',
+          money(s.advancesPiastres), { muted: true, top: true }));
+      }
+      if (s.refundFeesPiastres > 0) {
+        body.appendChild(line('منها رسوم استرجاع محتجزة',
+          money(s.refundFeesPiastres), { muted: true }));
+      }
+
+      // ─── المصروفات بالتفصيل ───
+      expEl.textContent = '';
+      var rows = data.expenses || [];
+      if (rows.length === 0) {
+        expEl.appendChild(line('لا مصروفات في هذه الفترة.', ''));
+      } else {
+        for (var i = 0; i < rows.length; i++) {
+          expEl.appendChild(line(
+            rows[i].reasonName + ' (' + rows[i].movementCount + ')',
+            money(rows[i].totalPiastres), { dir: 'OUT' }));
+        }
+      }
+    } catch (err) {
+      body.textContent = '';
+      box.hidden = false;
+      box.removeAttribute('data-tone');
+      text.textContent = 'تعذّر الاتصال بالخادم.';
+    }
+  }
+
+  document.getElementById('rep-go').addEventListener('click', load);
+  load();
+})();
+`;
+}
