@@ -527,6 +527,12 @@ export interface ProductRecord {
   reorderPoint: number;
   /** مرتجع مستنّي المراجعة — مش متاح للبيع */
   quarantinedQuantity: number;
+  /**
+   * خلوّ الجمارك — تسجيل يدوي من المستلم.
+   * ⚠ false معناها **"مش متأكد"** مش "مش مخلّص". غياب المعلومة
+   * مش نفي.
+   */
+  customsCleared: boolean;
   isActive: boolean;
 }
 
@@ -555,6 +561,7 @@ export interface UpdateProductInput {
   entryDate?: string;
   /** محكوم بصلاحية `inventory.reorder_point` — صاحب المحل وحده */
   reorderPoint?: number;
+  customsCleared?: boolean;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
@@ -749,6 +756,56 @@ export interface QuarantineReviewResult {
   movedQuantity: number;
   remainingHeld: number;
   nowOnHand: number;
+}
+
+// ─────────── التحويل بين الفروع ───────────
+
+/**
+ * ⚠ الاتجاه بيتحسب من فرع القارئ:
+ *   IN   جايلك، وإنت اللي بتأكّد الاستلام
+ *   OUT  بعتّها، وإنت اللي تقدر تلغيها
+ *   BOTH صاحب المحل — بيشوف الاتنين
+ */
+export type TransferDirection = 'IN' | 'OUT' | 'BOTH';
+export type TransferDecision = 'RECEIVE' | 'CANCEL';
+
+export interface PendingTransfer {
+  id: string;
+  direction: TransferDirection;
+  productName: string;
+  productType: string;
+  serialNumber: string | null;
+  quantity: number;
+  fromBranch: string;
+  toBranch: string;
+  note: string | null;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface TransferRepository {
+  /**
+   * الإنشاء بيخصم الكمية **فورًا**.
+   *
+   * البضاعة سابت الرفّ، فما ينفعش تفضل متاحة للبيع. بتبقى في
+   * حالة "طايرة" — مش عند حد — لحد ما تتستلم أو تتلغى.
+   */
+  create(input: {
+    productId: string;
+    actorId: string;
+    toBranchId: string;
+    quantity: number;
+    note: string | null;
+  }): Promise<{ transferId: string; productName: string; moved: number }>;
+
+  /** استلام أو إلغاء — الحراسة على الفرع جوّه دالة القاعدة */
+  resolve(
+    transferId: string,
+    actorId: string,
+    decision: TransferDecision,
+  ): Promise<{ productName: string; moved: number; finalStatus: string }>;
+
+  listPending(tenantId: string, branchId: string | null): Promise<PendingTransfer[]>;
 }
 
 // ─────────── التنبيهات ───────────
