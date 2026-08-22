@@ -21,6 +21,7 @@ import {
   customerRoutes,
   platformRoutes,
   productRoutes,
+  reportRoutes,
   returnRoutes,
   saleRoutes,
   setupRoutes,
@@ -52,6 +53,7 @@ import {
   platformSetupPage,
   posPage,
   productsPage,
+  reportPage,
   setupPage,
   treasuryPage,
 } from './ui/pages';
@@ -109,6 +111,7 @@ app.route('/api/treasury', treasuryRoutes);
 app.route('/api/products', productRoutes);
 app.route('/api/sales', saleRoutes);
 app.route('/api/returns', returnRoutes);
+app.route('/api/reports', reportRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
@@ -300,6 +303,10 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       permissions: user.permissions,
       pendingApprovals: pending.length,
       canApproveExpenses,
+      // ⚠ الاتنين دول مختلفين: الأولانية بتفتح الشاشة، والتانية
+      // بتحدّد شكلها. مدير الفرع بيفتح ومش بيشوف التكلفة.
+      canViewReport: user.permissions.includes(PERMISSIONS.REPORT_VIEW_BRANCH),
+      canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
       canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
       canViewUsers,
       canCreateUsers,
@@ -506,6 +513,47 @@ app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
         purchaseCount: cst.purchaseCount,
         totalPiastres: cst.totalPiastres,
       })),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * صفحة قائمة الدخل.
+ *
+ * ⚠ التقرير نفسه بيتجاب بالجافاسكربت من `/api/reports/income`،
+ * مش هنا. السبب: تغيير الفترة ما يعملش تحميل كامل للصفحة.
+ *
+ * الصفحة دي بتبعت الإطار والصلاحيات بس.
+ */
+app.get('/report', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.REPORT_VIEW_BRANCH)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+  const today = todayInCairo();
+
+  return c.html(
+    reportPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel: await branchLabelFor(container, user),
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
+      // الافتراضي: من أول الشهر لحد النهاردة، بتوقيت القاهرة
+      from: `${today.slice(0, 7)}-01`,
+      to: today,
+      today,
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
