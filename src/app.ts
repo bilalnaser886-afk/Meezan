@@ -22,6 +22,7 @@ import {
   platformRoutes,
   productRoutes,
   reportRoutes,
+  supplierRoutes,
   transferRoutes,
   returnRoutes,
   saleRoutes,
@@ -55,6 +56,7 @@ import {
   posPage,
   productsPage,
   reportPage,
+  suppliersPage,
   setupPage,
   treasuryPage,
 } from './ui/pages';
@@ -114,6 +116,7 @@ app.route('/api/sales', saleRoutes);
 app.route('/api/returns', returnRoutes);
 app.route('/api/reports', reportRoutes);
 app.route('/api/transfers', transferRoutes);
+app.route('/api/suppliers', supplierRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
@@ -309,6 +312,7 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       // بتحدّد شكلها. مدير الفرع بيفتح ومش بيشوف التكلفة.
       canViewReport: user.permissions.includes(PERMISSIONS.REPORT_VIEW_BRANCH),
       canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
+      canManageSuppliers: user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE),
       canBroadcast: user.permissions.includes(PERMISSIONS.ANNOUNCEMENT_BROADCAST),
       canViewUsers,
       canCreateUsers,
@@ -532,6 +536,48 @@ app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
         purchaseCount: cst.purchaseCount,
         totalPiastres: cst.totalPiastres,
       })),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * صفحة الموردين والديون.
+ *
+ * ⚠ الأرصدة بتتجاب بالجافاسكربت مش هنا — بتتغيّر مع كل حركة
+ * في نفس الشاشة، وإعادة تحميل الصفحة مع كل تسجيل مرهقة.
+ *
+ * اللي بيتبعت مع الصفحة: الخزائن (لقائمة السداد) بس.
+ */
+app.get('/suppliers', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+
+  // مدير الفرع بيدفع من خزينة فرعه. صاحب المحل من أي خزينة.
+  const treasuries = await container.treasury.treasuries
+    .listBalances(user.tenantId, user.roleKey === 'SUPER_ADMIN' ? null : user.branchId)
+    .catch(() => []);
+
+  return c.html(
+    suppliersPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel: await branchLabelFor(container, user),
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      treasuries: treasuries.map((t) => ({ treasuryId: t.treasuryId, name: t.name })),
+      today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
