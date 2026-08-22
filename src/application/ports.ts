@@ -741,6 +741,61 @@ export interface QuarantineReviewResult {
   nowOnHand: number;
 }
 
+// ─────────── التقارير ───────────
+
+/**
+ * قائمة الدخل لفترة.
+ *
+ * ⚠ أعمدة التكلفة والربح **nullable** عن قصد. مين مالوش
+ * `profit.view_real` بيرجعله `null` — مش صفر ومش رقم مخفي في
+ * الواجهة. الفرق مهم: الصفر رقم، و null معناها "مش من حقك".
+ *
+ * والقيمة ما بتتحسبش في قاعدة البيانات أصلاً لما الصلاحية غايبة.
+ */
+export interface IncomeStatement {
+  salesCount: number;
+  salesPiastres: number;
+  refundsCount: number;
+  refundsPiastres: number;
+  refundFeesPiastres: number;
+  netSalesPiastres: number;
+
+  cogsPiastres: number | null;
+  returnedCogsPiastres: number | null;
+  grossProfitPiastres: number | null;
+  netProfitPiastres: number | null;
+
+  expensesPiastres: number;
+  /**
+   * ⚠ بره الحساب عن قصد. السُلفة دَين على الموظّف بيتخصم من
+   * راتبه، مش مصروف على المحل. لو حسبناها مصروف هتتحسب مرتين:
+   * مرة كسُلفة ومرة لما الراتب يتصرف.
+   */
+  advancesPiastres: number;
+}
+
+export interface ExpenseLine {
+  reasonName: string;
+  movementCount: number;
+  totalPiastres: number;
+}
+
+export interface ReportRepository {
+  incomeStatement(
+    tenantId: string,
+    branchId: string | null,
+    from: string,
+    to: string,
+    includeCost: boolean,
+  ): Promise<IncomeStatement>;
+  expenseBreakdown(
+    tenantId: string,
+    branchId: string | null,
+    from: string,
+    to: string,
+  ): Promise<ExpenseLine[]>;
+}
+
 export interface ReturnRepository {
   /** البنود القابلة للاسترجاع في فاتورة — قراءة بس */
   returnableLines(saleId: string): Promise<ReturnableLine[]>;
