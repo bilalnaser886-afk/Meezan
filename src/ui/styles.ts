@@ -193,6 +193,50 @@ button{font:inherit}
    القاعدة دي بتقفل الباب للأبد بدل ما نفتكر نكتب سطر لكل كلاس. */
 [hidden]{display:none !important}
 
+/* ═══ الطباعة ═══
+   حاوية مخفية في كل صفحة. وقت الطباعة بتظهر لوحدها والباقي
+   بيختفي — من غير نافذة جديدة، لأن window.open بيتمنع في سفاري
+   على الأيفون وفي وضع التطبيق المثبّت. */
+#print-root{display:none}
+
+/* ═══ الماسح بالكاميرا ═══ */
+.scan-wrap{position:fixed;inset:0;z-index:300;display:grid;place-items:center;
+  background:rgba(0,0,0,.88);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.scan-box{width:min(94vw,460px);text-align:center}
+.scan-video{width:100%;max-height:62vh;border-radius:var(--r);background:#000;
+  object-fit:cover}
+.scan-hint{color:#fff;font-size:14px;margin:12px 0}
+
+@media print{
+  body > *{display:none !important}
+  #print-root{display:block !important;color:#000;background:#fff}
+  @page{margin:8mm}
+}
+
+.pr-doc{font-family:var(--font-body);color:#000;font-size:13px;line-height:1.7}
+.pr-head{display:flex;justify-content:space-between;align-items:baseline;
+  border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:10px}
+.pr-shop{font-family:var(--font-display);font-size:18px;font-weight:600}
+.pr-row{display:flex;justify-content:space-between;padding:3px 0}
+.pr-total{border-top:1.5px solid #000;margin-top:8px;padding-top:8px;
+  font-size:16px;font-weight:600}
+.pr-note{margin-top:12px;font-size:11px;color:#444}
+/* الملصق: مقاس صغير مستقل عن الفاتورة */
+.pr-label{width:58mm;text-align:center;padding:3mm 1mm}
+.pr-label-shop{font-family:var(--font-display);font-size:12px;font-weight:600;
+  border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:4px}
+.pr-label-name{font-size:13px;font-weight:600;margin-bottom:3px}
+.pr-label-code{font-family:var(--font-mono);font-size:11px;letter-spacing:1px;
+  margin-top:2px;direction:ltr}
+/* سطر المواصفات: بيلف لو طال بدل ما يتقص */
+.pr-label-spec{font-size:10px;margin-top:4px;line-height:1.6;
+  display:flex;flex-wrap:wrap;justify-content:center;gap:3px 8px}
+.pr-label-foot{display:flex;justify-content:space-between;margin-top:5px;
+  padding-top:3px;border-top:1px solid #000;font-size:10px;
+  font-family:var(--font-mono)}
+
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
   border-radius:var(--r);margin-bottom:14px;background:var(--card);
   border:1px solid var(--line)}
