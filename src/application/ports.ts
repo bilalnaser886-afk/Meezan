@@ -768,6 +768,131 @@ export interface QuarantineReviewResult {
   nowOnHand: number;
 }
 
+// ─────────── الصيانة ───────────
+
+export interface RepairShop {
+  id: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  isActive: boolean;
+}
+
+/** جهاز **المحل** في الورشة — مربوط بالمخزون */
+export interface MaintenanceRecord {
+  id: string;
+  productId: string;
+  productName: string;
+  serialNumber: string | null;
+  shopName: string | null;
+  faultNote: string;
+  costPiastres: number;
+  sentDate: string;
+  returnedDate: string | null;
+  status: 'SENT' | 'RETURNED' | 'CANCELLED';
+  resultNote: string | null;
+  /** كام يوم بره — بيغذّي التنبيه بعد 3 أيام */
+  daysOut: number;
+}
+
+export type TicketStatus =
+  | 'CHECKING'
+  | 'WAITING_PART'
+  | 'READY'
+  | 'DELIVERED'
+  | 'CANCELLED';
+
+/**
+ * تذكرة جهاز **عميل** — مالهاش أي علاقة بـ `products`.
+ *
+ * ⚠ `hasUnlock` بتقول إن فيه بيانات فتح، **من غير ما تبعتها**.
+ * القيمة نفسها بتتجاب بنداء منفصل محصور على اللي استلم الجهاز
+ * أو صاحب صلاحية الإدارة.
+ */
+export interface RepairTicket {
+  id: string;
+  customerName: string;
+  customerPhone: string | null;
+  deviceName: string;
+  serialNumber: string | null;
+  deviceColor: string | null;
+  conditionNote: string | null;
+  complaint: string;
+  shopName: string | null;
+  repairShopId: string | null;
+  costPiastres: number;
+  receivedDate: string;
+  promisedDate: string | null;
+  deliveredDate: string | null;
+  status: TicketStatus;
+  workNote: string | null;
+  hasUnlock: boolean;
+  parentId: string | null;
+  /** 1 للأصلية، 2 لأول رجعة… بيتحسب في القاعدة */
+  visitNumber: number;
+  createdById: string;
+  daysOpen: number;
+}
+
+export interface ShopHistoryRow {
+  kind: 'OWN' | 'CUSTOMER';
+  refId: string;
+  title: string;
+  detail: string;
+  costPiastres: number;
+  onDate: string;
+  status: string;
+}
+
+export interface MaintenanceRepository {
+  listShops(tenantId: string): Promise<RepairShop[]>;
+  createShop(data: {
+    tenantId: string;
+    name: string;
+    phone: string | null;
+    notes: string | null;
+    createdById: string;
+  }): Promise<{ id: string }>;
+  shopHistory(shopId: string, tenantId: string): Promise<ShopHistoryRow[]>;
+
+  /** إرسال جهاز المحل — بيخصم من المخزون ذريًا */
+  sendToShop(input: {
+    productId: string;
+    actorId: string;
+    shopId: string | null;
+    fault: string;
+    costPiastres: number;
+  }): Promise<{ recordId: string; productName: string }>;
+  returnFromShop(
+    recordId: string,
+    actorId: string,
+    status: 'RETURNED' | 'CANCELLED',
+    costPiastres: number | null,
+    note: string | null,
+  ): Promise<{ productName: string; finalStatus: string }>;
+  listRecords(
+    tenantId: string,
+    branchId: string | null,
+    openOnly: boolean,
+  ): Promise<MaintenanceRecord[]>;
+
+  listTickets(
+    tenantId: string,
+    branchId: string | null,
+    openOnly: boolean,
+    search: string | null,
+  ): Promise<RepairTicket[]>;
+  createTicket(data: Record<string, unknown>): Promise<{ id: string }>;
+  updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
+  findTicket(id: string): Promise<{ id: string; tenantId: string; branchId: string } | null>;
+  /** ⚠ محصور — الحراسة جوّه دالة القاعدة كمان */
+  unlock(
+    ticketId: string,
+    actorId: string,
+    canManage: boolean,
+  ): Promise<{ kind: string; value: string | null }>;
+}
+
 // ─────────── الموردين والديون ───────────
 
 export interface SupplierBalance {
