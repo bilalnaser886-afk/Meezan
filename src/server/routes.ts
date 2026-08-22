@@ -54,6 +54,7 @@ import {
   updateSaleExitDate,
 } from '../application/use-cases/sales';
 import { getIncomeReport } from '../application/use-cases/reports';
+import { listAlerts } from '../application/use-cases/alerts';
 import {
   createReturn,
   getReturnableLines,
@@ -1113,6 +1114,23 @@ reportRoutes.get(
     );
 
     return c.json({ ok: true, ...report });
+  },
+);
+
+
+/**
+ * التنبيهات الحالية.
+ *
+ * ⚠ `touchActivity: false` — الشاشة بتنادي ده وهي بتفتح، ومش
+ * المفروض يعتبر نشاط بشري.
+ */
+reportRoutes.get(
+  '/alerts',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const summary = await listAlerts(container.alerts, c.get('user'));
+    return c.json({ ok: true, ...summary });
   },
 );
 
