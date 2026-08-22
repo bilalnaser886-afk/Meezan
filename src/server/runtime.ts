@@ -170,6 +170,7 @@ export function buildContainer(env: Env): Container {
     },
     maintenance: {
       maintenance: createMaintenanceRepository(db),
+      branches: branchRepo,
       clock: systemClock,
       audit,
     },
