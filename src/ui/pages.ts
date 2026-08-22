@@ -1024,6 +1024,18 @@ export function dashboardPage(data: DashboardData): Html {
           <span class="strip-text">لا يوجد ما ينتظر قرارك الآن.</span>
         </section>`;
 
+  // ⚠ شريط التنبيهات بيتملا بالجافاسكربت بعد ما الصفحة تفتح،
+  // مش مع الصفحة. السبب: التنبيه حالة لحظية، ولو اتحسب على
+  // الخادم مع باقي اللوحة هيتأخّر تحميلها من غير داعي.
+  //
+  // ومخفي لحد ما يبقى فيه حاجة فعلاً — شريط فاضي دايم بيتحوّل
+  // لأثاث، والعين بتبطّل تشوفه.
+  const alertStrip = html`<section class="strip" id="alert-strip" data-tone="wait" hidden>
+    <span class="strip-count" id="alert-count"></span>
+    <span class="strip-text" id="alert-text"></span>
+    <a class="strip-go" href="/products">عرض</a>
+  </section>`;
+
   // ── البلاطات: اللي تقدر تعمله، بكلام مفهوم مش أكواد نظام ──
   const tiles: Html[] = [];
 
@@ -1107,6 +1119,7 @@ export function dashboardPage(data: DashboardData): Html {
 
 <main class="shell">
   ${strip}
+  ${alertStrip}
 
   ${tiles.length > 0 ? html`<div class="tiles">${tiles}</div>` : ''}
 
@@ -1411,6 +1424,42 @@ ${MENU_JS}
       }
     });
   }
+
+  // ══════════ التنبيهات ══════════
+  //
+  // ⚠ بتتجاب بعد ما الصفحة تفتح، مش معها. لو فشلت، اللوحة
+  // بتفضل شغّالة عادي — التنبيه إضافة مش شرط لتشغيل الشاشة.
+  (async function () {
+    var stripEl = document.getElementById('alert-strip');
+    if (!stripEl) return;
+
+    try {
+      var res = await fetch('/api/reports/alerts', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok || data.totalCount === 0) return;
+
+      var countEl = document.getElementById('alert-count');
+      var textEl  = document.getElementById('alert-text');
+
+      if (countEl) countEl.textContent = String(data.totalCount);
+
+      // أول تنبيهين بالاسم، والباقي عدد. القايمة الكاملة في
+      // شاشة المنتجات — الشريط تنبيه مش تقرير.
+      var names = data.rows.slice(0, 2).map(function (r) { return r.title; }).join(' · ');
+      var extra = data.totalCount > 2 ? ' وغيرهم' : '';
+
+      if (textEl) {
+        var head = data.highCount > 0
+          ? '<b>' + data.highCount + ' صنف خلص أو شارف.</b> '
+          : '<b>أصناف تحتاج انتباهك.</b> ';
+        textEl.innerHTML = head + names + extra;
+      }
+
+      stripEl.hidden = false;
+    } catch (err) {
+      // صامت عن قصد: فشل التنبيه ما يصحّش يوقّع اللوحة
+    }
+  })();
 })();
 `;
 }
@@ -2699,6 +2748,8 @@ export interface ProductsPageData {
   canEdit: boolean;
   /** profit.view_real — يشوف التكلفة */
   canSeeCost: boolean;
+  /** inventory.reorder_point — صاحب المحل وحده يحدّد الحد */
+  canSetReorder: boolean;
   canSell: boolean;
   canUseTreasury: boolean;
   /** للمالك بس — لاختيار الفرع عند الإضافة */
@@ -2714,6 +2765,7 @@ export interface ProductsPageData {
     costPiastres?: number;
     quantityOnHand: number;
     isActive: boolean;
+    reorderPoint: number;
   }>;
   /** تاريخ النهاردة بتوقيت القاهرة — قيمة افتراضية لحقل التاريخ */
   today: string;
@@ -2846,6 +2898,21 @@ export function productsPage(data: ProductsPageData): Html {
                         dir="ltr" value="${p.entryDate}" max="${data.today}">
                     </div>
                   </div>
+
+                  ${data.canSetReorder && !isDevice
+                    ? html`<div class="field">
+                        <label class="field-label" for="reorder-${p.id}">
+                          الحد الأدنى للتنبيه
+                        </label>
+                        <input class="field-input" id="reorder-${p.id}" type="number"
+                          min="0" dir="ltr" value="${String(p.reorderPoint)}">
+                        <p class="field-hint">
+                          ${p.reorderPoint > 0
+                            ? `ينبّهك عند ${p.reorderPoint} أو أقل. صفر = معطّل.`
+                            : 'صفر = بلا تنبيه. اكتب رقمًا لتفعيله.'}
+                        </p>
+                      </div>`
+                    : ''}
 
                   <div class="prod-edit-actions">
                     ${isDevice
@@ -3170,6 +3237,13 @@ ${MENU_JS}
     if (serialEl) body.serialNumber = serialEl.value;
     if (sourceEl) body.source = sourceEl.value;
     if (entryEl && entryEl.value) body.entryDate = entryEl.value;
+
+    // ⚠ الخانة موجودة لصاحب المحل بس. غيابها من الصفحة معناه
+    // إن الحقل ما بيتبعتش أصلاً — والخادم بيفحص الصلاحية برضه.
+    var reorderEl = document.getElementById('reorder-' + id);
+    if (reorderEl && reorderEl.value !== '') {
+      body.reorderPoint = parseInt(reorderEl.value, 10);
+    }
 
     var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
     if (result) {
