@@ -34,6 +34,209 @@ import { formatPiastres } from '../domain/money';
  *
  * العلامات __IDLE__ و __WARN__ و __ACTION__ بتتبدّل وقت التوليد.
  */
+/**
+ * الطباعة والباركود — مشترك بين كل الصفحات
+ *
+ * ══ ليه مفيش مكتبة؟ ══
+ * المشروع مفيهوش خطوة بناء للمتصفح: الصفحات نصوص في `pages.ts`
+ * والجافاسكربت جوّاها كما هو. أي مكتبة معناها وسم `<script>`
+ * من CDN — يعني **اعتماد خارجي وقت التشغيل**.
+ *
+ * ولو الـCDN وقع أو نت المحل تعب، الكاشير ما يقدرش يطبع فاتورة.
+ * ده تمن غالي لحاجة نقدر نكتبها في ٤٠ سطر.
+ *
+ * ══ Code 39 ══
+ * كل حرف = ٩ عناصر (٥ خطوط و٤ مسافات)، تلاتة منهم عريضة.
+ * الجدول تحت هو المعيار نفسه، و`n` ضيّق و`w` عريض.
+ *
+ * اخترناه على Code 128 لأن جدوله ٤٤ مدخل بدل ١٠٧، وكل ماسح في
+ * الدنيا بيقراه. الوحيد اللي بيخسره إن الملصق بيطلع أعرض شوية.
+ *
+ * ══ والطباعة بحاوية مخفية مش نافذة جديدة ══
+ * `window.open` بيتمنع في سفاري على الأيفون وفي وضع التطبيق
+ * المثبّت. الحاوية المخفية بتشتغل في كل مكان.
+ */
+const PRINT_SHARED_JS = `
+(function () {
+  var C39 = {
+    '0':'nnnwwnwnn','1':'wnnwnnnnw','2':'nnwwnnnnw','3':'wnwwnnnnn',
+    '4':'nnnwwnnnw','5':'wnnwwnnnn','6':'nnwwwnnnn','7':'nnnwnnwnw',
+    '8':'wnnwnnwnn','9':'nnwwnnwnn','A':'wnnnnwnnw','B':'nnwnnwnnw',
+    'C':'wnwnnwnnn','D':'nnnnwwnnw','E':'wnnnwwnnn','F':'nnwnwwnnn',
+    'G':'nnnnnwwnw','H':'wnnnnwwnn','I':'nnwnnwwnn','J':'nnnnwwwnn',
+    'K':'wnnnnnnww','L':'nnwnnnnww','M':'wnwnnnnwn','N':'nnnnwnnww',
+    'O':'wnnnwnnwn','P':'nnwnwnnwn','Q':'nnnnnnwww','R':'wnnnnnwwn',
+    'S':'nnwnnnwwn','T':'nnnnwnwwn','U':'wwnnnnnnw','V':'nwwnnnnnw',
+    'W':'wwwnnnnnn','X':'nwnnwnnnw','Y':'wwnnwnnnn','Z':'nwwnwnnnn',
+    '-':'nwnnnnwnw','.':'wwnnnnwnn',' ':'nwwnnnwnn','$':'nwnwnwnnn',
+    '/':'nwnwnnnwn','+':'nwnnnwnwn','%':'nnnwnwnwn','*':'nwnnwnwnn'
+  };
+
+  // بيرسم الباركود كـ SVG. مفيش صور ولا طلبات شبكة.
+  window.barcodeSvg = function (value, height) {
+    var text = String(value || '').toUpperCase().replace(/[^0-9A-Z\-. $/+%]/g, '');
+    if (!text) return '';
+
+    var NARROW = 2, WIDE = 5, GAP = 2;
+    height = height || 56;
+
+    var seq = ('*' + text + '*').split('');
+    var x = 0, rects = '';
+
+    for (var i = 0; i < seq.length; i++) {
+      var pat = C39[seq[i]];
+      if (!pat) continue;
+      for (var j = 0; j < pat.length; j++) {
+        var w = pat[j] === 'w' ? WIDE : NARROW;
+        // العناصر الزوجية خطوط والفردية مسافات
+        if (j % 2 === 0) {
+          rects += '<rect x="' + x + '" y="0" width="' + w + '" height="' + height + '"/>';
+        }
+        x += w;
+      }
+      x += GAP;
+    }
+
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ' +
+      x + ' ' + height + '" preserveAspectRatio="xMidYMid meet" fill="#000">' +
+      rects + '</svg>';
+  };
+
+  /**
+   * الطباعة: بنحط المحتوى في الحاوية المخفية وننادي print.
+   * الـCSS بيخفي باقي الصفحة وقت الطباعة بس.
+   */
+  window.printHtml = function (inner) {
+    var root = document.getElementById('print-root');
+    if (!root) return;
+    root.innerHTML = inner;
+    // مهلة قصيرة عشان المتصفح يرسم المحتوى قبل ما يفتح الحوار
+    setTimeout(function () {
+      window.print();
+      setTimeout(function () { root.innerHTML = ''; }, 400);
+    }, 60);
+  };
+
+  /**
+   * الماسح بالكاميرا.
+   *
+   * ══ ليه على مرحلتين؟ ══
+   * كروم على أندرويد فيه BarcodeDetector مدمج — صفر تحميل.
+   * سفاري على الأيفون مالوش، فبنجيب مكتبة **وقت الطلب بس**.
+   *
+   * يعني اللي على أندرويد ما بيحمّلش حاجة خالص، واللي على
+   * الأيفون بيحمّل مرة واحدة أول ما يضغط "مسح" — مش مع كل
+   * فتحة صفحة.
+   *
+   * ⚠ التمن: أول مسحة على الأيفون محتاجة نت. بعدها المتصفح
+   * بيخزّن المكتبة بنفسه.
+   */
+  var zxingReady = null;
+
+  function loadZxing() {
+    if (zxingReady) return zxingReady;
+    zxingReady = new Promise(function (resolve, reject) {
+      var tag = document.createElement('script');
+      tag.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+      tag.onload = function () { resolve(window.ZXing); };
+      tag.onerror = function () { reject(new Error('cdn')); };
+      document.head.appendChild(tag);
+    });
+    return zxingReady;
+  }
+
+  /**
+   * بيفتح الكاميرا ويرجّع الكود المقروء.
+   * بيرمي رسالة عربية جاهزة لو فشل.
+   */
+  window.scanBarcode = async function () {
+    var overlay = document.createElement('div');
+    overlay.className = 'scan-wrap';
+    overlay.innerHTML =
+      '<div class="scan-box">' +
+        '<video class="scan-video" playsinline muted></video>' +
+        '<p class="scan-hint">صوّب الكاميرا على الباركود</p>' +
+        '<button class="btn-mini" type="button" data-scan-cancel>إلغاء</button>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    var video = overlay.querySelector('video');
+    var stream = null;
+    var stopped = false;
+
+    function cleanup() {
+      stopped = true;
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    overlay.querySelector('[data-scan-cancel]').addEventListener('click', cleanup);
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
+      video.srcObject = stream;
+      await video.play();
+    } catch (err) {
+      cleanup();
+      throw new Error('تعذّر فتح الكاميرا. تأكّد من السماح بالوصول إليها.');
+    }
+
+    // ─── الطريق الأول: المدمج في المتصفح ───
+    if ('BarcodeDetector' in window) {
+      try {
+        var det = new window.BarcodeDetector({
+          formats: ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'qr_code']
+        });
+        return await new Promise(function (resolve, reject) {
+          var timer = setInterval(async function () {
+            if (stopped) { clearInterval(timer); reject(new Error('أُلغي المسح.')); return; }
+            try {
+              var found = await det.detect(video);
+              if (found && found.length) {
+                clearInterval(timer);
+                var value = found[0].rawValue;
+                cleanup();
+                resolve(value);
+              }
+            } catch (e) { /* إطار مش واضح — نكمّل */ }
+          }, 220);
+        });
+      } catch (e) { /* الصيغ مش مدعومة — بنكمّل للمكتبة */ }
+    }
+
+    // ─── الطريق التاني: المكتبة ───
+    var ZX;
+    try {
+      ZX = await loadZxing();
+    } catch (e) {
+      cleanup();
+      throw new Error('تعذّر تحميل الماسح. تأكّد من الاتصال بالإنترنت.');
+    }
+
+    return await new Promise(function (resolve, reject) {
+      var reader = new ZX.BrowserMultiFormatReader();
+      reader.decodeFromVideoElement(video, function (result) {
+        if (stopped) { reader.reset(); reject(new Error('أُلغي المسح.')); return; }
+        if (result) {
+          reader.reset();
+          var value = result.getText();
+          cleanup();
+          resolve(value);
+        }
+      });
+    });
+  };
+
+  window.printMoney = function (p) {
+    var abs = Math.abs(Math.trunc(p || 0));
+    return (p < 0 ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
+      '.' + String(abs % 100).padStart(2, '0');
+  };
+})();
+`;
+
 const IDLE_SHARED_JS = `
 (function () {
   var IDLE = __IDLE__, WARN = __WARN__, ACTION = '__ACTION__';
@@ -210,6 +413,10 @@ ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive"
 </head>
 <body>
 ${opts.body}
+<!-- حاوية الطباعة. مخفية بـ CSS مش بخاصية hidden، لأن القاعدة
+     العامة للإخفاء كانت هتمنعها من الظهور وقت الطباعة نفسها. -->
+<div id="print-root"></div>
+<script>${raw(PRINT_SHARED_JS)}</script>
 <script>${raw(opts.script)}</script>
 <script>${raw(PWA_REGISTER_JS)}</script>
 </body>
@@ -1926,7 +2133,12 @@ export function posPage(data: PosPageData): Html {
 
   return shell({
     title: 'البيع',
-    script: posScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    script: posScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.tenantName,
+    ),
     body: html`${appBar({
       fullName: data.fullName,
       username: data.username,
@@ -2042,6 +2254,9 @@ export function posPage(data: PosPageData): Html {
                       تاريخ الخروج
                     </button>`
                   : ''}
+                <button class="btn-mini" type="button" data-print-sale="${s.id}">
+                  طباعة
+                </button>
                 ${data.canRefund
                   ? html`<button class="btn-mini" type="button" data-ret-open="${s.id}">
                       استرجاع
@@ -2111,7 +2326,13 @@ ${tabBar('pos', {
   });
 }
 
-function posScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+function posScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  /** ⚠ اسم المحل مش راجع مع الفاتورة — بيتمرّر صراحةً للطباعة */
+  shopName: string,
+): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
     .replace('__ACTION__', action);
@@ -2122,6 +2343,10 @@ ${MENU_JS}
 ${TIME_JS}
 
 (function () {
+  // ⚠ JSON.stringify بيعمل الاقتباس والتهريب مع بعض — الاسم
+  // ممكن يكون فيه علامة اقتباس تكسر السكربت لو لصقناه كنص.
+  var SHOP_NAME = ${JSON.stringify(shopName)};
+
   // السلة في الذاكرة: معرّف المنتج ← { الاسم، السعر بالقرش، الكمية، المتاح }
   var cart = {};
 
@@ -2739,6 +2964,71 @@ ${TIME_JS}
     }
   });
 
+  // ══════════ طباعة الفاتورة ══════════
+  //
+  // ⚠ البنود بتتجاب من الخادم وقت الطباعة مش مع الصفحة.
+  // قايمة الفواتير عندها الإجمالي بس؛ تحميل بنود عشر فواتير
+  // مقدّمًا عشان يمكن تطبع واحدة = شغل ضايع.
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-print-sale]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-print-sale');
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+      var res = await fetch('/api/sales/' + encodeURIComponent(id), {
+        credentials: 'same-origin'
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        boxEl.hidden = false;
+        boxEl.removeAttribute('data-tone');
+        textEl.textContent = (data && data.error && data.error.message) || 'تعذّر جلب الفاتورة.';
+        return;
+      }
+
+      var sale = data.sale;
+      var lines = '';
+      var items = sale.items || [];
+
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        lines += '<div class="pr-row"><span>' + it.productName +
+          (it.quantity > 1 ? ' × ' + it.quantity : '') + '</span>' +
+          '<span>' + window.printMoney(it.lineTotalPiastres) + '</span></div>';
+      }
+
+      window.printHtml(
+        '<div class="pr-doc">' +
+          '<div class="pr-head">' +
+            '<span class="pr-shop">' + SHOP_NAME + '</span>' +
+            '<span>فاتورة ' + String(sale.id).slice(0, 8) + '</span>' +
+          '</div>' +
+          '<div class="pr-row"><span>التاريخ</span><span>' +
+            (sale.exitDate || '') + '</span></div>' +
+          (sale.customerName
+            ? '<div class="pr-row"><span>العميل</span><span>' + sale.customerName + '</span></div>'
+            : '') +
+          '<div style="margin-top:10px">' + lines + '</div>' +
+          '<div class="pr-row pr-total"><span>الإجمالي</span><span>' +
+            window.printMoney(sale.totalPiastres) + ' ج.م</span></div>' +
+          '<div class="pr-note">شكرًا لتعاملكم معنا. الاسترجاع خلال المدة المتفق عليها ' +
+            'وبحالة الجهاز الأصلية.</div>' +
+        '</div>'
+      );
+    } catch (err) {
+      boxEl.hidden = false;
+      boxEl.removeAttribute('data-tone');
+      textEl.textContent = 'تعذّر الاتصال بالخادم.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
   render();
 })();
 `;
@@ -2813,7 +3103,14 @@ export function productsPage(data: ProductsPageData): Html {
           const priceLabel =
             p.pricePiastres === null ? 'بلا سعر' : `${formatPiastres(p.pricePiastres)} ج.م`;
 
-          return html`<div class="prod-row" data-row="${p.id}">
+          return html`<div class="prod-row" data-row="${p.id}" data-pid="${p.id}"
+            data-searchable="${p.name} ${p.serialNumber ?? ''}"
+            data-name="${p.name}" data-serial="${p.serialNumber ?? ''}"
+            data-price="${p.pricePiastres === null ? '' : formatPiastres(p.pricePiastres)}"
+            data-storage="${p.storageCapacity ?? ''}"
+            data-battery="${p.batteryHealth === null ? '' : String(p.batteryHealth)}"
+            data-customs="${p.customsCleared ? 'true' : 'false'}"
+            data-entry="${formatDate(p.entryDate)}">
             <div class="prod-row-main">
               <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">
                 ${p.name}
@@ -2928,6 +3225,19 @@ export function productsPage(data: ProductsPageData): Html {
 
                   ${isDevice
                     ? html`<div class="field">
+                        <label class="field-label" for="storage-${p.id}">المساحة</label>
+                        <input class="field-input" id="storage-${p.id}" type="text"
+                          dir="ltr" maxlength="32" placeholder="256GB"
+                          value="${p.storageCapacity ?? ''}">
+
+                        <label class="field-label" for="battery-${p.id}">صحة البطارية ٪</label>
+                        <input class="field-input" id="battery-${p.id}" type="number"
+                          min="0" max="100" dir="ltr"
+                          value="${p.batteryHealth === null ? '' : String(p.batteryHealth)}">
+                        <p class="field-hint">فارغة تعني «لم تُقَس» — وهي غير الصفر.</p>
+                      </div>
+
+                      <div class="field">
                         <label class="field-label" for="customs-${p.id}">
                           خلوّ الجمارك
                         </label>
@@ -2969,6 +3279,10 @@ export function productsPage(data: ProductsPageData): Html {
                     : ''}
 
                   <div class="prod-edit-actions">
+                    ${isDevice && p.serialNumber
+                      ? html`<button class="btn-mini" type="button"
+                          data-label="${p.id}">طباعة ملصق</button>`
+                      : ''}
                     ${isDevice
                       ? html`<button class="btn-mini" type="button" data-save-details="${p.id}">
                           حفظ البيانات
@@ -3069,7 +3383,12 @@ export function productsPage(data: ProductsPageData): Html {
 
   return shell({
     title: 'المنتجات',
-    script: productsScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
+    script: productsScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.tenantName,
+    ),
     body: html`${appBar({
       fullName: data.fullName,
       username: data.username,
@@ -3110,6 +3429,13 @@ export function productsPage(data: ProductsPageData): Html {
   <details class="panel" open>
     <summary>المخزون (${String(data.products.length)})</summary>
     <div class="panel-body">
+      <label class="field-label" for="prod-search">بحث</label>
+      <input class="field-input" id="prod-search" type="search"
+        placeholder="اسم أو سريال" autocomplete="off" spellcheck="false">
+      <button class="btn-mini" type="button" id="prod-scan">مسح بالكاميرا</button>
+      <p class="field-hint" id="prod-search-note">
+        امسح بالكاميرا، أو بالماسح الموصول بالكمبيوتر، أو اكتب جزءًا من الاسم.
+      </p>
       ${rows}
     </div>
   </details>
@@ -3126,7 +3452,13 @@ ${tabBar('products', {
   });
 }
 
-function productsScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'LOCK'): string {
+function productsScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  /** بيتطبع على الملصق — لازم يتمرّر صراحةً */
+  shopName: string,
+): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
     .replace('__ACTION__', action);
@@ -3136,6 +3468,8 @@ ${shared}
 ${MENU_JS}
 
 (function () {
+  var SHOP_NAME = ${JSON.stringify(shopName)};
+
   var box = document.getElementById('prodmsg');
   var text = document.getElementById('prodmsg-text');
 
@@ -3312,6 +3646,16 @@ ${MENU_JS}
 
     var customsEl = document.getElementById('customs-' + id);
     if (customsEl) body.customsCleared = customsEl.value === 'true';
+
+    var storageEl = document.getElementById('storage-' + id);
+    if (storageEl) body.storageCapacity = storageEl.value;
+
+    // ⚠ الفاضي بيتبعت null صراحةً — يعني "امسح القياس" مش
+    // "ما تغيّرش". من غير كده مستحيل ترجّع الحقل فاضي.
+    var batteryEl = document.getElementById('battery-' + id);
+    if (batteryEl) {
+      body.batteryHealth = batteryEl.value === '' ? null : parseInt(batteryEl.value, 10);
+    }
 
     var result = await send('/api/products/' + encodeURIComponent(id), body, btn, 'جارٍ الحفظ…');
     if (result) {
@@ -3701,6 +4045,65 @@ ${MENU_JS}
         : 'تم إلغاء التحويل.', true);
       setTimeout(function () { window.location.reload(); }, 1000);
     }
+  });
+
+  // ══════════ المسح بالكاميرا ══════════
+  var scanBtn = document.getElementById('prod-scan');
+  if (scanBtn && searchEl) {
+    scanBtn.addEventListener('click', async function () {
+      try {
+        var code = await window.scanBarcode();
+        if (!code) return;
+        // بنحطّه في خانة البحث وبنشغّل الفلترة — نفس ما لو
+        // اتكتب بالماسح الموصول بالكمبيوتر
+        searchEl.value = code;
+        searchEl.dispatchEvent(new Event('input'));
+      } catch (err) {
+        say(err && err.message ? err.message : 'تعذّر المسح.', false);
+      }
+    });
+  }
+
+  // ══════════ طباعة الملصق ══════════
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-label]') : null;
+    if (!btn) return;
+
+    var row = document.querySelector('[data-pid="' + btn.getAttribute('data-label') + '"]');
+    if (!row) return;
+
+    var serial = row.getAttribute('data-serial') || '';
+    if (!serial) { say('الملصق يحتاج سريالًا.', false); return; }
+
+    // ⚠ سطر المواصفات بيتبني من الموجود بس. الحقل الفاضي ما
+    // بيطبعش شرطة ولا "غير محدّد" — سطر فيه فراغات بيخلّي
+    // الزبون يسأل، والملصق النضيف بيجاوب لوحده.
+    var specs = [];
+    var storage = row.getAttribute('data-storage') || '';
+    var battery = row.getAttribute('data-battery') || '';
+
+    if (storage) specs.push(storage);
+    if (battery) specs.push('بطارية ' + battery + '٪');
+    if (row.getAttribute('data-customs') === 'true') specs.push('مخلّص جمركيًا');
+
+    var specHtml = '';
+    for (var k = 0; k < specs.length; k++) specHtml += '<span>' + specs[k] + '</span>';
+
+    var price = row.getAttribute('data-price') || '';
+
+    window.printHtml(
+      '<div class="pr-doc pr-label">' +
+        '<div class="pr-label-shop">' + SHOP_NAME + '</div>' +
+        '<div class="pr-label-name">' + (row.getAttribute('data-name') || '') + '</div>' +
+        window.barcodeSvg(serial, 46) +
+        '<div class="pr-label-code">' + serial + '</div>' +
+        (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
+        '<div class="pr-label-foot">' +
+          '<span>' + (row.getAttribute('data-entry') || '') + '</span>' +
+          '<span>' + (price ? price + ' ج.م' : '') + '</span>' +
+        '</div>' +
+      '</div>'
+    );
   });
 
   loadTransfers();
