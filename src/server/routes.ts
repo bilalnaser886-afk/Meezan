@@ -58,6 +58,7 @@ import { listAlerts } from '../application/use-cases/alerts';
 import {
   createRepairShop,
   createTicket,
+  getProductMaintenance,
   getShopHistory,
   getTicketUnlock,
   listMaintenanceRecords,
@@ -1308,15 +1309,37 @@ const MANAGE = { requireAll: [PERMISSIONS.MAINTENANCE_MANAGE] };
 maintenanceRoutes.get('/', requireAuth(VIEW), async (c) => {
   const container = buildContainer(c.env);
   const user = c.get('user');
-  const openOnly = c.req.query('all') !== '1';
+
+  // ⚠ نطاق التذاكر ونطاق أجهزة المحل مختلفين في القيم المسموحة
+  // (DELIVERED مقابل RETURNED)، فبنترجم مرة واحدة هنا.
+  const scope = c.req.query('scope') ?? 'OPEN';
+  const shared = {
+    search: c.req.query('q') ?? null,
+    from: c.req.query('from') ?? null,
+    to: c.req.query('to') ?? null,
+    shopId: c.req.query('shop') ?? null,
+  };
 
   const [shops, records, tickets] = await Promise.all([
     listRepairShops(container.maintenance, user),
-    listMaintenanceRecords(container.maintenance, user, openOnly),
-    listTickets(container.maintenance, user, openOnly, c.req.query('q') ?? null),
+    listMaintenanceRecords(container.maintenance, user, {
+      ...shared,
+      scope: scope === 'DELIVERED' ? 'RETURNED' : scope,
+    }),
+    listTickets(container.maintenance, user, { ...shared, scope }),
   ]);
 
   return c.json({ ok: true, shops, records, tickets });
+});
+
+/** تاريخ صيانة منتج — بيتعرض في كارت المنتج */
+maintenanceRoutes.get('/product/:id/history', requireAuth(VIEW), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف المنتج مفقود.');
+
+  const container = buildContainer(c.env);
+  const history = await getProductMaintenance(container.maintenance, c.get('user'), id);
+  return c.json({ ok: true, history });
 });
 
 maintenanceRoutes.get('/shops/:id/history', requireAuth(VIEW), async (c) => {
