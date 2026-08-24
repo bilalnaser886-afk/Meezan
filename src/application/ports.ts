@@ -785,6 +785,7 @@ export interface MaintenanceRecord {
   productName: string;
   serialNumber: string | null;
   shopName: string | null;
+  repairShopId: string | null;
   faultNote: string;
   costPiastres: number;
   sentDate: string;
@@ -826,11 +827,14 @@ export interface RepairTicket {
   deliveredDate: string | null;
   status: TicketStatus;
   workNote: string | null;
+  /** NONE · PASSWORD · PATTERN — النوع بس، القيمة بنداء منفصل */
+  unlockKind: string;
   hasUnlock: boolean;
   parentId: string | null;
   /** 1 للأصلية، 2 لأول رجعة… بيتحسب في القاعدة */
   visitNumber: number;
   createdById: string;
+  createdByName: string | null;
   daysOpen: number;
 }
 
@@ -842,6 +846,29 @@ export interface ShopHistoryRow {
   costPiastres: number;
   onDate: string;
   status: string;
+}
+
+/** فلاتر مشتركة بين التذاكر وأجهزة المحل */
+export interface MaintenanceFilter {
+  /** OPEN عندنا · DELIVERED/RETURNED اتسلّمت · ALL */
+  scope: string;
+  search: string | null;
+  from: string | null;
+  to: string | null;
+  shopId: string | null;
+}
+
+/** سطر في تاريخ صيانة منتج — بيتعرض في كارت المنتج */
+export interface ProductMaintenanceRow {
+  id: string;
+  shopName: string | null;
+  faultNote: string;
+  resultNote: string | null;
+  costPiastres: number;
+  sentDate: string;
+  returnedDate: string | null;
+  status: string;
+  daysOut: number;
 }
 
 export interface MaintenanceRepository {
@@ -873,14 +900,15 @@ export interface MaintenanceRepository {
   listRecords(
     tenantId: string,
     branchId: string | null,
-    openOnly: boolean,
+    filter: MaintenanceFilter,
   ): Promise<MaintenanceRecord[]>;
+  /** تاريخ صيانة منتج واحد */
+  productHistory(productId: string): Promise<ProductMaintenanceRow[]>;
 
   listTickets(
     tenantId: string,
     branchId: string | null,
-    openOnly: boolean,
-    search: string | null,
+    filter: MaintenanceFilter,
   ): Promise<RepairTicket[]>;
   createTicket(data: Record<string, unknown>): Promise<{ id: string }>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
