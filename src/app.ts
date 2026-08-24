@@ -32,6 +32,7 @@ import {
   userRoutes,
 } from './server/routes';
 import { listBranchesForActor, listTeam } from './application/use-cases/users';
+import { listRepairShops } from './application/use-cases/maintenance';
 import { listBranches } from './application/use-cases/branches';
 import {
   listBalances,
@@ -441,6 +442,13 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     branchLabelFor(container, user),
   ]);
 
+  // ورش الصيانة — لقائمة "تحويل للصيانة" في كارت المنتج
+  const repairShops = user.permissions.includes(PERMISSIONS.MAINTENANCE_MANAGE)
+    ? await listRepairShops(container.maintenance, user)
+        .then((list) => list.map((sh) => ({ id: sh.id, name: sh.name })))
+        .catch(() => [])
+    : [];
+
   return c.html(
     productsPage({
       fullName: user.fullName,
@@ -464,6 +472,9 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       transferTargets: allBranches
         .filter((b) => b.id !== user.branchId)
         .map((b) => ({ id: b.id, name: b.name })),
+      // ⚠ الإرسال للورشة بيخصم من المخزون، فهو قرار إداري
+      canSendToRepair: user.permissions.includes(PERMISSIONS.MAINTENANCE_MANAGE),
+      repairShops,
       products,
       today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
