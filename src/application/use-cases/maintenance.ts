@@ -28,8 +28,10 @@ import type {
   AuthenticatedUser,
   BranchRepository,
   Clock,
+  MaintenanceFilter,
   MaintenanceRecord,
   MaintenanceRepository,
+  ProductMaintenanceRow,
   RepairShop,
   RepairTicket,
   ShopHistoryRow,
@@ -194,13 +196,69 @@ export async function returnFromMaintenance(
   return result;
 }
 
+export interface FilterInput {
+  scope?: string;
+  search?: string | null;
+  from?: string | null;
+  to?: string | null;
+  shopId?: string | null;
+}
+
+/**
+ * قراءة الفلاتر.
+ *
+ * ⚠ الفترة بتتفحص بـ `parseDateInput` — بترفض المستقبل والصيغة
+ * الغلط، وبترجّع null للفاضي (يعني بلا حد).
+ */
+function readFilter(input: FilterInput, allowed: string[]): MaintenanceFilter {
+  const scope = String(input.scope ?? allowed[0]);
+  if (!allowed.includes(scope)) throw Errors.validation('النطاق غير صحيح.');
+
+  let from: string | null;
+  let to: string | null;
+  try {
+    from = parseDateInput(input.from);
+    to = parseDateInput(input.to);
+  } catch (error) {
+    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
+  }
+  if (from && to && from > to) throw Errors.validation('تاريخ البداية بعد تاريخ النهاية.');
+
+  return {
+    scope,
+    search: (input.search ?? '').trim() || null,
+    from,
+    to,
+    shopId: input.shopId || null,
+  };
+}
+
 export async function listMaintenanceRecords(
   deps: MaintenanceDeps,
   actor: AuthenticatedUser,
-  openOnly = true,
+  input: FilterInput = {},
 ): Promise<MaintenanceRecord[]> {
   assertView(actor);
-  return deps.maintenance.listRecords(actor.tenantId, branchScope(actor), openOnly);
+  return deps.maintenance.listRecords(
+    actor.tenantId,
+    branchScope(actor),
+    readFilter(input, ['OPEN', 'RETURNED', 'ALL']),
+  );
+}
+
+/**
+ * تاريخ صيانة منتج — بيتعرض في كارت المنتج.
+ *
+ * ⚠ مفيش فحص محل هنا لأن المنتج نفسه محروس: اللي وصل لكارته
+ * عدّى على فلتر المحل في `listProducts` أصلاً.
+ */
+export async function getProductMaintenance(
+  deps: MaintenanceDeps,
+  actor: AuthenticatedUser,
+  productId: string,
+): Promise<ProductMaintenanceRow[]> {
+  assertView(actor);
+  return deps.maintenance.productHistory(productId);
 }
 
 // ─────────── تذاكر العملاء ───────────
@@ -227,15 +285,13 @@ export interface TicketInput {
 export async function listTickets(
   deps: MaintenanceDeps,
   actor: AuthenticatedUser,
-  openOnly = true,
-  search: string | null = null,
+  input: FilterInput = {},
 ): Promise<RepairTicket[]> {
   assertView(actor);
   return deps.maintenance.listTickets(
     actor.tenantId,
     branchScope(actor),
-    openOnly,
-    (search ?? '').trim() || null,
+    readFilter(input, ['OPEN', 'DELIVERED', 'ALL']),
   );
 }
 
