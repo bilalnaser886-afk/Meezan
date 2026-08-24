@@ -2333,11 +2333,15 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
       return { productName: String(row.product_name), finalStatus: String(row.final_status) };
     },
 
-    async listRecords(tenantId, branchId, openOnly) {
+    async listRecords(tenantId, branchId, filter) {
       const { data, error } = await db.rpc('fn_maintenance_records', {
         p_tenant_id: tenantId,
         p_branch_id: branchId,
-        p_open_only: openOnly,
+        p_scope: filter.scope,
+        p_search: filter.search,
+        p_from: filter.from,
+        p_to: filter.to,
+        p_shop_id: filter.shopId,
       });
       if (error) raiseMaintError(error, 'fn_maintenance_records');
 
@@ -2347,6 +2351,7 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
         productName: String(r.product_name),
         serialNumber: r.serial_number ? String(r.serial_number) : null,
         shopName: r.shop_name ? String(r.shop_name) : null,
+        repairShopId: r.repair_shop_id ? String(r.repair_shop_id) : null,
         faultNote: String(r.fault_note),
         costPiastres: Number(r.cost_piastres),
         sentDate: String(r.sent_date).slice(0, 10),
@@ -2358,12 +2363,15 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
     },
 
     // ─── تذاكر العملاء ───
-    async listTickets(tenantId, branchId, openOnly, search) {
+    async listTickets(tenantId, branchId, filter) {
       const { data, error } = await db.rpc('fn_tickets', {
         p_tenant_id: tenantId,
         p_branch_id: branchId,
-        p_open_only: openOnly,
-        p_search: search,
+        p_scope: filter.scope,
+        p_search: filter.search,
+        p_from: filter.from,
+        p_to: filter.to,
+        p_shop_id: filter.shopId,
       });
       if (error) raiseMaintError(error, 'fn_tickets');
 
@@ -2384,11 +2392,32 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
         deliveredDate: r.delivered_date ? String(r.delivered_date).slice(0, 10) : null,
         status: String(r.status) as TicketStatus,
         workNote: r.work_note ? String(r.work_note) : null,
+        unlockKind: String(r.unlock_kind ?? 'NONE'),
         hasUnlock: Boolean(r.has_unlock),
         parentId: r.parent_id ? String(r.parent_id) : null,
         visitNumber: Number(r.visit_number),
         createdById: String(r.created_by_id),
+        createdByName: r.created_by_name ? String(r.created_by_name) : null,
         daysOpen: Number(r.days_open),
+      }));
+    },
+
+    async productHistory(productId) {
+      const { data, error } = await db.rpc('fn_product_maintenance', {
+        p_product_id: productId,
+      });
+      if (error) raiseMaintError(error, 'fn_product_maintenance');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        id: String(r.id),
+        shopName: r.shop_name ? String(r.shop_name) : null,
+        faultNote: String(r.fault_note),
+        resultNote: r.result_note ? String(r.result_note) : null,
+        costPiastres: Number(r.cost_piastres),
+        sentDate: String(r.sent_date).slice(0, 10),
+        returnedDate: r.returned_date ? String(r.returned_date).slice(0, 10) : null,
+        status: String(r.status),
+        daysOut: Number(r.days_out),
       }));
     },
 
