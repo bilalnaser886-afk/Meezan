@@ -88,6 +88,56 @@ while ((m = fnRe.exec(src))) {
   if (bad.length) { scope++; console.log('❌ نطاق — ' + m[1] + ': ' + bad.join(', ')); }
 }
 
-console.log((bad || scope || ticks)
-  ? '\n🔴 ' + (bad + scope + ticks) + ' مشكلة'
+// ── فحص الدوال المنادَاة وهي مش معرّفة في نفس السكربت ──
+//
+// ⚠ كل سكربت صفحة له مساعداته الخاصة: `say` موجودة في سكربت
+// المنتجات ومش موجودة في سكربت التقرير. النداء الغلط بيرمي
+// ReferenceError وقت التشغيل بس — والزرار بيسكت بلا رسالة.
+// وقعنا فيه مرتين.
+const COMMON = new Set(['fetch','parseInt','parseFloat','setTimeout','setInterval',
+  'clearTimeout','clearInterval','confirm','alert','prompt','isFinite','String',
+  'Number','Boolean','Array','Object','JSON','Math','Date','Promise','Event',
+  'Notification','Blob','URL','FormData','encodeURIComponent','decodeURIComponent',
+  'if','for','while','switch','catch','function','return','typeof','new','await',
+  'filter','map','forEach','push','indexOf','slice','join','split','replace','trim',
+  'toLocaleString','padStart','querySelector','querySelectorAll','getElementById',
+  'createElement','appendChild','addEventListener','removeChild','getAttribute',
+  'setAttribute','hasAttribute','removeAttribute','closest','dispatchEvent',
+  'reset','focus','open','close','play','detect','decodeFromVideoElement',
+  'getUserMedia','requestPermission','showNotification','getRegistration',
+  'createElementNS','elementFromPoint','scrollTo','print','stop','getTracks',
+  'createObjectURL','revokeObjectURL','click','matchAll','test','exec','abs',
+  'floor','round','trunc','max','min','all','resolve','reject','then','keys',
+  'stringify','parse','now','isInteger','from','of','concat','sort','reverse',
+  'includes','startsWith','endsWith','toUpperCase','toLowerCase','charCodeAt',
+  'fromCharCode','repeat','substring','substr','splice','shift','unshift','pop',
+  'var','let','const','Error','TypeError','else','do','try','finally','throw']);
+
+let helpers = 0;
+for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
+  const st = src.indexOf('return `', fm.index);
+  if (st < 0) continue;
+  const to = src.indexOf('\n`;', st);
+  if (to < 0) continue;
+  const body = src.slice(st + 8, to);
+
+  const defined = new Set([
+    ...[...body.matchAll(/function (\w+)\s*\(/g)].map(x => x[1]),
+    ...[...body.matchAll(/var (\w+)\s*=/g)].map(x => x[1]),
+  ]);
+
+  const called = [...body.matchAll(/(^|[^.\w$])([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)]
+    .map(x => x[2]);
+
+  const missing = [...new Set(called)].filter(
+    (n) => !defined.has(n) && !COMMON.has(n) && !src.includes('window.' + n + ' ='));
+
+  if (missing.length) {
+    helpers++;
+    console.log('\u274c \u062f\u0627\u0644\u0629 \u063a\u064a\u0631 \u0645\u0639\u0631\u0651\u0641\u0629 \u2014 ' + fm[1] + ': ' + missing.join(', '));
+  }
+}
+
+console.log((bad || scope || ticks || helpers)
+  ? '\n🔴 ' + (bad + scope + ticks + helpers) + ' مشكلة'
   : '\nكل السكربتات سليمة نحويًا ونطاقيًا');
