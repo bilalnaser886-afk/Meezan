@@ -120,6 +120,31 @@ self.addEventListener('fetch', function (event) {
   // شبكة فقط. مفيش cache.open ولا cache.put في الملف ده عن قصد.
   event.respondWith(fetch(event.request));
 });
+
+/**
+ * الضغط على الإشعار.
+ *
+ * ⚠ لازم يكون هنا مش في الصفحة: الصفحة ممكن تكون اتقفلت،
+ * وعامل الخدمة هو اللي بيفضل قادر يرد.
+ *
+ * بندوّر على نافذة مفتوحة الأول ونركّز عليها بدل ما نفتح
+ * واحدة جديدة — الموظّف اللي عنده الشاشة مفتوحة ما يصحّش
+ * يلاقي تبويبين لنفس النظام.
+ */
+self.addEventListener('notificationclick', function (event) {
+  event.notification.close();
+  var target = (event.notification.data && event.notification.data.url) || '/app';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then(function (list) {
+        for (var i = 0; i < list.length; i++) {
+          if ('focus' in list[i]) return list[i].focus();
+        }
+        if (self.clients.openWindow) return self.clients.openWindow(target);
+      })
+  );
+});
 `;
 
 /** تسجيل عامل الخدمة — بيتحقن في كل صفحة */
