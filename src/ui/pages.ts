@@ -229,11 +229,272 @@ const PRINT_SHARED_JS = `
     });
   };
 
+  /**
+   * تصدير إكسيل ملوّن — بلا مكتبة.
+   *
+   * ══ ⚠ ليه مفيش مكتبة؟ ══
+   * SheetJS أو ExcelJS حوالي ٩٠٠ كيلو، ومحتاجين CDN — يعني
+   * اعتماد خارجي وقت التشغيل زي الباركود بالظبط.
+   *
+   * ══ والبديل ══
+   * إكسل بيفتح **HTML بامتداد .xls** ويقرا التنسيق منه: ألوان
+   * وحدود وعرض أعمدة وخطوط. فبنبني جدول HTML عادي ونسمّيه
+   * .xls، وإكسل بيفتحه ملوّن ومنظّم.
+   *
+   * ⚠ التمن الحقيقي: الملف ده **مش xlsx أصلي**. لو فتحته في
+   * جوجل شيتس هيشتغل، وفي بعض النسخ القديمة من إكسل بيطلّع
+   * تحذير "الامتداد لا يطابق المحتوى" — بتدوس فتح وبيشتغل.
+   *
+   * ولو احتجت xlsx حقيقي بعدين (معادلات أو تبويبات متعددة)،
+   * ساعتها المكتبة تبقى مبرَّرة.
+   */
+  window.exportXls = function (opts) {
+    var G = '#16211D', B = '#B08D3D', L = '#E6E4D8';
+
+    var head = '';
+    for (var i = 0; i < opts.columns.length; i++) {
+      head += '<th style="background:' + G + ';color:#fff;padding:8px;' +
+        'border:1px solid ' + G + ';font-weight:bold">' + opts.columns[i] + '</th>';
+    }
+
+    var body = '';
+    for (var r = 0; r < opts.rows.length; r++) {
+      // تظليل الصفوف الفردية — بيخلّي القراءة أسهل في جدول طويل
+      var bg = r % 2 ? '#F7F6EF' : '#FFFFFF';
+      body += '<tr>';
+      for (var c = 0; c < opts.rows[r].length; c++) {
+        var v = opts.rows[r][c];
+        var num = typeof v === 'number';
+        body += '<td style="background:' + bg + ';padding:6px;border:1px solid ' + L +
+          ';text-align:' + (num ? 'left' : 'right') + '">' +
+          (v === null || v === undefined ? '' : String(v)) + '</td>';
+      }
+      body += '</tr>';
+    }
+
+    var totalRow = '';
+    if (opts.totals) {
+      totalRow = '<tr>';
+      for (var t = 0; t < opts.totals.length; t++) {
+        totalRow += '<td style="background:' + B + ';color:#fff;padding:8px;' +
+          'border:1px solid ' + B + ';font-weight:bold">' +
+          (opts.totals[t] === null ? '' : String(opts.totals[t])) + '</td>';
+      }
+      totalRow += '</tr>';
+    }
+
+    var html =
+      '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head>' +
+      '<meta charset="UTF-8">' +
+      '<style>table{border-collapse:collapse;font-family:Arial;font-size:12px}' +
+      'td,th{white-space:nowrap}</style></head>' +
+      '<body dir="rtl">' +
+      '<h3 style="font-family:Arial">' + (opts.title || '') + '</h3>' +
+      (opts.subtitle ? '<p style="font-family:Arial;font-size:11px;color:#555">' +
+        opts.subtitle + '</p>' : '') +
+      '<table><thead><tr>' + head + '</tr></thead>' +
+      '<tbody>' + body + totalRow + '</tbody></table></body></html>';
+
+    // ⚠ BOM في أول الملف — من غيره إكسل بيقرا العربي رموز
+    var blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel' });
+    var url = URL.createObjectURL(blob);
+
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = (opts.filename || 'meezan') + '.xls';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  };
+
+  /**
+   * تصدير PDF ملوّن — بلا مكتبة كمان.
+   *
+   * بيستخدم نفس حاوية الطباعة، والمستخدم بيختار "حفظ كـPDF"
+   * من نافذة الطباعة.
+   *
+   * ⚠ ودي **أنضف** من أي مكتبة PDF: التنسيق CSS عادي بخطوطك
+   * وألوانك، والمتصفح بيرسمه زي ما بيرسم الصفحة بالظبط. مكتبات
+   * الـPDF بتحتاج تعيد بناء التنسيق من الأول وبتكسر العربي غالبًا.
+   */
+  window.exportPdf = function (opts) {
+    var head = '';
+    for (var i = 0; i < opts.columns.length; i++) {
+      head += '<th style="background:#16211D;color:#fff;padding:6px;text-align:right">' +
+        opts.columns[i] + '</th>';
+    }
+
+    var body = '';
+    for (var r = 0; r < opts.rows.length; r++) {
+      body += '<tr style="background:' + (r % 2 ? '#F7F6EF' : '#fff') + '">';
+      for (var c = 0; c < opts.rows[r].length; c++) {
+        var v = opts.rows[r][c];
+        body += '<td style="padding:5px;border-bottom:1px solid #E6E4D8">' +
+          (v === null || v === undefined ? '' : String(v)) + '</td>';
+      }
+      body += '</tr>';
+    }
+
+    var totals = '';
+    if (opts.totals) {
+      totals = '<tr style="background:#B08D3D;color:#fff;font-weight:600">';
+      for (var t = 0; t < opts.totals.length; t++) {
+        totals += '<td style="padding:7px">' +
+          (opts.totals[t] === null ? '' : String(opts.totals[t])) + '</td>';
+      }
+      totals += '</tr>';
+    }
+
+    window.printHtml(
+      '<div class="pr-doc">' +
+        '<div class="pr-head">' +
+          '<span class="pr-shop">' + (opts.title || '') + '</span>' +
+          '<span>' + (opts.subtitle || '') + '</span>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+          '<thead><tr>' + head + '</tr></thead>' +
+          '<tbody>' + body + totals + '</tbody>' +
+        '</table>' +
+      '</div>'
+    );
+  };
+
   window.printMoney = function (p) {
     var abs = Math.abs(Math.trunc(p || 0));
     return (p < 0 ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
       '.' + String(abs % 100).padStart(2, '0');
   };
+})();
+`;
+
+/**
+ * الإشعارات
+ *
+ * ══ ⚠ القرار المعماري — اقراه قبل ما تحكم على الميزة ══
+ *
+ * الإشعارات دي بتشتغل **والتطبيق مفتوح**. مش وهو مقفول.
+ *
+ * ══ ليه؟ ══
+ * الإشعار وقت الإغلاق (Web Push) محتاج تلات حاجات مالناش عليها:
+ *   1) مفاتيح VAPID وجدول اشتراكات
+ *   2) **خادم بيبعت** — وكلاودفلير Pages مالهاش مهام دورية،
+ *      وpg_cron في سوبابيز ما بيعملش طلبات HTTP إلا بإضافة تانية
+ *   3) على الأيفون بيشتغل للتطبيق المثبّت بس (iOS 16.4+)
+ *
+ * تلات نقط فشل جديدة، عشان إشعار.
+ *
+ * ══ والحاجة اللي بتخلّي ده كافي ══
+ * ده نظام محل: الشاشة مفتوحة على الكاونتر طول اليوم. الإشعار
+ * وقت الإغلاق كان هيفيد في المساء بس — واللي بيحصل في المساء
+ * هتشوفه الصبح على أي حال.
+ *
+ * ولو احتجناه بجد بعدين، اللي مبني هنا **بيتوسّع** مش بيتشال:
+ * نفس مصدر التنبيهات ونفس الإذن ونفس عامل الخدمة.
+ *
+ * ══ إذن حقيقي مش خانة تفعيل ══
+ * الزرار بيطلب إذن المتصفح فعلاً. لو المستخدم رفض، النظام
+ * بيقول له كده صراحةً بدل ما يفضل شكله مفعّل وهو ميّت.
+ */
+const NOTIFY_SHARED_JS = `
+(function () {
+  var KEY = 'meezan.notify';
+  var SEEN = null;          // أول تحميل ما بينبّهش — بيزرع بس
+  var TIMER = null;
+
+  function enabled() {
+    try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+  }
+
+  window.notifyState = function () {
+    if (!('Notification' in window)) return 'UNSUPPORTED';
+    if (Notification.permission === 'denied') return 'DENIED';
+    if (Notification.permission !== 'granted') return 'ASK';
+    return enabled() ? 'ON' : 'OFF';
+  };
+
+  /** بيطلب الإذن الحقيقي من المتصفح ويرجّع الحالة الجديدة */
+  window.notifyEnable = async function () {
+    if (!('Notification' in window)) return 'UNSUPPORTED';
+
+    if (Notification.permission !== 'granted') {
+      var res = await Notification.requestPermission();
+      if (res !== 'granted') return res === 'denied' ? 'DENIED' : 'ASK';
+    }
+    try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    start();
+    return 'ON';
+  };
+
+  window.notifyDisable = function () {
+    try { localStorage.setItem(KEY, '0'); } catch (e) {}
+    if (TIMER) { clearInterval(TIMER); TIMER = null; }
+    return 'OFF';
+  };
+
+  /**
+   * ⚠ بنستخدم عامل الخدمة مش الطريقة المباشرة.
+   * كروم على أندرويد بيرفض الطريقة التانية تمامًا.
+   */
+  async function show(title, body) {
+    try {
+      var reg = await navigator.serviceWorker.getRegistration();
+      if (reg && reg.showNotification) {
+        await reg.showNotification(title, {
+          body: body,
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-192.png',
+          tag: 'meezan-alerts',
+          data: { url: '/products' }
+        });
+        return;
+      }
+      new Notification(title, { body: body });
+    } catch (e) { /* الإشعار مش ضروري لتشغيل النظام */ }
+  }
+
+  async function poll() {
+    if (!enabled() || Notification.permission !== 'granted') return;
+
+    try {
+      var res = await fetch('/api/reports/alerts', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var keys = (data.rows || []).map(function (r) {
+        return r.alertType + ':' + r.entityId;
+      });
+
+      // ⚠ أول تحميل بيزرع القايمة بلا إشعار. من غير كده، أول
+      // ما تفتح الشاشة هتاخد إشعار بكل تنبيه قديم عندك.
+      if (SEEN === null) { SEEN = keys; return; }
+
+      var fresh = (data.rows || []).filter(function (r) {
+        return SEEN.indexOf(r.alertType + ':' + r.entityId) === -1;
+      });
+      SEEN = keys;
+      if (fresh.length === 0) return;
+
+      // إشعار واحد مجمّع مش إشعار لكل صنف — عشرة إشعارات ورا
+      // بعض بتتقفل من غير ما تتقرا
+      var head = fresh.length === 1
+        ? fresh[0].title
+        : fresh.length + ' أصناف تحتاج انتباهك';
+      var body = fresh.slice(0, 3).map(function (r) { return r.detail; }).join(' · ');
+
+      show(head, body);
+    } catch (e) { /* صامت: فشل الإشعار ما يصحّش يظهر للمستخدم */ }
+  }
+
+  function start() {
+    if (TIMER) return;
+    // دقيقتين: أقل من كده ضغط بلا فايدة، وأكتر بيخلّي التنبيه
+    // متأخر عن الواقع
+    TIMER = setInterval(poll, 120000);
+    poll();
+  }
+
+  if (enabled()) start();
 })();
 `;
 
@@ -417,6 +678,7 @@ ${opts.body}
      العامة للإخفاء كانت هتمنعها من الظهور وقت الطباعة نفسها. -->
 <div id="print-root"></div>
 <script>${raw(PRINT_SHARED_JS)}</script>
+<script>${raw(NOTIFY_SHARED_JS)}</script>
 <script>${raw(opts.script)}</script>
 <script>${raw(PWA_REGISTER_JS)}</script>
 </body>
@@ -1346,6 +1608,18 @@ export function dashboardPage(data: DashboardData): Html {
   ${strip}
   ${alertStrip}
 
+  <details class="panel" id="ntf-panel">
+    <summary>الإشعارات</summary>
+    <div class="panel-body">
+      <p class="field-hint" id="ntf-note">جارٍ الفحص…</p>
+      <button class="btn-mini" type="button" id="ntf-btn" hidden></button>
+      <p class="field-hint">
+        تصلك تنبيهات المخزون ورفّ المراجعة أثناء فتح النظام.
+        الإذن يُطلب من المتصفح، ويخصّ هذا الجهاز وحده.
+      </p>
+    </div>
+  </details>
+
   ${tiles.length > 0 ? html`<div class="tiles">${tiles}</div>` : ''}
 
   ${isStaff && !data.canViewUsers ? staffEmpty : ''}
@@ -1649,6 +1923,46 @@ ${MENU_JS}
       }
     });
   }
+
+  // ══════════ زرار الإشعارات ══════════
+  //
+  // ⚠ الحالة بتتقرا من المتصفح مش من إعداد عندنا. لو المستخدم
+  // رفض الإذن، بنقول له كده صراحةً — بدل ما الزرار يفضل شكله
+  // مفعّل وهو ميّت.
+  (function () {
+    var btn  = document.getElementById('ntf-btn');
+    var note = document.getElementById('ntf-note');
+    if (!btn || !note || typeof window.notifyState !== 'function') return;
+
+    var TEXT = {
+      UNSUPPORTED: ['متصفحك لا يدعم الإشعارات.', null],
+      DENIED: ['الإشعارات مرفوضة من إعدادات المتصفح. اسمح بها من إعدادات الموقع.', null],
+      ASK: ['الإشعارات غير مفعّلة على هذا الجهاز.', 'تفعيل الإشعارات'],
+      OFF: ['الإذن ممنوح، لكن الإشعارات موقوفة.', 'تشغيل'],
+      ON: ['الإشعارات تعمل على هذا الجهاز.', 'إيقاف']
+    };
+
+    function paint() {
+      var st = window.notifyState();
+      note.textContent = TEXT[st][0];
+      if (TEXT[st][1]) {
+        btn.hidden = false;
+        btn.textContent = TEXT[st][1];
+        btn.setAttribute('data-st', st);
+      } else {
+        btn.hidden = true;
+      }
+    }
+
+    btn.addEventListener('click', async function () {
+      var st = btn.getAttribute('data-st');
+      if (st === 'ON') window.notifyDisable();
+      else await window.notifyEnable();
+      paint();
+    });
+
+    paint();
+  })();
 
   // ══════════ التنبيهات ══════════
   //
@@ -3078,6 +3392,10 @@ export interface ProductsPageData {
   }>;
   /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
   transferTargets: Array<{ id: string; name: string }>;
+  /** maintenance.manage — إرسال جهاز المحل للورشة */
+  canSendToRepair: boolean;
+  /** ورش الصيانة — لقائمة الاختيار */
+  repairShops: Array<{ id: string; name: string }>;
   /** تاريخ النهاردة بتوقيت القاهرة — قيمة افتراضية لحقل التاريخ */
   today: string;
   idleTimeoutSeconds: number;
@@ -3261,6 +3579,45 @@ export function productsPage(data: ProductsPageData): Html {
                         <p class="field-hint">
                           تسجيل يدوي من المستلم. لا يوجد ربط بأي جهة خارجية.
                         </p>
+                      </div>`
+                    : ''}
+
+                  ${isDevice && data.canSendToRepair
+                    ? html`<div class="field">
+                        <button class="btn-mini" type="button" data-rep-open="${p.id}">
+                          تحويل للصيانة
+                        </button>
+
+                        <div id="rep-${p.id}" hidden>
+                          <label class="field-label" for="repshop-${p.id}">محل الصيانة</label>
+                          <select class="field-input" id="repshop-${p.id}">
+                            <option value="">— داخليًا —</option>
+                            ${data.repairShops.map(
+                              (sh) => html`<option value="${sh.id}">${sh.name}</option>`,
+                            )}
+                          </select>
+
+                          <label class="field-label" for="repfault-${p.id}">وصف العطل</label>
+                          <input class="field-input" id="repfault-${p.id}" type="text"
+                            maxlength="500" autocomplete="off">
+
+                          <label class="field-label" for="repcost-${p.id}">
+                            التكلفة المتوقّعة
+                          </label>
+                          <input class="field-input" id="repcost-${p.id}" type="text"
+                            inputmode="decimal" dir="ltr">
+
+                          <p class="field-hint">
+                            تُخصم القطعة من المخزون فورًا — لا يصحّ أن تُباع وهي في الورشة.
+                            التكلفة الفعلية تُكتب عند الاستلام.
+                          </p>
+
+                          <button class="btn-mini" type="button" data-rep-send="${p.id}">
+                            إرسال للصيانة
+                          </button>
+                        </div>
+
+                        <div id="rephist-${p.id}"></div>
                       </div>`
                     : ''}
 
@@ -4165,6 +4522,88 @@ ${MENU_JS}
       '</div>'
     );
   });
+
+  // ══════════ التحويل للصيانة ══════════
+  //
+  // ⚠ الإرسال بيخصم القطعة من المخزون فورًا — نفس منطق التحويل
+  // بين الفروع. الجهاز ساب الرفّ وما ينفعش يتباع وهو في الورشة.
+  document.addEventListener('click', async function (e) {
+    var open = e.target.closest ? e.target.closest('[data-rep-open]') : null;
+    if (open) {
+      var id = open.getAttribute('data-rep-open');
+      var panel = document.getElementById('rep-' + id);
+      if (!panel) return;
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) loadRepairHistory(id);
+      return;
+    }
+
+    var sendBtn = e.target.closest ? e.target.closest('[data-rep-send]') : null;
+    if (!sendBtn) return;
+
+    var pid = sendBtn.getAttribute('data-rep-send');
+    var fault = (document.getElementById('repfault-' + pid) || {}).value || '';
+    if (fault.trim().length < 3) { say('اكتب وصف العطل.', false); return; }
+
+    if (!confirm('إرسال للصيانة؟ القطعة هتتخصم من المخزون.')) return;
+
+    var result = await send('/api/maintenance/product/' + encodeURIComponent(pid), {
+      shopId: (document.getElementById('repshop-' + pid) || {}).value || null,
+      fault: fault,
+      cost: (document.getElementById('repcost-' + pid) || {}).value || null
+    }, sendBtn, 'جارٍ الإرسال…');
+
+    if (result) {
+      say('تم إرسال ' + result.productName + ' للصيانة.', true);
+      setTimeout(function () { window.location.reload(); }, 1000);
+    }
+  });
+
+  /**
+   * تاريخ صيانة الجهاز — بيتعرض جوّه كارته.
+   *
+   * كل مرة راح فيها للورشة: العطل والورشة والتكلفة والنتيجة.
+   * ده اللي بيخلّي "الجهاز ده اتصلّح قبل كده؟" سؤال ليه إجابة.
+   */
+  async function loadRepairHistory(pid) {
+    var host = document.getElementById('rephist-' + pid);
+    if (!host || host.getAttribute('data-loaded') === 'true') return;
+
+    try {
+      var res = await fetch('/api/maintenance/product/' + encodeURIComponent(pid) + '/history',
+        { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      host.setAttribute('data-loaded', 'true');
+      host.textContent = '';
+
+      var rows = data.history || [];
+      if (rows.length === 0) return;
+
+      var head = document.createElement('p');
+      head.className = 'field-label';
+      head.textContent = 'سجل الصيانة (' + rows.length + ')';
+      host.appendChild(head);
+
+      for (var i = 0; i < rows.length; i++) {
+        var h = rows[i];
+        var line = document.createElement('p');
+        line.className = 'field-hint';
+        line.textContent =
+          h.sentDate + ' · ' + (h.shopName || 'داخليًا') + ' · ' + h.faultNote +
+          (h.status === 'SENT'
+            ? ' · لسه في الورشة من ' + h.daysOut + ' يوم'
+            : ' · ' + (h.status === 'RETURNED' ? 'رجع' : 'ما اتصلحش') +
+              (h.returnedDate ? ' ' + h.returnedDate : '') +
+              (h.costPiastres > 0 ? ' · ' + money(h.costPiastres) : '') +
+              (h.resultNote ? ' · ' + h.resultNote : ''));
+        host.appendChild(line);
+      }
+    } catch (err) {
+      // فشل السجل ما يصحّش يمنع الإرسال
+    }
+  }
 
   loadTransfers();
   loadQuarantine();
@@ -5556,6 +5995,8 @@ export function reportPage(data: ReportPageData): Html {
         value="${data.to}" max="${data.today}">
 
       <button class="btn-mini" type="button" id="rep-go">عرض</button>
+      <button class="btn-mini" type="button" id="rep-xls">تصدير إكسيل</button>
+      <button class="btn-mini" type="button" id="rep-pdf">تصدير PDF</button>
       <p class="field-hint" id="rep-scope"></p>
     </div>
   </details>
@@ -5615,6 +6056,11 @@ ${shared}
   var expEl = document.getElementById('rep-exp');
   var scopeEl = document.getElementById('rep-scope');
 
+  // ⚠ آخر نتيجة محفوظة في الذاكرة. التصدير بيبني من نفس الأرقام
+  // اللي على الشاشة — مش بينادي الخادم تاني. لو نادى، ممكن
+  // يطلع ملف بأرقام غير اللي المستخدم شافها وقرر على أساسها.
+  var LAST = null;
+
   function money(piastres) {
     if (piastres === null || piastres === undefined) return '—';
     var neg = piastres < 0;
@@ -5669,6 +6115,7 @@ ${shared}
       box.hidden = true;
 
       var s = data.statement;
+      LAST = data;
       if (scopeEl) {
         scopeEl.textContent = 'النطاق: ' + data.scopeLabel +
           ' · ' + s.salesCount + ' فاتورة · ' + s.refundsCount + ' مرتجع';
@@ -5747,6 +6194,67 @@ ${shared}
   }
 
   document.getElementById('rep-go').addEventListener('click', load);
+
+  /** بيبني صفوف القائمة للتصدير — نفس ترتيب الشاشة */
+  function exportRows() {
+    if (!LAST) return null;
+    var s = LAST.statement;
+
+    var rows = [
+      ['المبيعات', money(s.salesPiastres)],
+      ['المرتجعات', '-' + money(s.refundsPiastres)],
+      ['صافي المبيعات', money(s.netSalesPiastres)]
+    ];
+
+    if (s.cogsPiastres !== null && s.cogsPiastres !== undefined) {
+      rows.push(['تكلفة البضاعة المباعة',
+        '-' + money(s.cogsPiastres - (s.returnedCogsPiastres || 0))]);
+      rows.push(['مجمل الربح', money(s.grossProfitPiastres)]);
+    }
+
+    rows.push(['المصروفات', '-' + money(s.expensesPiastres)]);
+
+    // تفصيل المصروفات جوّه نفس الملف — الرقم المجمّع لوحده
+    // ما بيخليكش تعمل حاجة
+    var exp = LAST.expenses || [];
+    for (var i = 0; i < exp.length; i++) {
+      rows.push(['   ' + exp[i].reasonName, '-' + money(exp[i].totalPiastres)]);
+    }
+
+    if (s.advancesPiastres > 0) rows.push(['سُلف (خارج الحساب)', money(s.advancesPiastres)]);
+    if (s.inventoryPurchasesPiastres > 0) {
+      rows.push(['شراء بضاعة (خارج الحساب)', money(s.inventoryPurchasesPiastres)]);
+    }
+
+    var final = s.netProfitPiastres !== null && s.netProfitPiastres !== undefined
+      ? ['صافي الربح', money(s.netProfitPiastres)]
+      : ['صافي النشاط (التكلفة غير محسوبة)',
+         money(s.netSalesPiastres - s.expensesPiastres)];
+
+    return {
+      title: 'قائمة الدخل',
+      subtitle: LAST.from + ' إلى ' + LAST.to + ' · ' + LAST.scopeLabel,
+      columns: ['البند', 'المبلغ (ج.م)'],
+      rows: rows,
+      totals: final,
+      filename: 'income-' + LAST.from + '_' + LAST.to
+    };
+  }
+
+  document.getElementById('rep-xls').addEventListener('click', function () {
+    var d = exportRows();
+    if (d) { window.exportXls(d); return; }
+    box.hidden = false; box.removeAttribute('data-tone');
+    text.textContent = 'اعرض القائمة أولًا.';
+  });
+
+  document.getElementById('rep-pdf').addEventListener('click', function () {
+    var d = exportRows();
+    if (d) { window.exportPdf(d); return; }
+    box.hidden = false; box.removeAttribute('data-tone');
+    text.textContent = 'اعرض القائمة أولًا.';
+  });
+
   load();
 })();
 `;
@@ -6186,11 +6694,33 @@ export function maintenancePage(data: MaintenancePageData): Html {
   <details class="panel" open>
     <summary>أجهزة العملاء <span id="tk-count"></span></summary>
     <div class="panel-body">
+      <label class="field-label" for="tk-scope">العرض</label>
+      <select class="field-input" id="tk-scope">
+        <option value="OPEN">عندنا الآن</option>
+        <option value="DELIVERED">سُلِّمت للعملاء</option>
+        <option value="ALL">الكل</option>
+      </select>
+
       <input class="field-input" id="tk-search" type="search"
-        placeholder="اسم أو هاتف أو سريال" autocomplete="off">
-      <label class="field-label" style="display:flex;gap:8px;align-items:center">
-        <input type="checkbox" id="tk-all"> عرض المسلَّمة والملغاة
-      </label>
+        placeholder="اسم · هاتف · سريال · جهاز · شكوى" autocomplete="off">
+
+      <label class="field-label" for="tk-shop-filter">محل الصيانة</label>
+      <select class="field-input" id="tk-shop-filter">
+        <option value="">— كل المحلات —</option>
+      </select>
+
+      <div class="prod-edit-grid">
+        <div>
+          <label class="field-label" for="tk-from">من</label>
+          <input class="field-input" id="tk-from" type="date" dir="ltr">
+        </div>
+        <div>
+          <label class="field-label" for="tk-to">إلى</label>
+          <input class="field-input" id="tk-to" type="date" dir="ltr">
+        </div>
+      </div>
+      <button class="btn-mini" type="button" id="tk-clear">مسح الفلاتر</button>
+
       <div id="tk-rows"><p class="field-hint">جارٍ التحميل…</p></div>
     </div>
   </details>
@@ -6493,16 +7023,118 @@ ${shared}
     });
   }
 
+  // ══════════ صفحة تفاصيل الجهاز ══════════
+  //
+  // ⚠ صفحة كاملة مش لوحة صغيرة تحت الصف.
+  //
+  // كل حاجة عن الجهاز في مكان واحد: بيانات العميل، وصف الجهاز
+  // وحالته وقت الاستلام، الشكوى، بيانات الفتح، والحالة والتكلفة.
+  // الموظّف بيفتحها وهو ماسك الجهاز، وبيحتاج يقرا الكل مرة واحدة.
+
+  var TICKETS = {};
+
+  function detailLine(label, value) {
+    if (!value && value !== 0) return '';
+    return '<div class="mv-row"><span class="mv-sub">' + label +
+      '</span><span>' + value + '</span></div>';
+  }
+
+  function showTicket(id) {
+    var t = TICKETS[id];
+    if (!t) return;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'unlock-wrap';
+
+    var canEdit = CAN_MANAGE && t.status !== 'CANCELLED';
+
+    var head =
+      '<div class="unlock-title">' + t.deviceName +
+        (t.visitNumber > 1 ? ' — زيارة ' + t.visitNumber : '') + '</div>';
+
+    var info =
+      '<div style="text-align:right">' +
+        detailLine('العميل', t.customerName) +
+        detailLine('الهاتف', t.customerPhone) +
+        detailLine('السريال', t.serialNumber) +
+        detailLine('اللون', t.deviceColor) +
+        detailLine('حالته عند الاستلام', t.conditionNote) +
+        detailLine('الشكوى', t.complaint) +
+        detailLine('محل الصيانة', t.shopName || 'داخليًا') +
+        detailLine('استُلم', t.receivedDate) +
+        detailLine('موعد التسليم', t.promisedDate) +
+        detailLine('سُلِّم', t.deliveredDate) +
+        detailLine('الحالة', STATUS[t.status]) +
+        detailLine('التكلفة', money(t.costPiastres) + ' ج.م') +
+        detailLine('ملاحظة العمل', t.workNote) +
+        detailLine('استلمه', t.createdByName) +
+        detailLine('مفتوح من', t.daysOpen + ' يوم') +
+      '</div>';
+
+    var buttons =
+      '<div class="prod-edit-actions" style="margin-top:14px">' +
+        '<button class="btn-mini" type="button" data-unlock="' + t.id + '">' +
+          (t.hasUnlock ? 'بيانات الفتح' : 'إضافة بيانات فتح') + '</button>' +
+        '<button class="btn-mini" type="button" data-tk-again="' + t.id + '">رجع تاني</button>' +
+        '<button class="btn-mini" type="button" data-close>إغلاق</button>' +
+      '</div>';
+
+    // ⚠ التحديث للمدير بس. الموظّف بيشوف كل حاجة ومش بيغيّر
+    // الحالة ولا التكلفة.
+    var editBlock = canEdit
+      ? '<details class="panel" style="margin-top:14px;text-align:right">' +
+          '<summary>تحديث الحالة والتكلفة</summary>' +
+          '<div class="panel-body">' +
+            '<label class="field-label">الحالة</label>' +
+            '<select class="field-input" id="tks">' +
+              '<option value="CHECKING">قيد الفحص</option>' +
+              '<option value="WAITING_PART">بانتظار قطعة غيار</option>' +
+              '<option value="READY">جاهز للتسليم</option>' +
+              '<option value="DELIVERED">تم التسليم</option>' +
+              '<option value="CANCELLED">ملغاة</option>' +
+            '</select>' +
+            '<label class="field-label">التكلفة</label>' +
+            '<input class="field-input" id="tkc" type="text" inputmode="decimal" dir="ltr" ' +
+              'value="' + money(t.costPiastres) + '">' +
+            '<label class="field-label">ملاحظة العمل</label>' +
+            '<input class="field-input" id="tkn" type="text" maxlength="1000" value="' +
+              (t.workNote || '') + '">' +
+            '<button class="btn-mini" type="button" data-tk-save="' + t.id + '">حفظ</button>' +
+          '</div>' +
+        '</details>'
+      : '';
+
+    wrap.innerHTML =
+      '<div class="unlock-panel" style="max-height:88vh;overflow:auto">' +
+        head + info + editBlock + buttons +
+      '</div>';
+
+    document.body.appendChild(wrap);
+
+    var sel = wrap.querySelector('#tks');
+    if (sel) sel.value = t.status;
+
+    function close() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
+    wrap.querySelector('[data-close]').addEventListener('click', close);
+    wrap.setAttribute('data-ticket-modal', t.id);
+  }
+
   // ══════════ التحميل ══════════
   var shops = [];
 
+  function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+
   async function load() {
-    var q = (document.getElementById('tk-search') || {}).value || '';
-    var all = (document.getElementById('tk-all') || {}).checked ? '1' : '0';
+    // ⚠ الفلاتر بتتبعت للخادم مش بتتفلتر في المتصفح: التذاكر
+    // ممكن تكون مئات، والبحث في الشكوى محتاج قاعدة البيانات.
+    var qs = 'scope=' + encodeURIComponent(val('tk-scope') || 'OPEN') +
+      '&q=' + encodeURIComponent(val('tk-search')) +
+      '&shop=' + encodeURIComponent(val('tk-shop-filter')) +
+      '&from=' + encodeURIComponent(val('tk-from')) +
+      '&to=' + encodeURIComponent(val('tk-to'));
 
     try {
-      var res = await fetch('/api/maintenance?q=' + encodeURIComponent(q) + '&all=' + all,
-        { credentials: 'same-origin' });
+      var res = await fetch('/api/maintenance?' + qs, { credentials: 'same-origin' });
       var data = await res.json().catch(function () { return null; });
       if (!res.ok || !data || !data.ok) {
         say((data && data.error && data.error.message) || 'تعذّر التحميل.', false);
@@ -6520,6 +7152,22 @@ ${shared}
   }
 
   function fillShops() {
+    // فلتر البحث — بيحتفظ باختيارك بعد التحميل
+    var filt = document.getElementById('tk-shop-filter');
+    if (filt) {
+      var keep = filt.value;
+      filt.textContent = '';
+      var all = document.createElement('option');
+      all.value = ''; all.textContent = '— كل المحلات —';
+      filt.appendChild(all);
+      for (var k = 0; k < shops.length; k++) {
+        var of = document.createElement('option');
+        of.value = shops[k].id; of.textContent = shops[k].name;
+        filt.appendChild(of);
+      }
+      filt.value = keep;
+    }
+
     var sel = document.getElementById('tk-shop');
     if (!sel) return;
     sel.textContent = '';
@@ -6572,64 +7220,24 @@ ${shared}
           ' · ' + t.daysOpen + ' يوم'
       );
 
+      // ⚠ الصف كله بيفتح التفاصيل. الأزرار بقت جوّه صفحة
+      // التفاصيل مش على الصف — الصف بقى ضيّق على الموبايل
+      // بأربع أزرار، وأول حاجة الموظّف بيعملها إنه يبصّ.
+      r.style.cursor = 'pointer';
+      r.setAttribute('data-open-ticket', t.id);
+      TICKETS[t.id] = t;
+
       var acts = document.createElement('div');
       acts.className = 'prod-edit-actions';
 
-      // ⚠ متاح لأي حد عنده صلاحية الصيانة. وبيظهر حتى لو مفيش
-      // بيانات محفوظة — عشان يقدر يضيفها لو الزبون ادّاها بعدين.
-      var u = document.createElement('button');
-      u.className = 'btn-mini'; u.type = 'button';
-      u.textContent = t.hasUnlock ? 'بيانات الفتح' : 'إضافة بيانات فتح';
-      u.setAttribute('data-unlock', t.id);
-      u.setAttribute('data-has', t.hasUnlock ? 'true' : 'false');
-      acts.appendChild(u);
-
-      if (CAN_MANAGE && t.status !== 'DELIVERED' && t.status !== 'CANCELLED') {
-        var e2 = document.createElement('button');
-        e2.className = 'btn-mini'; e2.type = 'button';
-        e2.textContent = 'تحديث';
-        e2.setAttribute('data-tk-edit', t.id);
-        acts.appendChild(e2);
-      }
-
-      // الزيارة التانية: تذكرة جديدة مربوطة بالقديمة
-      var again = document.createElement('button');
-      again.className = 'btn-mini'; again.type = 'button';
-      again.textContent = 'رجع تاني';
-      again.setAttribute('data-tk-again', t.id);
-      again.setAttribute('data-cname', t.customerName);
-      again.setAttribute('data-cphone', t.customerPhone || '');
-      again.setAttribute('data-device', t.deviceName);
-      again.setAttribute('data-serial', t.serialNumber || '');
-      again.setAttribute('data-color', t.deviceColor || '');
-      acts.appendChild(again);
+      var openBtn = document.createElement('button');
+      openBtn.className = 'btn-mini'; openBtn.type = 'button';
+      openBtn.textContent = 'التفاصيل';
+      openBtn.setAttribute('data-open-ticket', t.id);
+      acts.appendChild(openBtn);
 
       r.appendChild(acts);
       host.appendChild(r);
-
-      var panel = document.createElement('div');
-      panel.className = 'exit-edit';
-      panel.id = 'tke-' + t.id;
-      panel.hidden = true;
-      panel.innerHTML =
-        '<p class="field-hint">' + t.complaint +
-          (t.conditionNote ? ' · حالة الاستلام: ' + t.conditionNote : '') + '</p>' +
-        '<label class="field-label">الحالة</label>' +
-        '<select class="field-input" id="tks-' + t.id + '">' +
-          '<option value="CHECKING">قيد الفحص</option>' +
-          '<option value="WAITING_PART">بانتظار قطعة غيار</option>' +
-          '<option value="READY">جاهز للتسليم</option>' +
-          '<option value="DELIVERED">تم التسليم</option>' +
-          '<option value="CANCELLED">ملغاة</option>' +
-        '</select>' +
-        '<label class="field-label">التكلفة</label>' +
-        '<input class="field-input" id="tkc-' + t.id + '" type="text" inputmode="decimal" ' +
-          'dir="ltr" value="' + money(t.costPiastres) + '">' +
-        '<label class="field-label">ملاحظة العمل</label>' +
-        '<input class="field-input" id="tkn-' + t.id + '" type="text" maxlength="1000" value="' +
-          (t.workNote || '') + '">' +
-        '<button class="btn-mini" type="button" data-tk-save="' + t.id + '">حفظ</button>';
-      host.appendChild(panel);
     }
   }
 
@@ -6709,6 +7317,13 @@ ${shared}
     var el = e.target.closest ? e.target : null;
     if (!el || !el.closest) return;
 
+    // فتح التفاصيل — من الصف أو من زرار «التفاصيل»
+    var openT = el.closest('[data-open-ticket]');
+    if (openT && !el.closest('[data-unlock]') && !el.closest('[data-tk-again]')) {
+      showTicket(openT.getAttribute('data-open-ticket'));
+      return;
+    }
+
     var unlockBtn = el.closest('[data-unlock]');
     if (unlockBtn) {
       var tid = unlockBtn.getAttribute('data-unlock');
@@ -6723,36 +7338,56 @@ ${shared}
       return;
     }
 
-    var editBtn = el.closest('[data-tk-edit]');
-    if (editBtn) {
-      var p = document.getElementById('tke-' + editBtn.getAttribute('data-tk-edit'));
-      if (p) p.hidden = !p.hidden;
-      return;
-    }
-
     var saveBtn = el.closest('[data-tk-save]');
     if (saveBtn) {
       var id = saveBtn.getAttribute('data-tk-save');
+      var modal = saveBtn.closest('[data-ticket-modal]');
+      if (!modal) return;
+
+      var st = (modal.querySelector('#tks') || {}).value;
+      var cost = (modal.querySelector('#tkc') || {}).value || '';
+
+      // ⚠ التسليم بصفر ممكن يكون صح (إصلاح بضمان)، لكن السكوت
+      // التام غلط: الجهاز بيتسلّم والفلوس ما اتكتبتش، ومحدش
+      // بيلاحظ غير آخر الشهر.
+      var zero = !cost.trim() || parseFloat(cost) === 0;
+      if (st === 'DELIVERED' && zero) {
+        if (!confirm('التكلفة صفر — الجهاز هيتسلّم من غير فلوس. متأكد؟')) return;
+      }
+
       var ok2 = await send('/api/maintenance/tickets/' + encodeURIComponent(id), {
-        status: (document.getElementById('tks-' + id) || {}).value,
-        cost: (document.getElementById('tkc-' + id) || {}).value,
-        workNote: (document.getElementById('tkn-' + id) || {}).value
+        status: st,
+        cost: cost,
+        workNote: (modal.querySelector('#tkn') || {}).value
       }, saveBtn, '…');
-      if (ok2) { say('تم الحفظ.', true); load(); }
+
+      if (ok2) {
+        if (modal.parentNode) modal.parentNode.removeChild(modal);
+        say('تم الحفظ.', true);
+        load();
+      }
       return;
     }
 
     // الزيارة التانية: بنملا الفورم ببيانات الجهاز ونربط التذكرة
     var againBtn = el.closest('[data-tk-again]');
     if (againBtn) {
-      document.getElementById('tk-cname').value = againBtn.getAttribute('data-cname') || '';
-      document.getElementById('tk-cphone').value = againBtn.getAttribute('data-cphone') || '';
-      document.getElementById('tk-device').value = againBtn.getAttribute('data-device') || '';
-      document.getElementById('tk-serial').value = againBtn.getAttribute('data-serial') || '';
-      document.getElementById('tk-color').value = againBtn.getAttribute('data-color') || '';
+      var old = TICKETS[againBtn.getAttribute('data-tk-again')];
+      if (!old) return;
+
+      // بيانات الجهاز بتتنقل، والشكوى بتفضل فاضية — دي زيارة
+      // جديدة بمشكلة جديدة مش نسخة من القديمة
+      document.getElementById('tk-cname').value = old.customerName || '';
+      document.getElementById('tk-cphone').value = old.customerPhone || '';
+      document.getElementById('tk-device').value = old.deviceName || '';
+      document.getElementById('tk-serial').value = old.serialNumber || '';
+      document.getElementById('tk-color').value = old.deviceColor || '';
       document.getElementById('tk-complaint').value = '';
-      document.getElementById('tk-add').setAttribute('data-parent',
-        againBtn.getAttribute('data-tk-again'));
+      document.getElementById('tk-add').setAttribute('data-parent', old.id);
+
+      var modalA = againBtn.closest('[data-ticket-modal]');
+      if (modalA && modalA.parentNode) modalA.parentNode.removeChild(modalA);
+
       say('اكتب الشكوى الجديدة — الجهاز مربوط بزيارته السابقة.', true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -6855,8 +7490,23 @@ ${shared}
       timer = setTimeout(load, 350);
     });
   }
-  var allEl = document.getElementById('tk-all');
-  if (allEl) allEl.addEventListener('change', load);
+  ['tk-scope', 'tk-shop-filter', 'tk-from', 'tk-to'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('change', load);
+  });
+
+  var clearBtn = document.getElementById('tk-clear');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function () {
+      ['tk-search', 'tk-shop-filter', 'tk-from', 'tk-to'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      var sc = document.getElementById('tk-scope');
+      if (sc) sc.value = 'OPEN';
+      load();
+    });
+  }
 
   load();
 })();
