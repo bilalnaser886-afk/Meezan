@@ -2025,7 +2025,14 @@ export interface TreasuryPageData {
   }>;
   movements: TreasuryMovementView[];
   pending: TreasuryMovementView[];
-  reasons: Array<{ id: string; name: string; isAdvance: boolean }>;
+  /**
+   * ⚠ `isInventory` بيخلّي سبب "شراء بضاعة" **يختفي** من قائمة
+   * أسباب المصروف، لأن له نوع حركة خاص بيه بيكتب بيان معاه.
+   *
+   * من غير الإخفاء، هيبقى فيه طريقتين لتسجيل نفس الحاجة —
+   * واحدة ببيان وواحدة من غير — والتانية بتلغي الميزة.
+   */
+  reasons: Array<{ id: string; name: string; isAdvance: boolean; isInventory?: boolean }>;
   team: Array<{ id: string; fullName: string }>;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
@@ -2164,6 +2171,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
         <label class="field-label" for="mv-type">نوع الحركة</label>
         <select class="field-input" id="mv-type">
           <option value="EXPENSE">مصروف</option>
+          <option value="PURCHASE">شراء بضاعة</option>
           <option value="ADVANCE">سُلفة موظّف</option>
           ${data.canApprove
             ? html`<option value="DEPOSIT">إيداع</option>
@@ -2183,7 +2191,9 @@ export function treasuryPage(data: TreasuryPageData): Html {
       <div class="field" id="mv-reason-field">
         <label class="field-label" for="mv-reason">سبب الصرف</label>
         <select class="field-input" id="mv-reason">
-          ${data.reasons.map((r) => html`<option value="${r.id}">${r.name}</option>`)}
+          ${data.reasons
+            .filter((r) => !r.isInventory)
+            .map((r) => html`<option value="${r.id}">${r.name}</option>`)}
         </select>
       </div>
 
@@ -2207,10 +2217,40 @@ export function treasuryPage(data: TreasuryPageData): Html {
         </select>
       </div>
 
+      <div class="field" id="mv-item-field" hidden>
+        <label class="field-label" for="mv-item">الصنف المشترى</label>
+        <input class="field-input" id="mv-item" type="text" maxlength="120" autocomplete="off">
+        <p class="field-hint">
+          اكتبه زي ما هتدوّر عليه بعدين. مثال: آيفون 13 برو ماكس، أو جراب سيليكون.
+        </p>
+      </div>
+
+      <div class="field" id="mv-qty-field" hidden>
+        <label class="field-label" for="mv-qty">الكمية</label>
+        <input class="field-input" id="mv-qty" type="number" inputmode="numeric"
+          dir="ltr" min="1" step="1" value="1">
+      </div>
+
+      <div class="field" id="mv-sup-field" hidden>
+        <label class="field-label" for="mv-sup">المورّد (اختياري)</label>
+        <select class="field-input" id="mv-sup">
+          <option value="">— بدون —</option>
+        </select>
+        <p class="field-hint">
+          اختره من القائمة ولا تكتبه — الاسم المكتوب بخط اليد يصنع
+          تاجرين مختلفين من تاجر واحد، والدين لا يقفل.
+        </p>
+      </div>
+
       <div class="field">
         <label class="field-label" for="mv-note">ملاحظة (اختياري)</label>
         <input class="field-input" id="mv-note" type="text" maxlength="500">
       </div>
+
+      <p class="field-hint" id="mv-purchase-note" hidden>
+        ⚠ هذا يسجّل خروج المال ويكتب بيانه. لا يضيف الصنف إلى المخزون —
+        التوريد يتم من شاشة المنتجات.
+      </p>
 
       <button class="btn-primary" id="mvbtn" type="submit">تسجيل الحركة</button>
     </form>
@@ -2264,6 +2304,40 @@ ${MENU_JS}
   var userField = document.getElementById('mv-user-field');
   var dirField = document.getElementById('mv-dir-field');
 
+  var itemField = document.getElementById('mv-item-field');
+  var qtyField = document.getElementById('mv-qty-field');
+  var supField = document.getElementById('mv-sup-field');
+  var purchaseNote = document.getElementById('mv-purchase-note');
+  var supLoaded = false;
+
+  /**
+   * أسماء الموردين — بتتحمّل **أول مرة** يختار شراء بس.
+   *
+   * ⚠ مش مع الصفحة: أغلب فتحات شاشة الخزينة مصروف أو سُلفة،
+   * فتحميل القائمة في كل مرة = رحلة ضايعة على شبكة موبايل.
+   */
+  async function loadSuppliers() {
+    if (supLoaded) return;
+    supLoaded = true;
+    try {
+      var res = await fetch('/api/purchases/suppliers', { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) return;
+
+      var sel = document.getElementById('mv-sup');
+      for (var i = 0; i < (d.suppliers || []).length; i++) {
+        var o = document.createElement('option');
+        o.value = d.suppliers[i].id;
+        o.textContent = d.suppliers[i].name;
+        sel.appendChild(o);
+      }
+    } catch (err) {
+      // ⚠ المورّد اختياري، فالفشل هنا ما يمنعش تسجيل الشرا.
+      // بنسيب القائمة فيها "بدون" وخلاص.
+      supLoaded = false;
+    }
+  }
+
   function syncFields() {
     var t = typeEl.value;
     // سبب الصرف للمصروف وحده. السُلفة سببها معروف من نوعها،
@@ -2271,6 +2345,15 @@ ${MENU_JS}
     reasonField.hidden = t !== 'EXPENSE';
     userField.hidden = t !== 'ADVANCE';
     dirField.hidden = t !== 'ADJUSTMENT';
+
+    // ⚠ الشرا سببه معروف من نوعه — نفس منطق السُلفة بالظبط.
+    // المطلوب معاه بيان (صنف · كمية · مورّد) مش سبب.
+    var buying = t === 'PURCHASE';
+    itemField.hidden = !buying;
+    qtyField.hidden = !buying;
+    supField.hidden = !buying;
+    purchaseNote.hidden = !buying;
+    if (buying) loadSuppliers();
   }
   typeEl.addEventListener('change', syncFields);
   syncFields();
@@ -2286,12 +2369,27 @@ ${MENU_JS}
     btn.disabled = true;
     btn.textContent = 'جارٍ التسجيل…';
 
+    // ⚠ الشرا ليه مسار مختلف لأنه بيكتب **صفّين** في معاملة
+    // واحدة: حركة الخزينة وبيانها. لو بعتناه لمسار الحركات
+    // العادي، البيان كان هيضيع والمصروف يتسجّل أعمى.
+    var url = t === 'PURCHASE' ? '/api/purchases' : '/api/treasury/movements';
+    var payload = t === 'PURCHASE'
+      ? {
+          treasuryId: document.getElementById('mv-treasury').value,
+          amount: document.getElementById('mv-amount').value,
+          itemName: document.getElementById('mv-item').value,
+          quantity: document.getElementById('mv-qty').value,
+          supplierId: document.getElementById('mv-sup').value || null,
+          note: document.getElementById('mv-note').value || null
+        }
+      : null;
+
     try {
-      var res = await fetch('/api/treasury/movements', {
+      var res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({
+        body: JSON.stringify(payload || {
           treasuryId: document.getElementById('mv-treasury').value,
           type: t,
           amount: document.getElementById('mv-amount').value,
@@ -2396,6 +2494,14 @@ export interface PosPageData {
   }>;
   /** تاريخ النهاردة بتوقيت القاهرة — افتراضي حقل تاريخ الخروج */
   today: string;
+  /**
+   * الضمان الافتراضي بالأيام — الخانة بتبدأ بيه.
+   *
+   * ⚠ الرقم جاي من `DEFAULT_WARRANTY_DAYS` في حالة الاستخدام،
+   * مش مكتوب هنا. لو اتكتب في المكانين، هييجي يوم يتغيّر في
+   * واحد ويفضل القديم في التاني.
+   */
+  defaultWarrantyDays: number;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
   idleAction: 'LOGOUT' | 'LOCK';
@@ -2532,6 +2638,17 @@ export function posPage(data: PosPageData): Html {
         </p>
       </div>
 
+      <div class="field">
+        <label class="field-label" for="pos-warranty">الضمان بالأيام</label>
+        <input class="field-input" id="pos-warranty" type="number" inputmode="numeric"
+          dir="ltr" min="0" max="3650" step="1"
+          value="${String(data.defaultWarrantyDays)}">
+        <p class="field-hint">
+          يبدأ من تاريخ الخروج. اتركه فارغًا إن اتفقت مع العميل على
+          بيع بلا ضمان — والاسترجاع بعدها يحتاج موافقة صاحب المحل.
+        </p>
+      </div>
+
       <button class="btn-primary" id="pos-submit" type="button" disabled>تم البيع</button>
     </div>
   </details>
@@ -2590,6 +2707,7 @@ export function posPage(data: PosPageData): Html {
               ${data.canRefund
                 ? html`<div class="exit-edit" id="ret-${s.id}" hidden>
                     <p class="field-hint" id="ret-msg-${s.id}">جارٍ قراءة بنود الفاتورة…</p>
+                    <div id="ret-warranty-${s.id}"></div>
                     <div id="ret-lines-${s.id}"></div>
 
                     <div id="ret-form-${s.id}" hidden>
@@ -2679,6 +2797,29 @@ ${TIME_JS}
   var clearEl = document.getElementById('cart-clear');
   var submitEl = document.getElementById('pos-submit');
   var boxEl = document.getElementById('posmsg');
+
+  // ══════════ الضمان ══════════
+  //
+  // ⚠ تلات حالات مش اتنين، والفرق بينهم بيتحاسب عليه قدّام
+  // الزبون بعد شهرين:
+  //
+  //   الخانة فاضية → null → **بلا ضمان**
+  //   مكتوب فيها 0  → 0    → ضمان صفر يوم، بقرار مكتوب
+  //   رقم           → الرقم
+  //
+  // ودالة Number على نص فاضي بترجّع **صفر** — فلو بعتنا القيمة
+  // على طول، الخانة الفاضية كانت هتتسجّل "صفر يوم" بدل "بلا ضمان".
+  function warrantyValue() {
+    var el = document.getElementById('pos-warranty');
+    if (!el) return undefined;
+
+    var raw = String(el.value || '').trim();
+    if (raw === '') return null;
+
+    var n = parseInt(raw, 10);
+    if (isNaN(n) || n < 0) return null;
+    return n;
+  }
   var textEl = document.getElementById('posmsg-text');
 
   // نفس منطق formatPiastres في الخادم بالظبط — القسمة على 100
@@ -2960,7 +3101,11 @@ ${TIME_JS}
           items: items,
           customerName: document.getElementById('pos-cname').value || null,
           customerPhone: document.getElementById('pos-cphone').value || null,
-          exitDate: document.getElementById('pos-exit').value || null
+          exitDate: document.getElementById('pos-exit').value || null,
+          // ⚠ الخانة الفاضية بتتبعت null صراحةً = بلا ضمان.
+          // لو بعتناها '' كان الخادم هيقراها صفر — و"بلا ضمان"
+          // كانت هتبقى "ضمان صفر يوم".
+          warrantyDays: warrantyValue()
         })
       });
       var data = await res.json().catch(function () { return null; });
@@ -3045,7 +3190,75 @@ ${TIME_JS}
   // الفاتورة بس؛ المتبقي في كل بند (بعد أي مرتجع سابق) حساب
   // الخادم لوحده. لو بنيناه هنا، مرتجعين ورا بعض من تابين
   // مفتوحين كانوا هيرجّعوا أكتر من اللي اتباع.
-  var retLines = {};
+  var retLines = {}
+  var retWarranty = {};
+  var retCanOverride = {};
+
+  /**
+   * لافتة الضمان فوق البنود.
+   *
+   * ⚠ تلات رسايل مختلفة، وكل واحدة بتقول للموظّف **إيه اللي
+   * هيحصل** مش بس إيه الحالة:
+   *   في الضمان   → أخضر، استرجاع عادي
+   *   انتهى/بلا   → أحمر + تأكيد لصاحب المحل
+   *   انتهى/بلا   → أحمر + "راجع صاحب المحل" لغيره
+   */
+  function renderWarranty(id) {
+    var host = document.getElementById('ret-warranty-' + id);
+    if (!host) return;
+
+    var w = retWarranty[id];
+    host.textContent = '';
+    if (!w) return;
+
+    var line = document.createElement('p');
+    line.className = 'field-hint';
+
+    if (w.isCovered) {
+      line.textContent = 'داخل الضمان — ينتهي ' + w.expiresOn +
+        ' (باقٍ ' + w.daysLeft + ' يوم).';
+      host.appendChild(line);
+      return;
+    }
+
+    var box = document.createElement('div');
+    box.className = 'alert-box';
+    box.hidden = false;
+
+    var msg = document.createElement('span');
+    msg.textContent = (w.warrantyDays === null || w.warrantyDays === undefined)
+      ? 'هذه الفاتورة بلا ضمان.'
+      : 'انتهى الضمان يوم ' + w.expiresOn + '.';
+    box.appendChild(msg);
+    host.appendChild(box);
+
+    if (!retCanOverride[id]) {
+      line.textContent = 'الاسترجاع خارج الضمان يحتاج موافقة صاحب المحل.';
+      host.appendChild(line);
+      return;
+    }
+
+    // ⚠ التجاوز اختيار صريح بخانة منفصلة، مش زرار بيمشي لوحده.
+    // لو خلّيناه تلقائي لصاحب المحل، هيتجاوز من غير ما ياخد باله
+    // إنه تجاوز — والسجل هيمتلي تجاوزات ما حدش قصدها.
+    var wrap = document.createElement('label');
+    wrap.style.display = 'flex';
+    wrap.style.gap = '8px';
+    wrap.style.alignItems = 'center';
+    wrap.style.marginTop = '6px';
+
+    var chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.id = 'ret-ovr-' + id;
+    wrap.appendChild(chk);
+
+    var lbl = document.createElement('span');
+    lbl.className = 'mv-sub';
+    lbl.textContent = 'أوافق على الاسترجاع خارج الضمان — يُسجَّل باسمي.';
+    wrap.appendChild(lbl);
+
+    host.appendChild(wrap);
+  };
 
   function retSay(id, text, ok) {
     var el = document.getElementById('ret-msg-' + id);
@@ -3103,7 +3316,7 @@ ${TIME_JS}
 
     retSay(id, 'جارٍ قراءة بنود الفاتورة…', true);
     try {
-      var res = await fetch('/api/returns/sale/' + encodeURIComponent(id), {
+      var res = await fetch('/api/returns/context/' + encodeURIComponent(id), {
         credentials: 'same-origin'
       });
       var data = await res.json().catch(function () { return null; });
@@ -3111,6 +3324,15 @@ ${TIME_JS}
         retSay(id, (data && data.error && data.error.message) || 'تعذّر قراءة الفاتورة.', false);
         return;
       }
+
+      // ══════════ حالة الضمان ══════════
+      //
+      // ⚠ بتتعرض **قبل** ما الموظّف يختار أي بند.
+      // زرار بيرفض بعد الضغط أسوأ من لافتة بتقول ليه قبلها —
+      // خصوصًا والزبون واقف قدّامه.
+      retWarranty[id] = data.warranty || null;
+      retCanOverride[id] = data.canOverride === true;
+      renderWarranty(id);
 
       retLines[id] = data.lines || [];
       var host = document.getElementById('ret-lines-' + id);
@@ -3247,7 +3469,26 @@ ${TIME_JS}
     var tre = document.getElementById('ret-tre-' + id);
     if (!tre || !tre.value) { retSay(id, 'اختر الخزينة.', false); return; }
 
-    if (!confirm('تأكيد الاسترجاع؟ الفلوس هتطلع من الخزينة والبضاعة هتروح لرفّ المراجعة.')) return;
+    // ⚠ الحارس ده قدّام الرسالة العامة عن قصد: السبب المحدّد
+    // أنفع من "فشل الاسترجاع" اللي بيرجع من الخادم بعد رحلة.
+    var w = retWarranty[id];
+    var outside = w && !w.isCovered;
+    var ovrEl = document.getElementById('ret-ovr-' + id);
+    var override = !!(ovrEl && ovrEl.checked);
+
+    if (outside && !retCanOverride[id]) {
+      retSay(id, 'الاسترجاع خارج الضمان يحتاج موافقة صاحب المحل.', false);
+      return;
+    }
+    if (outside && !override) {
+      retSay(id, 'علّم على الموافقة بالاسترجاع خارج الضمان أولًا.', false);
+      return;
+    }
+
+    var ask = outside
+      ? 'استرجاع خارج الضمان — يُسجَّل باسمك في سجل التدقيق. تأكيد؟'
+      : 'تأكيد الاسترجاع؟ الفلوس هتطلع من الخزينة والبضاعة هتروح لرفّ المراجعة.';
+    if (!confirm(ask)) return;
 
     var why = document.getElementById('ret-why-' + id);
     var original = btn.textContent;
@@ -3262,7 +3503,8 @@ ${TIME_JS}
         body: JSON.stringify({
           treasuryId: tre.value,
           items: items,
-          reason: why ? why.value : null
+          reason: why ? why.value : null,
+          overrideWarranty: override
         })
       });
       var data = await res.json().catch(function () { return null; });
@@ -7509,6 +7751,594 @@ ${shared}
   }
 
   load();
+})();
+`;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  سجل اليوميات
+// ═══════════════════════════════════════════════════════════
+
+export interface ClosingsPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  tenantName: string;
+  roleKey: string;
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  /** profit.view_real — بيقرّر ظهور سطر التكلفة والربح في التفاصيل */
+  canSeeCost: boolean;
+  /** صاحب المحل مالوش فرع، فلازم يختار من قائمة */
+  isOwner: boolean;
+  branches: Array<{ id: string; name: string }>;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+/**
+ * سجل اليوميات.
+ *
+ * ══ ليه الصفحة دي مش زي التقرير؟ ══
+ * التقرير بيجاوب "كسبت كام في الفترة دي". اليومية بتجاوب
+ * "إيه اللي حصل في الوردية دي" — وده سؤال تشغيلي مش محاسبي.
+ *
+ * عشان كده الترتيب هنا زمني بحت: آخر يومية فوق، وكل واحدة
+ * بتفتح على تفاصيلها الكاملة.
+ *
+ * ══ والزرار مخفي لحد ما نسأل ══
+ * ⚠ مين يقدر يقفل مش صلاحية على المستخدم — ده إعداد على الفرع.
+ * فالصفحة بتفتح للكل، وبتسأل الخادم أول ما تحمّل: أقدر أقفل؟
+ * ولو لأ، بتقول ليه.
+ *
+ * ══ واللقطة مش مرجع ══
+ * التفاصيل اللي بتظهر جاية من **نسخة محفوظة** وقت التقفيل، مش
+ * من الفواتير الحيّة. يعني لو عدّلت فاتورة بكرة، اليومية
+ * المقفولة ما بتتغيّرش — وده الغرض كله.
+ */
+export function closingsPage(data: ClosingsPageData): Html {
+  return shell({
+    title: 'سجل اليوميات',
+    script: closingsScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.isOwner,
+      data.canSeeCost,
+    ),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="clmsg" role="alert" hidden><span id="clmsg-text"></span></div>
+
+  ${data.isOwner
+    ? html`<div class="field">
+        <label class="field-label" for="cl-branch">الفرع</label>
+        <select class="field-input" id="cl-branch">
+          ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+        </select>
+        ${data.branches.length === 0
+          ? html`<p class="field-hint">لا توجد فروع بعد.</p>`
+          : ''}
+      </div>`
+    : ''}
+
+  <details class="panel" open>
+    <summary>الوردية المفتوحة</summary>
+    <div class="panel-body">
+      <div id="cl-preview">
+        <p class="field-hint">جارٍ الحساب…</p>
+      </div>
+    </div>
+  </details>
+
+  ${data.isOwner
+    ? html`<details class="panel">
+        <summary>من يقفل اليومية</summary>
+        <div class="panel-body">
+          <p class="muted">
+            الزر مخفي عن الجميع افتراضيًا. اختر من يظهر له في هذا الفرع.
+            أنت تستطيع التقفيل دائمًا.
+          </p>
+
+          <label class="field-label" style="display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="cl-role-mgr"> مدير الفرع
+          </label>
+          <label class="field-label" style="display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="cl-role-staff"> مندوب المبيعات
+          </label>
+
+          <button class="btn-mini" type="button" id="cl-roles-save">حفظ الإعداد</button>
+          <p class="field-hint">
+            لا يمكن تقفيل يومية جديدة قبل مرور ثلاث ساعات على السابقة —
+            وهذا يسري عليك أيضًا.
+          </p>
+        </div>
+      </details>`
+    : ''}
+
+  <details class="panel" open>
+    <summary>اليوميات المقفولة</summary>
+    <div class="panel-body">
+      <div id="cl-list">
+        <p class="field-hint">جارٍ التحميل…</p>
+      </div>
+    </div>
+  </details>
+
+  <div id="cl-detail" hidden></div>
+</main>
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function closingsScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  isOwner: boolean,
+  canSeeCost: boolean,
+): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+${TIME_JS}
+
+(function () {
+  var IS_OWNER = ${String(isOwner)};
+  var SEE_COST = ${String(canSeeCost)};
+
+  var box = document.getElementById('clmsg');
+  var boxText = document.getElementById('clmsg-text');
+  var previewEl = document.getElementById('cl-preview');
+  var listEl = document.getElementById('cl-list');
+  var detailEl = document.getElementById('cl-detail');
+  var branchEl = document.getElementById('cl-branch');
+
+  function say(message, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    boxText.textContent = message;
+  }
+
+  function money(piastres) {
+    var n = Number(piastres || 0);
+    var neg = n < 0;
+    var abs = Math.abs(Math.trunc(n));
+    var pounds = Math.floor(abs / 100);
+    var rest = abs % 100;
+    return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' +
+      String(rest).padStart(2, '0');
+  }
+
+  function when(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('ar-EG', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  function branchId() {
+    return branchEl ? branchEl.value : '';
+  }
+
+  function row(host, label, value, tone) {
+    var r = document.createElement('div');
+    r.className = 'mv-row';
+    var t = document.createElement('span');
+    t.className = 'mv-sub';
+    t.textContent = label;
+    r.appendChild(t);
+    var v = document.createElement('span');
+    v.className = 'mv-amount';
+    if (tone) v.setAttribute('data-dir', tone);
+    v.textContent = value;
+    r.appendChild(v);
+    host.appendChild(r);
+    return r;
+  }
+
+  // ══════════ الوردية المفتوحة ══════════
+  //
+  // ⚠ الزرار ما بيظهرش قبل الرد. لو عرضناه ومنعناه بعدين،
+  // الموظّف هيضغط ويستنى ويترفض — والزبون واقف قدّامه.
+  async function loadPreview() {
+    previewEl.textContent = '';
+    var p = document.createElement('p');
+    p.className = 'field-hint';
+    p.textContent = 'جارٍ الحساب…';
+    previewEl.appendChild(p);
+
+    var url = '/api/closings/preview';
+    if (IS_OWNER) {
+      if (!branchId()) { p.textContent = 'اختر فرعًا أولًا.'; return; }
+      url += '?branchId=' + encodeURIComponent(branchId());
+    }
+
+    try {
+      var res = await fetch(url, { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) {
+        p.textContent = (d && d.error && d.error.message) || 'تعذّر قراءة الوردية.';
+        return;
+      }
+
+      previewEl.textContent = '';
+
+      var since = document.createElement('p');
+      since.className = 'field-hint';
+      since.textContent = 'من ' + when(d.periodFrom) +
+        ' — ' + Math.floor(d.minutesOpen / 60) + ' ساعة و' +
+        (d.minutesOpen % 60) + ' دقيقة';
+      previewEl.appendChild(since);
+
+      row(previewEl, 'فواتير', String(d.salesCount));
+      row(previewEl, 'مبيعات', money(d.salesPiastres), 'IN');
+      row(previewEl, 'مرتجعات', String(d.returnsCount));
+      row(previewEl, 'حركات خزينة', String(d.movementsCount));
+
+      if (d.canClose) {
+        var btn = document.createElement('button');
+        btn.className = 'btn-primary';
+        btn.type = 'button';
+        btn.id = 'cl-close';
+        btn.textContent = 'تقفيل اليومية';
+        previewEl.appendChild(btn);
+      } else {
+        var why = document.createElement('p');
+        why.className = 'field-hint';
+        why.textContent = d.reason || 'التقفيل غير متاح الآن.';
+        previewEl.appendChild(why);
+      }
+
+      // خانات الأدوار بتتملي من نفس الرد — مصدر واحد
+      if (IS_OWNER) {
+        var mgr = document.getElementById('cl-role-mgr');
+        var stf = document.getElementById('cl-role-staff');
+        var roles = d.closingRoles || [];
+        if (mgr) mgr.checked = roles.indexOf('BRANCH_MANAGER') >= 0;
+        if (stf) stf.checked = roles.indexOf('STAFF') >= 0;
+      }
+    } catch (err) {
+      p.textContent = 'تعذّر الاتصال بالخادم.';
+    }
+  }
+
+  // ══════════ التقفيل ══════════
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('#cl-close') : null;
+    if (!btn) return;
+
+    if (!confirm('تقفيل اليومية؟ تُحفظ نسخة كاملة من الحركة، والعمل يستمر عاديًا بعدها.')) return;
+
+    btn.disabled = true;
+    btn.textContent = 'جارٍ التقفيل…';
+
+    try {
+      var res = await fetch('/api/closings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ branchId: IS_OWNER ? branchId() : null, note: null })
+      });
+      var d = await res.json().catch(function () { return null; });
+
+      if (res.ok && d && d.ok) {
+        say('تم تقفيل اليومية — مبيعات ' + money(d.salesPiastres) + ' ج.م', true);
+        await loadPreview();
+        await loadList();
+        return;
+      }
+      say((d && d.error && d.error.message) || 'تعذّر التقفيل.', false);
+    } catch (err) {
+      // ⚠ مش بنقول "ما اتقفلتش" — إحنا مش عارفين. الطلب ممكن
+      // يكون وصل واتنفّذ والرد هو اللي ضاع.
+      say('انقطع الاتصال. حدّث الصفحة وتأكّد قبل إعادة المحاولة.', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'تقفيل اليومية';
+    }
+  });
+
+  // ══════════ ضبط من يقفل ══════════
+  var saveRoles = document.getElementById('cl-roles-save');
+  if (saveRoles) {
+    saveRoles.addEventListener('click', async function () {
+      if (!branchId()) { say('اختر فرعًا أولًا.', false); return; }
+
+      var roles = [];
+      var mgr = document.getElementById('cl-role-mgr');
+      var stf = document.getElementById('cl-role-staff');
+      if (mgr && mgr.checked) roles.push('BRANCH_MANAGER');
+      if (stf && stf.checked) roles.push('STAFF');
+
+      saveRoles.disabled = true;
+      try {
+        var res = await fetch('/api/closings/roles', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ branchId: branchId(), roles: roles })
+        });
+        var d = await res.json().catch(function () { return null; });
+
+        if (res.ok && d && d.ok) {
+          say(roles.length === 0
+            ? 'تم الحفظ — الزر مخفي عن الجميع، وأنت تقفل.'
+            : 'تم الحفظ.', true);
+          return;
+        }
+        say((d && d.error && d.error.message) || 'تعذّر الحفظ.', false);
+      } catch (err) {
+        say('تعذّر الاتصال بالخادم.', false);
+      } finally {
+        saveRoles.disabled = false;
+      }
+    });
+  }
+
+  // ══════════ السجل ══════════
+  async function loadList() {
+    listEl.textContent = '';
+    var p = document.createElement('p');
+    p.className = 'field-hint';
+    p.textContent = 'جارٍ التحميل…';
+    listEl.appendChild(p);
+
+    try {
+      var res = await fetch('/api/closings', { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) {
+        p.textContent = (d && d.error && d.error.message) || 'تعذّر التحميل.';
+        return;
+      }
+
+      var rows = d.closings || [];
+      if (rows.length === 0) {
+        p.textContent = 'لم تُقفل أي يومية بعد.';
+        return;
+      }
+
+      listEl.textContent = '';
+      for (var i = 0; i < rows.length; i++) {
+        var it = rows[i];
+        var card = document.createElement('div');
+        card.className = 'mv-row';
+
+        var head = document.createElement('div');
+        var t = document.createElement('span');
+        t.className = 'mv-title';
+        t.textContent = when(it.closedAt) + ' · ' + it.branchName;
+        head.appendChild(t);
+
+        var sub = document.createElement('span');
+        sub.className = 'mv-sub';
+        sub.textContent = it.salesCount + ' فاتورة · ' +
+          money(it.salesPiastres) + ' ج.م · قفلها ' + (it.closedByName || '—');
+        head.appendChild(sub);
+        card.appendChild(head);
+
+        var open = document.createElement('button');
+        open.className = 'btn-mini';
+        open.type = 'button';
+        open.setAttribute('data-closing', it.id);
+        open.textContent = 'التفاصيل';
+        card.appendChild(open);
+
+        listEl.appendChild(card);
+      }
+    } catch (err) {
+      p.textContent = 'تعذّر الاتصال بالخادم.';
+    }
+  }
+
+  // ══════════ التفاصيل ══════════
+  //
+  // ⚠ الأرقام دي من **اللقطة** مش من الجداول الحيّة. لو فاتورة
+  // اتعدّلت بعد التقفيل، اللي هنا ما بيتغيّرش.
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-closing]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-closing');
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    try {
+      var res = await fetch('/api/closings/' + encodeURIComponent(id), {
+        credentials: 'same-origin'
+      });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) {
+        say((d && d.error && d.error.message) || 'تعذّر قراءة اليومية.', false);
+        return;
+      }
+
+      renderDetail(d.closing);
+      detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
+  function panel(title) {
+    var d = document.createElement('details');
+    d.className = 'panel';
+    d.open = true;
+    var s = document.createElement('summary');
+    s.textContent = title;
+    d.appendChild(s);
+    var b = document.createElement('div');
+    b.className = 'panel-body';
+    d.appendChild(b);
+    detailEl.appendChild(d);
+    return b;
+  }
+
+  function renderDetail(cl) {
+    detailEl.textContent = '';
+    detailEl.hidden = false;
+
+    var head = panel('يومية ' + when(cl.closedAt) + ' · ' + cl.branchName);
+    var span = document.createElement('p');
+    span.className = 'field-hint';
+    span.textContent = 'الفترة: من ' + when(cl.periodFrom) + ' إلى ' + when(cl.periodTo);
+    head.appendChild(span);
+
+    row(head, 'مبيعات', money(cl.salesPiastres), 'IN');
+    row(head, 'مرتجعات', money(cl.returnsPiastres), 'OUT');
+    row(head, 'مصروفات', money(cl.expensesPiastres), 'OUT');
+    row(head, 'سُلف', money(cl.advancesPiastres), 'OUT');
+    row(head, 'شراء بضاعة', money(cl.purchasesPiastres), 'OUT');
+    row(head, 'دخل الدرج', money(cl.cashInPiastres), 'IN');
+    row(head, 'خرج من الدرج', money(cl.cashOutPiastres), 'OUT');
+
+    // ⚠ الحقل ده مش موجود في الرد أصلاً لمن مالوش الصلاحية —
+    // مش مخفي في الشاشة. الفحص هنا للعرض بس.
+    if (SEE_COST && cl.cost) {
+      row(head, 'تكلفة المباع', money(cl.cost.cogsPiastres), 'OUT');
+      row(head, 'مجمل الربح', money(cl.cost.grossProfitPiastres), 'IN');
+    }
+
+    // ── المبيعات ──
+    var salesBody = panel('المبيعات (' + (cl.sales || []).length + ')');
+    if ((cl.sales || []).length === 0) {
+      var e1 = document.createElement('p');
+      e1.className = 'field-hint';
+      e1.textContent = 'لا مبيعات في هذه الفترة.';
+      salesBody.appendChild(e1);
+    }
+    for (var i = 0; i < (cl.sales || []).length; i++) {
+      var sale = cl.sales[i];
+      var r = document.createElement('div');
+      r.className = 'mv-row';
+
+      var st = document.createElement('span');
+      st.className = 'mv-title';
+      st.textContent = when(sale.at) + ' · ' + money(sale.totalPiastres) + ' ج.م';
+      r.appendChild(st);
+
+      var names = [];
+      for (var j = 0; j < (sale.items || []).length; j++) {
+        var it = sale.items[j];
+        names.push(it.name + ' ×' + it.quantity);
+      }
+
+      var ss = document.createElement('span');
+      ss.className = 'mv-sub';
+      ss.textContent = names.join(' · ') +
+        (sale.staff ? ' — ' + sale.staff : '') +
+        (sale.customer ? ' — ' + sale.customer : '');
+      r.appendChild(ss);
+
+      salesBody.appendChild(r);
+    }
+
+    // ── الخزينة ──
+    var mvBody = panel('حركات الخزينة (' + (cl.movements || []).length + ')');
+    if ((cl.movements || []).length === 0) {
+      var e2 = document.createElement('p');
+      e2.className = 'field-hint';
+      e2.textContent = 'لا حركات في هذه الفترة.';
+      mvBody.appendChild(e2);
+    }
+    for (var k = 0; k < (cl.movements || []).length; k++) {
+      var mv = cl.movements[k];
+      var mr = document.createElement('div');
+      mr.className = 'mv-row';
+
+      var mt = document.createElement('span');
+      mt.className = 'mv-title';
+      mt.textContent = typeLabel(mv.type) + ' · ' + money(mv.amountPiastres) + ' ج.م';
+      mr.appendChild(mt);
+
+      var ms = document.createElement('span');
+      ms.className = 'mv-sub';
+      ms.textContent = when(mv.at) +
+        (mv.reason ? ' · ' + mv.reason : '') +
+        (mv.person ? ' · ' + mv.person : '') +
+        (mv.by ? ' — ' + mv.by : '') +
+        (mv.status === 'PENDING' ? ' · معلّقة' : '');
+      mr.appendChild(ms);
+
+      mvBody.appendChild(mr);
+    }
+
+    // ── المشتريات ──
+    var puBody = panel('شراء البضاعة (' + (cl.purchases || []).length + ')');
+    if ((cl.purchases || []).length === 0) {
+      var e3 = document.createElement('p');
+      e3.className = 'field-hint';
+      e3.textContent = 'لا مشتريات في هذه الفترة.';
+      puBody.appendChild(e3);
+    }
+    for (var m = 0; m < (cl.purchases || []).length; m++) {
+      var pu = cl.purchases[m];
+      var pr = document.createElement('div');
+      pr.className = 'mv-row';
+
+      var pt = document.createElement('span');
+      pt.className = 'mv-title';
+      pt.textContent = (pu.item || 'شراء بلا بيان') + ' · ' + money(pu.amountPiastres) + ' ج.م';
+      pr.appendChild(pt);
+
+      var ps = document.createElement('span');
+      ps.className = 'mv-sub';
+      ps.textContent = when(pu.at) +
+        (pu.quantity ? ' · ' + pu.quantity + ' قطعة' : '') +
+        (pu.supplier ? ' · ' + pu.supplier : '') +
+        (pu.by ? ' — ' + pu.by : '');
+      pr.appendChild(ps);
+
+      puBody.appendChild(pr);
+    }
+  }
+
+  function typeLabel(t) {
+    if (t === 'EXPENSE') return 'مصروف';
+    if (t === 'ADVANCE') return 'سُلفة';
+    if (t === 'REFUND') return 'مرتجع';
+    if (t === 'DEPOSIT') return 'إيداع';
+    if (t === 'WITHDRAWAL') return 'سحب';
+    if (t === 'ADJUSTMENT') return 'تسوية';
+    if (t === 'TRANSFER_IN') return 'تحويل وارد';
+    if (t === 'TRANSFER_OUT') return 'تحويل صادر';
+    return t;
+  }
+
+  if (branchEl) branchEl.addEventListener('change', loadPreview);
+
+  loadPreview();
+  loadList();
 })();
 `;
 }
