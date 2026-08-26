@@ -673,27 +673,6 @@ function shell(opts: { title: string; noIndex?: boolean; body: Html; script: str
 <title>${opts.title}</title>
 ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive">') : ''}
 
-<!-- ═══ الإضاءة — قبل أي رسم ═══
-     ⚠ السكربت ده لازم يفضل هنا في الرأس ومتزامن.
-     لو اتأخر لآخر الصفحة، المتصفح بيرسم الوضع الفاتح الأول
-     وبعدين يقلبه — وميض أبيض في وش المستخدم كل تحميل.
-     ولو كان في وضع ليلي في أوضة ضلمة، الوميض ده بيوجع فعلاً.
-
-     والمفتاح مخزّن محليًا مش على الخادم: ده تفضيل عرض،
-     ما يستاهلش رحلة شبكة ولا صف في قاعدة البيانات.
-
-     ⚠ وفيه try حواليه لأن بعض المتصفحات بتمنع التخزين المحلي
-     في التصفح الخاص — والثيم ما يصحّش يمنع الصفحة من الفتح. -->
-<script>
-(function(){
-  try{
-    var t = localStorage.getItem('mz-theme');
-    if(!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    if(t === 'dark') document.documentElement.setAttribute('data-theme','dark');
-  }catch(e){}
-})();
-</script>
-
 <!-- ═══ التثبيت كتطبيق ═══
      البيان بيخدم أندرويد وويندوز وماك. سفاري على iOS ما بيقراش
      البيان للأيقونة، فبيحتاج apple-touch-icon صراحةً. -->
@@ -707,6 +686,136 @@ ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive"
 <!-- black-translucent بيخلّي الهيدر الأخضر يمتد تحت شريط الحالة
      في iPhone بدل الشريط الأبيض المقطوع -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<!-- ═══ الإضاءة — قبل أي رسم ═══
+     ⚠ السكربت ده لازم يفضل هنا في الرأس ومتزامن.
+     لو اتأخر لآخر الصفحة، المتصفح بيرسم الوضع الفاتح الأول
+     وبعدين يقلبه — وميض أبيض في وش المستخدم كل تحميل.
+     ولو كان في وضع ليلي في أوضة ضلمة، الوميض ده بيوجع فعلاً.
+
+     ⚠ ومكانه بعد وسم theme-color مقصود: بيعدّل لونه، فلازم
+     الوسم يكون اتقرا قبله. لسه في الرأس، فلسه قبل أي رسم.
+
+     ══ تلات أوضاع مش اتنين ══
+       تلقائي  ← نهاري من 6 الصبح لـ 6 المسا، وليلي غير كده
+       نهاري   ← ثابت باختيار المستخدم
+       ليلي    ← ثابت باختيار المستخدم
+
+     والتلقائي هو الافتراضي: أي حد ما اختارش حاجة بيمشي عليه.
+     أول ما يدوس على الزرار، اختياره بيتسجّل وبيغلب الساعة.
+
+     ══ ⚠ الساعة بتاعة الجهاز مش القاهرة ══
+     باقي النظام بيحسب التواريخ بتوقيت القاهرة عشان الفواتير
+     تتحط على اليوم الصح. لكن الإضاءة حاجة تانية خالص: لو
+     الموبايل بيقول إنها 11 بالليل، يبقى الدنيا ليل **عند اللي
+     ماسك الموبايل**. الحكم هنا لساعته هو.
+
+     ══ ⚠ وإعداد النظام (الوضع الليلي في الموبايل) اتشال من
+     الحساب عن قصد ══
+     كان هو الافتراضي القديم. المشكلة إن ناس كتير بتخلّي
+     موبايلها ليلي طول الوقت — وساعتها "التلقائي" ما كانش
+     هيوري نهاري أبدًا، وكلمة "تلقائي" تبقى كذب.
+     الساعة وحدها هي الحَكَم، وده اللي بيخلّي الوضع متوقّع.
+
+     ⚠ وفيه try حوالين التخزين لأن بعض المتصفحات بتمنعه في
+     التصفح الخاص — والإضاءة ما يصحّش تمنع الصفحة من الفتح. -->
+<script>
+(function(){
+  var KEY = 'mz-theme';
+
+  /* ⚠ مقبض التوقيت. عايز الليلي يبدأ بدري في الشتا؟ نزّل
+     الرقم التاني. القيم بالساعة على مدار 24. */
+  var DAY_FROM = 6, DAY_TO = 18;
+
+  /* الاختيار المسجّل. أي حاجة غير light/dark = تلقائي —
+     يعني حتى لو التخزين اتلغى أو القيمة اتلخبطت، بنقع على
+     التلقائي مش على شاشة بيضا في نص الليل. */
+  function stored(){
+    try{
+      var v = localStorage.getItem(KEY);
+      return (v === 'light' || v === 'dark') ? v : 'auto';
+    }catch(e){ return 'auto'; }
+  }
+
+  function byClock(){
+    var h = new Date().getHours();
+    return (h >= DAY_FROM && h < DAY_TO) ? 'light' : 'dark';
+  }
+
+  /* اللي معروض فعلاً دلوقتي */
+  function effective(){
+    var m = stored();
+    return m === 'auto' ? byClock() : m;
+  }
+
+  function label(){
+    var m = stored();
+    if(m === 'light') return 'نهاري';
+    if(m === 'dark')  return 'ليلي';
+    /* ⚠ في التلقائي بنكتب الاتنين: الوضع **والحالة**.
+       "تلقائي" لوحدها بتسيب السؤال "طب هو ليه ضلمة دلوقتي؟" */
+    return effective() === 'dark' ? 'تلقائي · ليلي' : 'تلقائي · نهاري';
+  }
+
+  function paint(){
+    var el = document.getElementById('theme-label');
+    if(el) el.textContent = label();
+  }
+
+  function apply(){
+    var e = effective();
+    if(e === 'dark') document.documentElement.setAttribute('data-theme','dark');
+    else document.documentElement.removeAttribute('data-theme');
+
+    /* ⚠ لون شريط المتصفح بيتغيّر معاه، وإلا هيفضل أخضر فاتح
+       فوق شاشة غامقة في أندرويد */
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.setAttribute('content', e === 'dark' ? '#0E1613' : '#16211D');
+
+    paint();
+  }
+
+  /* الدورة: تلقائي ← نهاري ← ليلي ← تلقائي.
+     ⚠ التلقائي جزء من الدورة مش إعداد مدفون في شاشة تانية —
+     عشان اللي جرّب يثبّت وضع يقدر يرجّع بضغطتين. */
+  function cycle(){
+    var m = stored();
+    var next = m === 'auto' ? 'light' : (m === 'light' ? 'dark' : 'auto');
+    try{ localStorage.setItem(KEY, next); }catch(e){}
+    apply();
+  }
+
+  apply();
+
+  /* اللافتة بتتكتب تاني لما الصفحة تخلص، لأن الزرار نفسه
+     لسه ما اتولدش وقت ما السكربت ده اشتغل */
+  document.addEventListener('DOMContentLoaded', paint);
+
+  /* ⚠ الزرار بيتمسك من هنا مش من سكربت القائمة.
+     السبب: صفحة المنصّة قائمتها مبنية بشكل تاني خالص، وزرار
+     الإضاءة فيها كان **ميّت** لأن سكربت القائمة بيخرج بدري لو
+     ما لقاش عنصر اسمه menu. المستمع العام هنا بيخدم أي قائمة
+     في أي صفحة، الموجودة والجاية. */
+  document.addEventListener('click', function(ev){
+    var b = (ev.target && ev.target.closest)
+      ? ev.target.closest('[data-action="theme"]') : null;
+    if(b) cycle();
+  });
+
+  /* ══ الانتقال وإنت فاتح الشاشة ══
+     الموظّف ممكن يسيب النظام مفتوح من 5:50 لـ 6:10. من غير
+     الفحص ده، الشاشة تفضل نهاري لحد ما يعمل تحديث.
+     ⚠ الفحص بيشتغل في التلقائي بس، ولو الوضع ما اتغيّرش
+     الدالة ما بتلمسش الصفحة أصلاً. */
+  setInterval(function(){ if(stored() === 'auto') apply(); }, 60000);
+
+  /* والموبايل بيوقّف المؤقّتات وهو في الجيب. فأول ما ترجع
+     تفتحه، بنفحص فورًا بدل ما تستنى دقيقة. */
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden && stored() === 'auto') apply();
+  });
+})();
+</script>
 
 <!-- ═══ تسخين الاتصال قبل الطلب ═══
      تحميل الخطوط بيمر على سيرفرين: واحد بيدّي ملف التعليمات
@@ -928,46 +1037,26 @@ const MENU_JS = `
 
   // ══════════ الإضاءة ══════════
   //
-  // ⚠ التطبيق الفعلي في رأس الصفحة قبل الرسم. الجزء ده
-  // للتبديل واللافتة بس.
-  function currentTheme() {
-    return document.documentElement.getAttribute('data-theme') === 'dark'
-      ? 'dark' : 'light';
-  }
-
-  function paintThemeLabel() {
-    var el = document.getElementById('theme-label');
-    if (!el) return;
-    // ⚠ اللافتة بتقول الوضع **الحالي** مش اللي هيتحوّل له.
-    // "نهاري" جنب زرار في وضع نهاري = حالة. لو كتبناها
-    // "تحويل لليلي" تبقى أمر، والاتنين مع بعض بيلخبطوا.
-    el.textContent = currentTheme() === 'dark' ? 'ليلي' : 'نهاري';
-  }
-
-  paintThemeLabel();
+  // ⚠ مفيش منطق إضاءة هنا خالص. كله في مبدّل الإضاءة العام
+  // في رأس الصفحة — بيمسك الزرار بنفسه، وبيكتب اللافتة،
+  // وبيتابع الساعة في الوضع التلقائي.
+  //
+  // ══ ليه اتنقل من هنا؟ ══
+  // كان مكتوب مرتين فعليًا: التطبيق في الرأس والتبديل هنا.
+  // والنتيجة إن صفحة المنصّة — اللي قائمتها مبنية بشكل تاني
+  // ومالهاش عنصر اسمه menu — كان زرار الإضاءة فيها **ميّت**،
+  // لأن السكربت ده بيخرج بدري فوق.
+  //
+  // مصدر واحد للحقيقة، وبيخدم كل الصفحات.
 
   menu.addEventListener('click', async function (e) {
     var btn = e.target.closest ? e.target.closest('[data-action]') : null;
     if (!btn) return;
 
-    if (btn.getAttribute('data-action') === 'theme') {
-      var next = currentTheme() === 'dark' ? 'light' : 'dark';
-
-      if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-      else document.documentElement.removeAttribute('data-theme');
-
-      // ⚠ لون شريط المتصفح بيتغيّر معاه، وإلا هيفضل أخضر
-      // فاتح فوق شاشة غامقة في أندرويد
-      var meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', next === 'dark' ? '#0E1613' : '#16211D');
-
-      try { localStorage.setItem('mz-theme', next); } catch (err) {}
-      paintThemeLabel();
-
-      // ⚠ القايمة بتفضل مفتوحة عن قصد — عشان تشوف الفرق
-      // وإنت شايف الزرار، وتقدر ترجع بضغطة تانية لو ما عجبكش.
-      return;
-    }
+    // ⚠ القايمة بتفضل مفتوحة مع الإضاءة عن قصد — عشان تشوف
+    // الفرق وإنت شايف الزرار، وتقدر ترجع بضغطة تانية لو ما
+    // عجبكش. التبديل نفسه بيحصل في الرأس.
+    if (btn.getAttribute('data-action') === 'theme') return;
 
     menu.open = false;
 
