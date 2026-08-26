@@ -1157,9 +1157,22 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
     async listForBranch(tenantId, branchId) {
       // الأسباب العامة (branch_id = null) متاحة للكل، زائد أسباب
       // الفرع نفسه لو موجود
+      //
+      // ⚠⚠ `eq('tenant_id')` كان **ناقص** — والمعامل بيتاخد
+      // وما بيتستخدمش. النتيجة: القايمة كانت بتجيب أسباب
+      // **كل المحلات في النظام**.
+      //
+      // وده ما بانش كتسريب لأن أسماء الأسباب بذرة موحّدة، فكان
+      // شكله "تكرار في العرض". لكن أول ما عميل يكتب سبب باسم
+      // مورّد أو شخص، كان هيظهر في قايمة محل تاني.
+      //
+      // الدرس: **الدالة اللي بتاخد المحل ولا بتستخدمه في
+      // الاستعلام أخطر من اللي ما بتاخدوش أصلاً** — التوقيع
+      // بيقول إنها محروسة وهي مش محروسة.
       let query = db
         .from('expense_reasons')
         .select('id, tenant_id, name, is_advance, is_inventory, branch_id')
+        .eq('tenant_id', tenantId)
         .is('deleted_at', null)
         .eq('is_active', true)
         .order('name');
