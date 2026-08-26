@@ -644,8 +644,23 @@ const IDLE_SHARED_JS = `
 `;
 
 
+/**
+ * الخطوط.
+ *
+ * ⚠ الأوزان المطلوبة هنا لازم تطابق اللي مستخدم فعلاً في
+ * ملف الأنماط. كل وزن زيادة = ملف بيتحمّل بلا استخدام.
+ *
+ *   Reem Kufi      الشعار وحده — وزن واحد
+ *   El Messiri     العناوين والأزرار والمبالغ (لمسة الخطاط)
+ *   Alexandria     كل النص العادي
+ *   JetBrains Mono الأرقام والسريالات وكلمات المرور
+ *
+ * ⚠ و display=swap مقصودة: النص بيتكتب بخط الجهاز فورًا،
+ * وبيتبدّل أول ما الخط يوصل. من غيرها الشاشة بتفضل بيضا مستنية
+ * الشبكة — وده أسوأ إحساس ممكن في نظام كاشير.
+ */
 const FONTS =
-  'https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@500;600&family=Readex+Pro:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap';
+  'https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@600&family=El+Messiri:wght@500;600;700&family=Alexandria:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap';
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
@@ -693,6 +708,17 @@ ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive"
      في iPhone بدل الشريط الأبيض المقطوع -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
+<!-- ═══ تسخين الاتصال قبل الطلب ═══
+     تحميل الخطوط بيمر على سيرفرين: واحد بيدّي ملف التعليمات
+     (googleapis) وواحد بيدّي الخطوط نفسها (gstatic).
+
+     كان مفتوح للتاني بس، فالمتصفح كان بيقف يفتح اتصال جديد
+     للأول وقت ما يوصله — وفتح الاتصال ده بياخد وقت حقيقي على
+     شبكة موبايل.
+
+     تشبيه: بترنّ على الجيم قبل ما تنزل عشان تتأكد إنه فاتح،
+     بدل ما تركب وتنزل وتستنى قدّام الباب. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="${FONTS}">
 <style>${raw(BASE_CSS)}</style>
