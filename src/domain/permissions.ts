@@ -79,6 +79,21 @@ export const PERMISSIONS = {
 
   // ── الإعلانات ──
   ANNOUNCEMENT_VIEW: 'announcement.view',
+  /**
+   * ⚠ **محدش بيملكها دلوقتي.**
+   *
+   * البثّ بقى لمشغّل المنصّة وحده، والقدرة جاية من **فحص الدور
+   * جوّه دوال قاعدة البيانات** مش من الصلاحية دي.
+   *
+   * ══ ليه مش ديناها لمشغّل المنصّة وخلاص؟ ══
+   * لأن الفحص الأمني الدوري (فحص رقم ٣) بيفشل لو مشغّل المنصّة
+   * اتدّى **أي** صلاحية غير `tenant.view` و`tenant.manage`.
+   * صلاحية جديدة كانت هتخلّي الفحص يرنّ كل يوم الساعة ٣ الفجر.
+   *
+   * ══ وليه سبناها في الكتالوج؟ ══
+   * مسح مفتاح من `permissions` بيكسر أي `user_permissions` قديم
+   * بيشاور عليه. والرجوع عن القرار بيبقى سطر واحد بدل ملف SQL.
+   */
   ANNOUNCEMENT_BROADCAST: 'announcement.broadcast',
 
   // ── التنبيهات وسجل التدقيق ──
@@ -142,7 +157,10 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
     description: 'فتح وإيقاف المحلات وضبط حدودها',
   },
   [PERMISSIONS.ANNOUNCEMENT_VIEW]: { group: 'الإعلانات', description: 'استقبال الإعلانات' },
-  [PERMISSIONS.ANNOUNCEMENT_BROADCAST]: { group: 'الإعلانات', description: 'بثّ إعلان إلزامي' },
+  [PERMISSIONS.ANNOUNCEMENT_BROADCAST]: {
+    group: 'الإعلانات',
+    description: 'بثّ إعلان إلزامي — غير مُسنَدة لأي دور',
+  },
   [PERMISSIONS.ALERT_VIEW]: { group: 'التنبيهات', description: 'عرض تنبيهات النظام' },
   [PERMISSIONS.AUDIT_LOG_VIEW]: { group: 'التدقيق', description: 'عرض سجل التدقيق' },
 };
@@ -161,7 +179,6 @@ export const PERMISSION_META: Record<PermissionKey, { group: string; description
  *   - PROFIT_VIEW_REAL      (الربح الحقيقي)
  *   - RECORD_HARD_DELETE    (الحذف النهائي)
  *   - USER_HARD_DELETE
- *   - ANNOUNCEMENT_BROADCAST
  * الغياب هنا هو التصميم الأمني نفسه، وليس نسياناً.
  */
 export const ROLE_PERMISSIONS: Record<
@@ -177,17 +194,31 @@ export const ROLE_PERMISSIONS: Record<
    *
    * ده مش تواضع — ده اللي بيخلّي محل يوافق يشترك أصلاً. لو صاحب
    * محل عرف إن مورّد النظام شايف هوامشه، مش هيدخّل بياناته.
+   *
+   * ⚠ والبثّ **مش هنا** رغم إنه بقى من مهامه. القدرة جاية من
+   * فحص الدور جوّه دوال القاعدة، عشان الفحص الأمني الدوري يفضل
+   * أخضر. شوف التعليق على `ANNOUNCEMENT_BROADCAST` فوق.
    */
   PLATFORM_ADMIN: [PERMISSIONS.TENANT_VIEW, PERMISSIONS.TENANT_MANAGE],
 
   /**
    * صاحب المحل — صلاحية مطلقة **جوّه محله**.
    *
-   * ⚠ لاحظ استثناء صلاحيات المنصّة تحت. "مطلقة" هنا معناها كل حاجة
-   * في محله، مش كل حاجة في النظام. والفرق ده هو المشروع كله.
+   * ⚠ لاحظ الاستثناءات تحت. "مطلقة" هنا معناها كل حاجة في محله،
+   * مش كل حاجة في النظام. والفرق ده هو المشروع كله.
    */
   SUPER_ADMIN: Object.values(PERMISSIONS).filter(
-    (key) => key !== PERMISSIONS.TENANT_VIEW && key !== PERMISSIONS.TENANT_MANAGE,
+    (key) =>
+      key !== PERMISSIONS.TENANT_VIEW &&
+      key !== PERMISSIONS.TENANT_MANAGE &&
+      // ⚠ البثّ اتشال من صاحب المحل بقرار واعٍ.
+      //
+      // الإعلانات بقت **رسايل من مورّد النظام** لعملائه (صيانة
+      // مجدولة، ميزة جديدة، تنبيه اشتراك) — مش أداة إدارة داخلية.
+      //
+      // ⚠ والسطر ده **ضروري**: من غيره الفلتر بياخد كل المفاتيح،
+      // وأي تثبيت جديد هيرجّع الصلاحية ويكسر القرار بصمت.
+      key !== PERMISSIONS.ANNOUNCEMENT_BROADCAST,
   ),
 
   BRANCH_MANAGER: [
