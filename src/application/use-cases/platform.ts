@@ -25,10 +25,13 @@
 import { Errors } from '../../domain/errors';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
+  AnnouncementAudience,
   AuditLogger,
   AuthenticatedUser,
   Clock,
   PasswordHasher,
+  PlatformAnnouncementRow,
+  TenantBranchOption,
   TenantCensus,
   TenantOverview,
   TenantRepository,
@@ -564,4 +567,194 @@ export async function bootstrapPlatformAdmin(
   });
 
   return created;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  الإعلانات
+//
+//  ══ ⚠ ليه هنا مش في `announcements.ts`؟ ══
+//  لأن ده بقى فعل **منصّة** مش فعل محل. ملف الإعلانات القديم
+//  بيشتغل بمنطق "أنا جوّه محلي": بياخد المحل من جلسة الباثّ.
+//  والبثّ دلوقتي بيعدّي الجدار ده عن قصد.
+//
+//  خلطهم كان هيخلّي ملف واحد فيه منطقين متعاكسين — وأول واحد
+//  يعدّل فيه بكرة هيلخبطهم.
+//
+//  ══ ⚠ ومفيش صلاحية جديدة ══
+//  الحارس بيفحص `tenant.manage` — الصلاحية اللي عند مشغّل
+//  المنصّة أصلاً. وفحص الدور نفسه مكرّر جوّه دوال القاعدة.
+//
+//  السبب: الفحص الأمني الدوري بيفشل لو مشغّل المنصّة اتدّى أي
+//  صلاحية غير `tenant.view` و`tenant.manage`. صلاحية جديدة كانت
+//  هتخلّي الفحص يرنّ كل يوم الساعة ٣ الفجر.
+// ═══════════════════════════════════════════════════════════
+
+export interface BroadcastRequest {
+  /** فاضي = كل المحلات المفعّلة */
+  tenantId?: string | null;
+  audience?: string;
+  branchId?: string | null;
+  title: string;
+  body: string;
+  severity?: string;
+  isMandatory?: boolean;
+  /** فاضي = بلا نهاية */
+  endsAt?: string | null;
+}
+
+const AUDIENCES: AnnouncementAudience[] = [
+  'ALL',
+  'OWNERS_ONLY',
+  'MANAGERS_ONLY',
+  'STAFF_ONLY',
+  'SINGLE_BRANCH',
+];
+
+const SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'] as const;
+
+/** أسماء فروع محل — لملء القائمة عند التوجيه لفرع */
+export async function listTenantBranches(
+  deps: PlatformDeps,
+  actor: AuthenticatedUser,
+  tenantId: string,
+): Promise<TenantBranchOption[]> {
+  assertPlatform(actor, PERMISSIONS.TENANT_VIEW);
+
+  const id = String(tenantId ?? '').trim();
+  if (!id) throw Errors.validation('اختر المحل.');
+
+  return deps.tenants.branchesOf(actor.id, id);
+}
+
+/**
+ * بثّ إعلان.
+ *
+ * ══ ⚠ المحل الفاضي معناه "الكل" — وده قرار خطر بطبيعته ══
+ * زرار واحد بيوصل لكل عملائك. عشان كده السجل بيكتب **عدد
+ * المحلات اللي اتبعتلها فعلاً**، مش النيّة.
+ *
+ * لو بعتّ لـ٤٠ محل بالغلط، السجل هيقول ٤٠ — وتعرف حجم اللي
+ * حصل من غير ما تعدّ بإيدك.
+ */
+export async function broadcast(
+  deps: PlatformDeps,
+  actor: AuthenticatedUser,
+  input: BroadcastRequest,
+): Promise<{ sentCount: number }> {
+  assertPlatform(actor, PERMISSIONS.TENANT_MANAGE);
+
+  const title = String(input.title ?? '').trim();
+  const body = String(input.body ?? '').trim();
+
+  if (title.length < 3) throw Errors.validation('عنوان الإعلان قصير جدًا.');
+  if (title.length > 140) throw Errors.validation('العنوان يجب أن يكون 140 حرفًا أو أقل.');
+  if (body.length < 3) throw Errors.validation('نص الإعلان قصير جدًا.');
+  if (body.length > 4000) throw Errors.validation('النص طويل جدًا (الحد 4000 حرف).');
+
+  const audience = String(input.audience ?? 'ALL').trim().toUpperCase() as AnnouncementAudience;
+  if (!AUDIENCES.includes(audience)) throw Errors.validation('الجمهور غير معروف.');
+
+  const severityRaw = String(input.severity ?? 'INFO').trim().toUpperCase();
+  const severity = SEVERITIES.find((s) => s === severityRaw);
+  if (!severity) throw Errors.validation('درجة الأهمية غير معروفة.');
+
+  const tenantId = String(input.tenantId ?? '').trim() || null;
+  const branchId = String(input.branchId ?? '').trim() || null;
+
+  // ⚠ الفرع معناه محل واحد بالضرورة. "كل المحلات + فرع" جملة
+  // بلا معنى — الفرع بتاع محل بعينه.
+  if (audience === 'SINGLE_BRANCH') {
+    if (!tenantId) throw Errors.validation('التوجيه لفرع يحتاج اختيار المحل.');
+    if (!branchId) throw Errors.validation('اختر الفرع.');
+  }
+
+  let endsAt: Date | null = null;
+  if (input.endsAt) {
+    endsAt = new Date(input.endsAt);
+    if (Number.isNaN(endsAt.getTime())) throw Errors.validation('تاريخ الانتهاء غير صالح.');
+    if (endsAt <= deps.clock.now()) {
+      throw Errors.validation('تاريخ الانتهاء يجب أن يكون في المستقبل.');
+    }
+  }
+
+  const result = await deps.tenants.broadcast({
+    // ⚠ من الجلسة مش من الطلب — والدالة في القاعدة بتفحص الدور
+    // منه تاني قبل ما تكتب أي صف.
+    actorId: actor.id,
+    tenantId,
+    audience,
+    branchId: audience === 'SINGLE_BRANCH' ? branchId : null,
+    title,
+    body,
+    severity,
+    isMandatory: input.isMandatory !== false,
+    endsAt,
+  });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'platform.broadcast',
+    entity: 'Announcement',
+    entityId: tenantId ?? 'ALL_TENANTS',
+    metadata: {
+      // العدد من رد القاعدة مش من حسابنا — الحقيقة مش النيّة
+      sentCount: result.sentCount,
+      scope: tenantId ? 'SINGLE_TENANT' : 'ALL_TENANTS',
+      tenantId,
+      audience,
+      branchId,
+      severity,
+      isMandatory: input.isMandatory !== false,
+      title,
+    },
+  });
+
+  return result;
+}
+
+/**
+ * سجل ما أُرسل.
+ *
+ * ⚠ فيه عمود "كام قراه من كام المفروض يشوفوه". إعلان إلزامي
+ * من غير الرقم ده = بثّ في الفراغ: "٣ قروه" مالهاش معنى من
+ * غير ما تعرف ٣ من كام.
+ */
+export async function listPlatformAnnouncements(
+  deps: PlatformDeps,
+  actor: AuthenticatedUser,
+  limit = 50,
+): Promise<PlatformAnnouncementRow[]> {
+  assertPlatform(actor, PERMISSIONS.TENANT_VIEW);
+  return deps.tenants.announcements(actor.id, Math.min(Math.max(limit, 1), 200));
+}
+
+/**
+ * سحب إعلان اتبعت بالغلط.
+ *
+ * ⚠ حذف ناعم. بيختفي من الشاشات فورًا، والإقرارات اللي اتسجّلت
+ * بتفضل — السجل ما بيتشالش.
+ *
+ * ولاحظ إن السحب **بيشيل صف واحد**. لو البثّ راح لأربعين محل،
+ * دول أربعين صف، وكل واحد بيتسحب لوحده. مقصود: ممكن تسحب من
+ * محل واحد وتسيبه عند الباقيين.
+ */
+export async function withdrawAnnouncement(
+  deps: PlatformDeps,
+  actor: AuthenticatedUser,
+  announcementId: string,
+): Promise<void> {
+  assertPlatform(actor, PERMISSIONS.TENANT_MANAGE);
+
+  const id = String(announcementId ?? '').trim();
+  if (!id) throw Errors.validation('معرّف الإعلان مفقود.');
+
+  await deps.tenants.withdrawAnnouncement(actor.id, id);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'platform.announcement.withdraw',
+    entity: 'Announcement',
+    entityId: id,
+  });
 }
