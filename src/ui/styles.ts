@@ -58,6 +58,60 @@ export const BASE_CSS = `
   --font-mono:'IBM Plex Mono',ui-monospace,monospace;
 
   --r:10px; --r-sm:6px; --tap:54px; --pad:16px;
+
+  /* ═══ الحركة ═══
+     منحنى واحد لكل النظام. الأرقام قصيرة عن قصد: الحركة هنا
+     **رد فعل** على لمسة، مش عرض. أي حاجة فوق 200ms على شاشة
+     كاشير بتتحس بطء مش سلاسة. */
+  --ease:cubic-bezier(.2,.7,.3,1);
+  --t-fast:110ms; --t:170ms;
+
+  /* عمق الظل — بيتغيّر في الوضع الليلي لأن الظل الأسود
+     على خلفية غامقة مش بيبان */
+  --shadow:0 1px 2px rgba(22,33,29,.06), 0 2px 8px rgba(22,33,29,.05);
+  --shadow-lift:0 2px 4px rgba(22,33,29,.08), 0 8px 20px rgba(22,33,29,.09);
+
+  /* ⚠ المسافة تحت آخر زرار.
+     الشريط السفلي ~70px، وكانت 96 — يعني 26px بس تحت آخر
+     زرار، فبيتحسّ لازق. 128 بتدّي راحة حقيقية، والقيمة هنا
+     عشان تتغيّر في مكان واحد لكل الصفحات. */
+  --shell-bottom:128px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   الوضع الليلي
+
+   ⚠ إعادة تعريف **التوكنات وبس** — ولا قاعدة تنسيق واحدة
+   اتكررت. ده اللي بيخلّي الوضع الليلي سطور معدودة بدل نسخة
+   تانية من الملف كله.
+
+   ══ والألوان مش مقلوبة، هي **متعادة** ══
+   قلب الفاتح للغامق بيطلّع رمادي ميّت. الخلفية هنا مشتقّة من
+   الأخضر-الأسود بتاع الهوية (#16211D) — يعني الوضع الليلي
+   بيحس إنه نفس المنتج في إضاءة تانية، مش تطبيق تاني.
+
+   ══ ⚠ والنحاسي اتفتح شوية ══
+   #B08D3D على خلفية غامقة تباينه ضعيف. #C9A557 بيحافظ على
+   نفس الشخصية ويعدّي عتبة القراءة.
+
+   ══ والأخضر الوظيفي زي ما هو تقريبًا ══
+   لأنه لون الأزرار، ولو اتغيّر الموظّف هيبطّل يعرف إيه اللي
+   بيتضغط — وهي القاعدة الحاكمة في هويتك.
+   ═══════════════════════════════════════════════════════════ */
+[data-theme="dark"]{
+  --ground:#0E1613; --ground-soft:#1A2622;
+  --surface:#121C18; --card:#18241F; --line:#2C3A34; --line-soft:#222E29;
+  --ink:#E8EDE9; --ink-soft:#9FB0A7; --ink-faint:#6E8078;
+
+  --brand:#C9A557; --brand-soft:#DBBC77; --brand-wash:#241F14; --brand-line:#4A3F26;
+
+  --credit:#17936B; --credit-deep:#0F7052; --credit-wash:#12261F;
+  --debit:#C4485C; --debit-wash:#2A171B;
+
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-lift:0 2px 4px rgba(0,0,0,.5), 0 8px 20px rgba(0,0,0,.4);
+
+  color-scheme:dark;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;font-family:var(--font-ui);color:var(--ink);
@@ -180,7 +234,13 @@ button{font:inherit}
 .menu-item{display:block;width:100%;text-align:start;padding:11px 12px;font-size:15px;
   color:var(--ink);background:none;border:none;border-radius:var(--r-sm);cursor:pointer}
 .menu-item:hover{background:var(--surface)}
+.menu-item:active{background:var(--surface)}
 .menu-item[data-danger]{color:var(--debit)}
+
+/* ⚠ اللافتة بتقول الوضع الحالي، فبتتكتب بالنحاسي — لون
+   الهوية والحالة، مش لون الإجراء. الأخضر الوظيفي محجوز
+   لأزرار الفعل وحدها، وده قانون هويتك. */
+.menu-note{float:inline-end;font-size:13px;color:var(--brand);font-weight:600}
 
 /* ═══ شريط الانتباه ═══ بيقول حاجة واحدة: فيه حاجة مستنياك ولا لأ */
 /* ⚠ قاعدة عامة إلزامية — اقراها قبل ما تضيف أي عنصر بـ hidden
@@ -329,9 +389,11 @@ button{font:inherit}
 .tabbar a[aria-current="page"]{color:var(--brand);border-top-color:var(--brand)}
 .tabbar-icon{display:block;font-family:var(--font-mono);font-size:17px;margin-bottom:2px}
 /* الجوانب مهمة في الوضع الأفقي: النوتش بياكل من الشمال أو اليمين */
+/* ⚠ المسافة السفلية من متغيّر — بتتغيّر لكل الصفحات مرة واحدة */
 .shell{max-width:640px;margin:0 auto;
   padding:14px calc(var(--pad) + env(safe-area-inset-right))
-          96px calc(var(--pad) + env(safe-area-inset-left))}
+          calc(var(--shell-bottom) + env(safe-area-inset-bottom))
+          calc(var(--pad) + env(safe-area-inset-left))}
 
 /* ═══ الحقول ═══ */
 .field{margin-bottom:15px}
@@ -665,5 +727,65 @@ textarea.field-input{height:auto;padding:10px 12px;line-height:1.7;resize:vertic
 }
 
 @media (max-width:360px){.tiles{grid-template-columns:1fr}}
+/* ═══════════════════════════════════════════════════════════
+   الاستجابة للّمس
+
+   ══ ⚠ المشكلة اللي بيحلّها القسم ده ══
+   على الموبايل مفيش hover. فالزرار اللي كل تنسيقه في
+   حالة hover بيتحسّ **ميّت** — بتدوس وما بيحصلش حاجة لحد ما
+   الصفحة ترد.
+
+   والرد ده ممكن ياخد نص ثانية على شبكة ضعيفة. في النص ده
+   الموظّف مش عارف: أنا دوست ولا لأ؟ فبيدوس تاني.
+
+   ══ الحل: :active — بيشتغل لحظة اللمس ══
+   الانكماش البسيط (scale) بيقول "استلمت" فورًا، من غير ما
+   يستنى الخادم. وهو الفرق بين شاشة بتحس إنها بتردّ وشاشة
+   بتحس إنها واقفة.
+
+   ══ والحركة على transform وopacity بس ══
+   دول الاتنين اللي المتصفح بيحرّكهم على كارت الشاشة. أي حاجة
+   تانية (عرض، ارتفاع، ظل) بتجبره يعيد حساب التخطيط كل إطار،
+   والنتيجة تهتهة على موبايل متوسط.
+
+   ⚠ وكل ده بيتلغي تلقائيًا لو المستخدم مفعّل تقليل الحركة —
+   القاعدة في آخر الملف.
+   ═══════════════════════════════════════════════════════════ */
+
+.btn-primary,.btn-mini,.tile,.panel>summary,.tabbar a{
+  transition:background var(--t-fast) var(--ease),
+             border-color var(--t-fast) var(--ease),
+             color var(--t-fast) var(--ease),
+             transform var(--t-fast) var(--ease),
+             box-shadow var(--t) var(--ease)}
+
+.btn-primary:active:not(:disabled){transform:scale(.985)}
+.btn-mini:active:not(:disabled){transform:scale(.97)}
+.tile:active{transform:scale(.985)}
+
+/* اللوحة بتاخد ظل خفيف لما تتفتح — إشارة إنها الجزء النشط */
+.panel[open]{box-shadow:var(--shadow)}
+.panel>summary:active{background:var(--surface)}
+
+/* ⚠ الحقل بيتوسّع بحلقة بدل ما يقفز.
+   التغيير في box-shadow مش في border-width — عرض الحد لو
+   اتغيّر، العنصر بيكبر والصفحة كلها تتزحلق تحته. */
+.field-input,.field-area{
+  transition:border-color var(--t-fast) var(--ease),
+             box-shadow var(--t-fast) var(--ease)}
+.field-input:focus,.field-area:focus{
+  box-shadow:0 0 0 3px var(--credit-wash)}
+
+/* الكروت بتاخد عمق خفيف — بيفصلها عن الخلفية في الوضعين */
+.tile,.panel,.bal-card{box-shadow:var(--shadow)}
+
+/* ═══ ظهور المحتوى ═══
+   ⚠ حركة واحدة بس في النظام كله، وبسيطة عن قصد.
+   الشاشة اللي كل حاجة فيها بتطير بتتحس بطيئة حتى لو أسرع. */
+@media (prefers-reduced-motion:no-preference){
+  .shell>*{animation:rise var(--t) var(--ease) both}
+  @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+}
+
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 `;
