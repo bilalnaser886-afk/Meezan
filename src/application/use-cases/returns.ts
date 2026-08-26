@@ -17,6 +17,9 @@
  *  3) المرتجع **بند بند**، مش الفاتورة كلها. الزبون بيرجّع
  *     الجراب ويخلّي الموبايل — ودي الحالة الشائعة مش الاستثناء.
  *
+ *  4) **بوّابة الضمان** — إضافة جديدة. المرتجع بره مدة الضمان
+ *     محتاج موافقة صاحب المحل صراحةً.
+ *
  * ══ الفلوس ══
  * بعت بـ1000 ورجّعت 900؟ الـ100 **ما خرجتش من الدرج أصلاً**.
  * فحركة الخزينة بتسجّل 900 بس، والرسوم بتتخزّن على سجل المرتجع.
@@ -43,11 +46,13 @@ import type {
   SaleRepository,
   TreasuryRepository,
 } from '../ports';
+import type { WarrantyRepository, WarrantyStatus } from '../ports';
 
 export interface ReturnDeps {
   returns: ReturnRepository;
   sales: SaleRepository;
   treasuries: TreasuryRepository;
+  warranty: WarrantyRepository;
   clock: Clock;
   audit: AuditLogger;
 }
@@ -60,6 +65,29 @@ export interface CreateReturnRequest {
   items: ReturnLineInput[];
   reason?: string | null;
   returnDate?: string | null;
+  /**
+   * تجاوز الضمان — صاحب المحل وحده.
+   *
+   * ⚠ ما بيتبعتش تلقائيًا. الواجهة بتوري لصاحب المحل إن الضمان
+   * انتهى وبتطلب تأكيد صريح، وساعتها بس بتبعت العلم ده.
+   *
+   * لو اتبعت من حد مش صاحب المحل، بيترفض هنا وبيترفض تاني جوّه
+   * دالة قاعدة البيانات.
+   */
+  overrideWarranty?: boolean;
+}
+
+/** البنود + حالة الضمان في رحلة واحدة */
+export interface ReturnContext {
+  lines: ReturnableLine[];
+  warranty: WarrantyStatus;
+  /**
+   * هل اللي فاتح الشاشة يقدر يتجاوز الضمان؟
+   *
+   * الواجهة بتقرا منها: تعرض زرار التأكيد ولا تعرض رسالة رفض.
+   * وهي **مش** الحماية — الحماية في الفحصين تحت.
+   */
+  canOverride: boolean;
 }
 
 // ─────────── القراءة ───────────
@@ -86,6 +114,42 @@ export async function getReturnableLines(
   return deps.returns.returnableLines(saleId);
 }
 
+/**
+ * سياق شاشة الاسترجاع كاملًا — البنود والضمان مع بعض.
+ *
+ * ══ ليه رحلة واحدة؟ ══
+ * الشاشة محتاجة الاتنين قبل ما تعرض أي حاجة. لو جبناهم في
+ * رحلتين، الموظّف هيشوف البنود الأول وبعدين تظهرله رسالة الضمان
+ * فجأة — والزبون واقف قدامه.
+ *
+ * والأهم: **الفحص بيحصل مرة واحدة على الاتنين**. لو كل واحد
+ * ليه مساره، هييجي يوم يتعدّل فحص في واحد ويفضل القديم في التاني.
+ */
+export async function getReturnContext(
+  deps: ReturnDeps,
+  actor: AuthenticatedUser,
+  saleId: string,
+): Promise<ReturnContext> {
+  assertRefundAccess(actor);
+
+  const sale = await deps.sales.findById(saleId, { includeCost: false });
+  if (!sale) throw Errors.notFound('الفاتورة');
+  assertSaleScope(actor, sale.tenantId, sale.branchId);
+
+  const [lines, warranty] = await Promise.all([
+    deps.returns.returnableLines(saleId),
+    deps.warranty.status(saleId),
+  ]);
+
+  if (!warranty) throw Errors.notFound('الفاتورة');
+
+  return {
+    lines,
+    warranty,
+    canOverride: actor.roleKey === 'SUPER_ADMIN',
+  };
+}
+
 // ─────────── الاسترجاع ───────────
 
 export async function createReturn(
@@ -100,6 +164,17 @@ export async function createReturn(
   const sale = await deps.sales.findById(saleId, { includeCost: false });
   if (!sale) throw Errors.notFound('الفاتورة');
   assertSaleScope(actor, sale.tenantId, sale.branchId);
+
+  // ─── ⚠ بوّابة الضمان ───
+  //
+  // العلم ده بيمرّ للقاعدة، والقاعدة هي اللي بتقرر لو الضمان
+  // انتهى فعلاً ولا لأ. لكن **مين يحق له يتجاوز** بيتفحص هنا
+  // كمان — عشان الرسالة تطلع عربية واضحة بدل خطأ من القاعدة،
+  // وعشان الحماية تفضل موجودة لو حد نادى الدالة من مكان تاني.
+  const overrideWarranty = input.overrideWarranty === true;
+  if (overrideWarranty && actor.roleKey !== 'SUPER_ADMIN') {
+    throw Errors.forbidden('تجاوز الضمان لصاحب المحل وحده.');
+  }
 
   // ─── البنود ───
   if (!Array.isArray(input.items) || input.items.length === 0) {
@@ -162,6 +237,7 @@ export async function createReturn(
     items,
     reason,
     returnDate,
+    overrideWarranty,
   });
 
   await deps.audit.record({
@@ -179,6 +255,13 @@ export async function createReturn(
       movementId: result.movementId,
       returnDate,
       reason,
+      // ⚠ التجاوز بيتسجّل بالقيمة اللي القاعدة رجّعتها مش اللي
+      // إحنا بعتناها. الطلب ممكن يبعت `true` والفاتورة تكون
+      // لسه في الضمان — ساعتها مفيش تجاوز حصل، والسجل لازم
+      // يقول الحقيقة مش النيّة.
+      warrantyOverridden: result.warrantyOverridden,
+      saleWarrantyDays: sale.warrantyDays ?? null,
+      saleExitDate: sale.exitDate,
     },
   });
 
@@ -269,7 +352,7 @@ export async function reviewQuarantine(
 // ─────────── حراسة ───────────
 
 /**
- * ⚠ `sales.refund` مش موجودة عند المندوب في الأدوار الافتراضية.
+ * ⚠ `sales.refund` موجودة عند المندوب بقرار واعٍ (ملف 18).
  * الفحص هنا بيتكرّر مع الحارس عن قصد: لو حد نادى الدالة دي من
  * مكان تاني بكرة من غير ما يعدّي على الحارس، الحماية لسه موجودة.
  */
