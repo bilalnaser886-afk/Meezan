@@ -697,7 +697,12 @@ export async function listMovements(
   // ⚠ كل واحدة فيهم بتاخد المحل صراحةً. مفيش واحدة بتستنتجه.
   const [movements, treasuries, reasons, team] = await Promise.all([
     deps.movements.list({ tenantId: actor.tenantId, branchId: branchScope, status, limit: 50 }),
-    deps.treasuries.listBalances(actor.tenantId, branchScope),
+    // ⚠ `summary` مش `listBalances` — عشان اسم الفرع يوصل.
+    //
+    // بعد ما خزينة كل فرع بقت اسمها "نقدي"، الحركة اللي مكتوب
+    // جنبها "نقدي" وحدها ما بتقولش لصاحب المحل حصلت فين.
+    // والدالتين بيقروا من نفس المصدر، فمفيش تكلفة زيادة.
+    deps.treasuries.summary(actor.tenantId, branchScope),
     deps.expenseReasons.listForBranch(actor.tenantId, actor.branchId),
     deps.users.listInScope(listScopeFor(actor)),
   ]);
@@ -725,9 +730,29 @@ export async function listMovements(
  * ⚠ ومُصدَّرة عشان كل شاشة تستخدم **نفس** اللافتة. لو كل شاشة
  * ركّبتها بطريقتها، هتلاقي نفس الخزينة باسمين مختلفين.
  */
-export function treasuryLabel(t: { name: string; provider?: string | null }): string {
+export function treasuryLabel(t: {
+  name: string;
+  provider?: string | null;
+  branchName?: string | null;
+}): string {
+  const parts = [t.name];
+
   const provider = t.provider?.trim();
-  return provider ? `${t.name} — ${provider}` : t.name;
+  if (provider) parts.push(provider);
+
+  // ⚠ الفرع بيتضاف **لما يكون معروف بس**.
+  //
+  // بعد ما خزينة كل فرع بقت اسمها "نقدي"، صاحب المحل بيشوف
+  // "نقدي · نقدي · نقدي" في أي قايمة مسطّحة. الفرع هو اللي
+  // بيفرّق.
+  //
+  // ومدير الفرع ما بيشوفش الفرع لأن قايمته فرعه بس — إضافته
+  // كانت هتبقى تكرار على كل سطر بلا فايدة. القاعدة: **اعرض
+  // اللي بيفرّق، مش كل اللي تعرفه.**
+  const branch = t.branchName?.trim();
+  if (branch) parts.push(branch);
+
+  return parts.join(' — ');
 }
 
 export async function listExpenseReasons(deps: TreasuryDeps, actor: AuthenticatedUser) {
