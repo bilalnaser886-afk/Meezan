@@ -5843,6 +5843,78 @@ export function platformPage(data: PlatformPageData): Html {
     </div>
   </details>
 
+  <details class="panel">
+    <summary>بثّ إعلان</summary>
+    <div class="panel-body">
+      <p class="muted">
+        رسالة من مورّد النظام لعملائه. تظهر للمستهدفين كنافذة إلزامية
+        لا تُغلق قبل الضغط على «قرأت وفهمت».
+      </p>
+
+      <div class="field">
+        <label class="field-label" for="an-tenant">المحل</label>
+        <select class="field-input" id="an-tenant">
+          <option value="">— كل المحلات المفعّلة —</option>
+          ${data.tenants
+            .filter((t) => t.isActive)
+            .map((t) => html`<option value="${t.id}">${t.name} (${t.code})</option>`)}
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="an-aud">لمين</label>
+        <select class="field-input" id="an-aud">
+          <option value="ALL">كل العاملين في المحل</option>
+          <option value="OWNERS_ONLY">صاحب المحل وحده</option>
+          <option value="MANAGERS_ONLY">مديري الفروع</option>
+          <option value="STAFF_ONLY">مندوبي المبيعات</option>
+          <option value="SINGLE_BRANCH">فرع بعينه</option>
+        </select>
+      </div>
+
+      <div class="field" id="an-branch-field" hidden>
+        <label class="field-label" for="an-branch">الفرع</label>
+        <select class="field-input" id="an-branch">
+          <option value="">اختر المحل أولًا</option>
+        </select>
+        <p class="field-hint">التوجيه لفرع يتطلّب اختيار محل واحد.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="an-sev">الأهمية</label>
+        <select class="field-input" id="an-sev">
+          <option value="INFO">عادي</option>
+          <option value="WARNING">تنبيه</option>
+          <option value="CRITICAL">حرج</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="an-title">العنوان</label>
+        <input class="field-input" id="an-title" type="text" maxlength="140">
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="an-body">النص</label>
+        <textarea class="field-input" id="an-body" rows="4" maxlength="4000"></textarea>
+      </div>
+
+      <p class="field-hint" id="an-warn" hidden></p>
+
+      <button class="btn-primary" type="button" id="an-go">بثّ</button>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>سجل الإعلانات</summary>
+    <div class="panel-body">
+      <p class="muted">
+        العدّاد يقول: كم شخصًا ضغط «قرأت وفهمت» من إجمالي من يفترض أن يروه.
+      </p>
+      <div id="an-list"><p class="field-hint">جارٍ التحميل…</p></div>
+    </div>
+  </details>
+
   <details class="panel" open>
     <summary>المحلات (${String(data.tenants.length)})</summary>
     <div class="panel-body">
@@ -6329,6 +6401,221 @@ ${MENU_JS}
       }
     });
   }
+
+  // ══════════ الإعلانات ══════════
+
+  var anTenant = document.getElementById('an-tenant');
+  var anAud    = document.getElementById('an-aud');
+  var anBranch = document.getElementById('an-branch');
+  var anBrField= document.getElementById('an-branch-field');
+  var anWarn   = document.getElementById('an-warn');
+  var anList   = document.getElementById('an-list');
+
+  function anSay(message, ok) {
+    // ⚠ الاسم pmsg مش pfmsg — العنصر ده موجود في أول الصفحة.
+    // اسم غلط هنا كان هيخلّي كل رسايل الإعلانات تضيع بصمت:
+    // الدالة بترجع من غير ما تعمل حاجة، والمستخدم يفتكر إن
+    // الزرار مش شغّال.
+    var box = document.getElementById('pmsg');
+    var txt = document.getElementById('pmsg-text');
+    if (!box || !txt) return;
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    txt.textContent = message;
+  }
+
+  /**
+   * ⚠ تحذير قبل الضغط مش بعده.
+   *
+   * زرار واحد بيوصل لكل عملائك. اللافتة دي بتقول العدد قبل ما
+   * تضغط — مش رسالة "تم البثّ لأربعين محل" بعد ما تخلص.
+   */
+  function anSync() {
+    if (!anAud || !anTenant) return;
+
+    var toBranch = anAud.value === 'SINGLE_BRANCH';
+    if (anBrField) anBrField.hidden = !toBranch;
+
+    var all = anTenant.value === '';
+    if (anWarn) {
+      if (all) {
+        var n = anTenant.options.length - 1;
+        anWarn.hidden = false;
+        anWarn.textContent = 'سيصل هذا الإعلان إلى ' + n + ' محلًا.';
+      } else {
+        anWarn.hidden = true;
+      }
+    }
+
+    // الفرع يحتاج محلًا واحدًا — والقايمة بتتحمّل عند الحاجة بس
+    if (toBranch && !all) loadBranches(anTenant.value);
+  }
+
+  async function loadBranches(tenantId) {
+    if (!anBranch) return;
+    anBranch.textContent = '';
+
+    try {
+      var res = await fetch('/api/platform/' + encodeURIComponent(tenantId) + '/branches',
+        { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) return;
+
+      for (var i = 0; i < (d.branches || []).length; i++) {
+        var o = document.createElement('option');
+        o.value = d.branches[i].branchId;
+        o.textContent = d.branches[i].branchName;
+        anBranch.appendChild(o);
+      }
+    } catch (err) {
+      // الفرع اختياري في الواجهة؛ الخادم بيرفض لو فاضي
+      anBranch.textContent = '';
+    }
+  }
+
+  if (anAud) anAud.addEventListener('change', anSync);
+  if (anTenant) anTenant.addEventListener('change', anSync);
+  anSync();
+
+  var anGo = document.getElementById('an-go');
+  if (anGo) {
+    anGo.addEventListener('click', async function () {
+      var title = document.getElementById('an-title');
+      var body  = document.getElementById('an-body');
+      if (!title || !body) return;
+
+      if (String(title.value || '').trim().length < 3) {
+        anSay('اكتب عنوان الإعلان.', false); return;
+      }
+      if (String(body.value || '').trim().length < 3) {
+        anSay('اكتب نص الإعلان.', false); return;
+      }
+
+      // ⚠ تأكيد صريح للبثّ الشامل. الفعل ده ما بيترجعش فيه
+      // بضغطة — لازم تسحبه من كل محل على حدة.
+      var all = anTenant && anTenant.value === '';
+      if (all) {
+        var n = anTenant.options.length - 1;
+        if (!confirm('سيصل الإعلان إلى ' + n + ' محلًا. تأكيد؟')) return;
+      }
+
+      anGo.disabled = true;
+      try {
+        var res = await fetch('/api/platform/announcements', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            tenantId: anTenant ? (anTenant.value || null) : null,
+            audience: anAud ? anAud.value : 'ALL',
+            branchId: anBranch ? (anBranch.value || null) : null,
+            title: title.value,
+            body: body.value,
+            severity: (document.getElementById('an-sev') || {}).value || 'INFO',
+            isMandatory: true
+          })
+        });
+        var d = await res.json().catch(function () { return null; });
+
+        if (res.ok && d && d.ok) {
+          anSay(d.message || 'تم البثّ.', true);
+          title.value = '';
+          body.value = '';
+          loadAnnouncements();
+          return;
+        }
+        anSay((d && d.error && d.error.message) || 'تعذّر البثّ.', false);
+      } catch (err) {
+        anSay('انقطع الاتصال. حدّث الصفحة وتأكّد قبل إعادة المحاولة.', false);
+      } finally {
+        anGo.disabled = false;
+      }
+    });
+  }
+
+  async function loadAnnouncements() {
+    if (!anList) return;
+    anList.textContent = '';
+    var p = document.createElement('p');
+    p.className = 'field-hint';
+    p.textContent = 'جارٍ التحميل…';
+    anList.appendChild(p);
+
+    try {
+      var res = await fetch('/api/platform/announcements', { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+      if (!res.ok || !d || !d.ok) { p.textContent = 'تعذّر التحميل.'; return; }
+
+      var items = d.announcements || [];
+      if (items.length === 0) { p.textContent = 'لم يُبَثّ شيء بعد.'; return; }
+
+      anList.textContent = '';
+      for (var i = 0; i < items.length; i++) {
+        var a = items[i];
+        var row = document.createElement('div');
+        row.className = 'mv-row';
+
+        var t = document.createElement('span');
+        t.className = 'mv-title';
+        t.textContent = a.title;
+        row.appendChild(t);
+
+        var sub = document.createElement('span');
+        sub.className = 'mv-sub';
+        sub.textContent = a.tenantName + ' · ' + audLabel(a.audience) +
+          (a.branchName ? ' · ' + a.branchName : '') +
+          ' · قرأه ' + a.readCount + ' من ' + a.targetCount;
+        row.appendChild(sub);
+
+        var del = document.createElement('button');
+        del.className = 'btn-mini';
+        del.type = 'button';
+        del.setAttribute('data-withdraw', a.id);
+        del.textContent = 'سحب';
+        row.appendChild(del);
+
+        anList.appendChild(row);
+      }
+    } catch (err) {
+      p.textContent = 'تعذّر الاتصال بالخادم.';
+    }
+  }
+
+  function audLabel(a) {
+    if (a === 'ALL') return 'الكل';
+    if (a === 'OWNERS_ONLY') return 'صاحب المحل';
+    if (a === 'MANAGERS_ONLY') return 'مديري الفروع';
+    if (a === 'STAFF_ONLY') return 'المناديب';
+    if (a === 'SINGLE_BRANCH') return 'فرع بعينه';
+    return a;
+  }
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-withdraw]') : null;
+    if (!btn) return;
+
+    if (!confirm('سحب الإعلان؟ هيختفي من الشاشات فورًا.')) return;
+
+    btn.disabled = true;
+    try {
+      var res = await fetch('/api/platform/announcements/' +
+        encodeURIComponent(btn.getAttribute('data-withdraw')), {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      var d = await res.json().catch(function () { return null; });
+
+      if (res.ok && d && d.ok) { anSay(d.message || 'تم السحب.', true); loadAnnouncements(); return; }
+      anSay((d && d.error && d.error.message) || 'تعذّر السحب.', false);
+    } catch (err) {
+      anSay('تعذّر الاتصال بالخادم.', false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  loadAnnouncements();
 })();
 `;
 }
