@@ -48,9 +48,12 @@ import {
   updateProduct,
 } from '../application/use-cases/products';
 import {
+  DEFAULT_WARRANTY_DAYS,
   createSale,
   getSale,
+  getSaleWarranty,
   listSales,
+  setSaleWarranty,
   updateSaleExitDate,
 } from '../application/use-cases/sales';
 import { getIncomeReport } from '../application/use-cases/reports';
@@ -82,10 +85,23 @@ import {
 } from '../application/use-cases/transfers';
 import {
   createReturn,
+  getReturnContext,
   getReturnableLines,
   listQuarantine,
   reviewQuarantine,
 } from '../application/use-cases/returns';
+import {
+  listPurchases,
+  listSupplierNames,
+  recordPurchase,
+} from '../application/use-cases/purchases';
+import {
+  closeDay,
+  getClosing,
+  listClosings,
+  previewClosing,
+  setClosingRoles,
+} from '../application/use-cases/closings';
 import {
   bootstrapPlatformAdmin,
   createTenant,
@@ -103,6 +119,7 @@ import {
 } from '../application/use-cases/customers';
 import {
   MoneyError,
+  normalizeDigits,
   parseCostToPiastres,
   parseCount,
   parseMoneyToPiastres,
@@ -893,6 +910,16 @@ interface SaleBody {
   customerName?: string | null;
   customerPhone?: string | null;
   exitDate?: string | null;
+  /**
+   * ⚠ `undefined` (الحقل مش مبعوت) غير `null` (اتبعت فاضي).
+   *
+   * الأول معناه "الشاشة قديمة أو ما سألتش" فبيتطبّق الافتراضي.
+   * التاني معناه "الموظّف فضّى الخانة" = بلا ضمان.
+   *
+   * عشان كده بنمرّر القيمة **زي ما هي** من غير `?? null` —
+   * الـ`??` كانت هتلغي الفرق ده تمامًا.
+   */
+  warrantyDays?: number | string | null;
 }
 
 /**
@@ -929,6 +956,7 @@ saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), as
     customerName: body.customerName ?? null,
     customerPhone: body.customerPhone ?? null,
     exitDate: body.exitDate ?? null,
+    warrantyDays: readWarrantyInput(body.warrantyDays),
   });
 
   return c.json(
@@ -942,6 +970,69 @@ saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), as
     201,
   );
 });
+
+/**
+ * الضمان الافتراضي — الشاشة بتبدأ بيه.
+ *
+ * ⚠ الرقم بيتقرا من حالة الاستخدام مش مكتوب في الواجهة.
+ * لو اتكتب في المكانين، هييجي يوم يتغيّر في واحد ويفضل القديم
+ * في التاني — والفاتورة تقول حاجة والشاشة تقول حاجة.
+ */
+saleRoutes.get(
+  '/warranty/default',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE], touchActivity: false }),
+  (c) => c.json({ ok: true, days: DEFAULT_WARRANTY_DAYS }),
+);
+
+/** حالة ضمان فاتورة */
+saleRoutes.get(
+  '/:id/warranty',
+  requireAuth({
+    requireAny: [
+      PERMISSIONS.SALES_VIEW_OWN,
+      PERMISSIONS.SALES_VIEW_BRANCH,
+      PERMISSIONS.SALES_VIEW_ALL,
+    ],
+    touchActivity: false,
+  }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const container = buildContainer(c.env);
+    const warranty = await getSaleWarranty(container.sales, c.get('user'), id);
+
+    return c.json({ ok: true, warranty });
+  },
+);
+
+/**
+ * تعديل الضمان بعد البيع — صاحب المحل وحده.
+ *
+ * ⚠ مفيش صلاحية مخصّصة في الحارس عن قصد: الفحص على الدور جوّه
+ * حالة الاستخدام وجوّه دالة القاعدة. الحارس هنا بيتأكد إنك
+ * بتشوف الفواتير أصلاً، والباقي جوّه.
+ */
+saleRoutes.patch(
+  '/:id/warranty',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const body = await readJson<{ warrantyDays?: number | string | null }>(c);
+
+    const container = buildContainer(c.env);
+    const change = await setSaleWarranty(
+      container.sales,
+      c.get('user'),
+      id,
+      readWarrantyInput(body.warrantyDays),
+    );
+
+    return c.json({ ok: true, ...change, message: 'تم تعديل الضمان.' });
+  },
+);
 
 /**
  * قائمة الفواتير.
@@ -1032,6 +1123,31 @@ returnRoutes.get(
 );
 
 /**
+ * سياق شاشة الاسترجاع — البنود وحالة الضمان في رحلة واحدة.
+ *
+ * ⚠ ليه مسار جديد بدل ما نوسّع اللي فوق؟
+ * عشان القديم لسه مستخدم في أماكن تانية، وتغيير شكل رده كان
+ * هيكسرها بصمت. الجديد بيزيد ما بيستبدلش.
+ *
+ * والشاشة بتنادي ده عشان تعرف تعرض إيه **قبل** الضغط: زرار
+ * استرجاع عادي، ولا تحذير ضمان منتهي وزرار تأكيد لصاحب المحل،
+ * ولا رسالة رفض للمندوب.
+ */
+returnRoutes.get(
+  '/context/:id',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_REFUND], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الفاتورة مفقود.');
+
+    const container = buildContainer(c.env);
+    const context = await getReturnContext(container.returns, c.get('user'), id);
+
+    return c.json({ ok: true, ...context });
+  },
+);
+
+/**
  * تنفيذ الاسترجاع.
  *
  * ⚠ صلاحية `sales.refund` مش عند المندوب. اللي بيبيع مش هو اللي
@@ -1049,10 +1165,12 @@ returnRoutes.post(
       items?: Array<{ saleItemId?: string; quantity?: number; unitRefundPiastres?: number }>;
       reason?: string | null;
       returnDate?: string | null;
+      overrideWarranty?: boolean;
     }>(c);
 
     const container = buildContainer(c.env);
     const result = await createReturn(container.returns, c.get('user'), id, {
+      overrideWarranty: body.overrideWarranty === true,
       treasuryId: String(body.treasuryId ?? ''),
       items: (body.items ?? []).map((line) => ({
         saleItemId: String(line?.saleItemId ?? ''),
@@ -1747,3 +1865,231 @@ platformRoutes.post('/bootstrap', async (c) => {
 
   return c.json({ ok: true, id: created.id }, 201);
 });
+
+
+// ═══════════════════════════════════════════════════════════
+//  شراء البضاعة
+//
+//  ⚠ مسار منفصل عن الخزينة رغم إن النتيجة حركة خزينة.
+//
+//  السبب: العملية دي بتكتب **صفّين** في معاملة واحدة (الحركة
+//  والبيان). لو حطّيناها في `treasuryRoutes` كنوع مصروف، كان
+//  لازم شاشة الخزينة تعرف تفرّق بين مصروف عادي ومصروف بيان —
+//  ومن غير ما تفرّق، مصروف "شراء بضاعة" يتسجّل بلا بيان وترجع
+//  المشكلة الأصلية.
+//
+//  ⚠ ولاحظ إن ده ما بيزوّدش المخزون. التوريد لسه من شاشة
+//  المنتجات بإيدك.
+// ═══════════════════════════════════════════════════════════
+
+export const purchaseRoutes = new Hono<AppBindings>();
+
+/** أسماء الموردين — بلا أي رقم مالي، لملء القائمة المنسدلة */
+purchaseRoutes.get(
+  '/suppliers',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const suppliers = await listSupplierNames(container.purchases, c.get('user'));
+    return c.json({ ok: true, suppliers });
+  },
+);
+
+purchaseRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const purchases = await listPurchases(
+      container.purchases,
+      c.get('user'),
+      c.req.query('from') ?? null,
+      c.req.query('to') ?? null,
+    );
+    return c.json({ ok: true, purchases });
+  },
+);
+
+/**
+ * تسجيل شراء.
+ *
+ * ⚠ حالة الاعتماد بترجع من القاعدة مش من الحارس. المندوب
+ * حركته بتتسجّل **معلّقة** والدرج ما بيتغيّرش لحد ما مدير
+ * يعتمدها — والرسالة لازم تقول كده صراحةً، وإلا هيفتكر إن
+ * الفلوس خرجت.
+ */
+purchaseRoutes.post(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }),
+  async (c) => {
+    const body = await readJson<{
+      treasuryId?: string;
+      amount?: string;
+      itemName?: string;
+      quantity?: string | number;
+      supplierId?: string | null;
+      note?: string | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await recordPurchase(container.purchases, c.get('user'), {
+      treasuryId: String(body.treasuryId ?? ''),
+      amount: String(body.amount ?? ''),
+      itemName: String(body.itemName ?? ''),
+      quantity: String(body.quantity ?? ''),
+      supplierId: body.supplierId ?? null,
+      note: body.note ?? null,
+    });
+
+    return c.json(
+      {
+        ok: true,
+        ...result,
+        message:
+          result.status === 'APPROVED'
+            ? 'تم تسجيل الشراء وخصمه من الخزينة.'
+            : 'تم تسجيل الشراء. مستنّي اعتماد المدير ولسه ما اتخصمش.',
+      },
+      201,
+    );
+  },
+);
+
+
+// ═══════════════════════════════════════════════════════════
+//  تقفيل اليومية
+//
+//  ══ الفرق بين "تشوف" و"تقفل" ══
+//  ⚠ الحارس هنا بيفحص **صلاحية** (`sales.view_branch`) بس.
+//
+//  مين يقدر يقفل فعلاً محكوم بـ`closing_roles` على الفرع،
+//  وده إعداد مش صلاحية — فبيتفحص جوّه دالة القاعدة اللي
+//  بتكتب الصف، مش في الحارس.
+//
+//  لو حطّيناه في الحارس، كان لازم نقرا إعداد الفرع في كل
+//  طلب قبل ما نعرف نسمح ولا لأ — ودي رحلة زيادة على كل
+//  ضغطة، والنتيجة نفسها.
+// ═══════════════════════════════════════════════════════════
+
+export const closingRoutes = new Hono<AppBindings>();
+
+/** سجل اليوميات — بلا لقطات، عشان الرد يفضل خفيف */
+closingRoutes.get(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_VIEW_BRANCH], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const closings = await listClosings(container.closings, c.get('user'));
+    return c.json({ ok: true, closings });
+  },
+);
+
+/**
+ * معاينة — إيه اللي هيتقفل لو ضغطت دلوقتي.
+ *
+ * ⚠ بترجّع `canClose` و`reason` عشان الشاشة تعرض السبب **قبل**
+ * الضغط. زرار بيرفض بعد الضغط أسوأ من زرار بيقول ليه قبلها.
+ */
+closingRoutes.get(
+  '/preview',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_VIEW_BRANCH], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const preview = await previewClosing(
+      container.closings,
+      c.get('user'),
+      c.req.query('branchId') ?? null,
+    );
+    return c.json({ ok: true, ...preview });
+  },
+);
+
+/**
+ * تفاصيل يومية.
+ *
+ * ⚠ المعرّف بيتجاب مع المحل من الجلسة — مش بفلترة بعد القراءة.
+ * والتكلفة بتترجع بس لصاحب `profit.view_real`، والحجب في
+ * القاعدة مش هنا.
+ */
+closingRoutes.get(
+  '/:id',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_VIEW_BRANCH], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف اليومية مفقود.');
+
+    const container = buildContainer(c.env);
+    const closing = await getClosing(container.closings, c.get('user'), id);
+    return c.json({ ok: true, closing });
+  },
+);
+
+/**
+ * تقفيل.
+ *
+ * ⚠ ما بيمنعش أي عملية جديدة. الفترة الجديدة بتبدأ من نفس
+ * اللحظة، والبيع اللي بعدها بثانية بيتسجّل عادي.
+ */
+closingRoutes.post(
+  '/',
+  requireAuth({ requireAll: [PERMISSIONS.SALES_VIEW_BRANCH] }),
+  async (c) => {
+    const body = await readJson<{ branchId?: string | null; note?: string | null }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await closeDay(
+      container.closings,
+      c.get('user'),
+      body.branchId ?? null,
+      body.note ?? null,
+    );
+
+    return c.json({ ok: true, ...result, message: 'تم تقفيل اليومية.' }, 201);
+  },
+);
+
+/**
+ * ضبط مين يقفل — صاحب المحل وحده.
+ *
+ * ⚠ الفحص على الدور جوّه حالة الاستخدام وجوّه القاعدة، مش في
+ * الحارس. مفيش صلاحية مخصّصة للفعل ده، وعمل واحدة عشان إعداد
+ * بيتغيّر مرة كل شهور كان هيزوّد الكتالوج بلا فايدة.
+ */
+closingRoutes.patch(
+  '/roles',
+  requireAuth({ requireAll: [PERMISSIONS.BRANCH_VIEW] }),
+  async (c) => {
+    const body = await readJson<{ branchId?: string; roles?: unknown }>(c);
+
+    const container = buildContainer(c.env);
+    const change = await setClosingRoles(
+      container.closings,
+      c.get('user'),
+      String(body.branchId ?? ''),
+      body.roles,
+    );
+
+    return c.json({ ok: true, ...change, message: 'تم حفظ الإعداد.' });
+  },
+);
+
+
+/**
+ * قراءة مدة الضمان من جسم الطلب.
+ *
+ * ⚠ التلات حالات لازم تفضل مفصولة لحد حالة الاستخدام:
+ *   الحقل مش موجود → undefined → الافتراضي
+ *   جه فاضي/null    → null      → بلا ضمان
+ *   رقم             → رقم
+ *
+ * `Number('')` بيساوي **صفر** في جافاسكربت — فلو حوّلنا على
+ * طول، الخانة الفاضية كانت هتبقى "ضمان صفر يوم" بدل "بلا ضمان".
+ */
+function readWarrantyInput(raw: number | string | null | undefined): number | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || String(raw).trim() === '') return null;
+
+  const days = Number(normalizeDigits(String(raw).trim()));
+  if (!Number.isInteger(days)) throw Errors.validation('مدة الضمان لازم تكون رقم صحيح.');
+  return days;
+}
