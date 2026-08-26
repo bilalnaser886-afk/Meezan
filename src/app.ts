@@ -21,6 +21,8 @@ import {
   customerRoutes,
   platformRoutes,
   productRoutes,
+  purchaseRoutes,
+  closingRoutes,
   reportRoutes,
   maintenanceRoutes,
   supplierRoutes,
@@ -40,7 +42,7 @@ import {
   listMovements,
 } from './application/use-cases/treasury';
 import { listProducts, listSellableProducts } from './application/use-cases/products';
-import { listSales } from './application/use-cases/sales';
+import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
 import { listTenants } from './application/use-cases/platform';
 import type { AuthenticatedUser } from './application/ports';
@@ -57,6 +59,7 @@ import {
   platformSetupPage,
   posPage,
   productsPage,
+  closingsPage,
   reportPage,
   maintenancePage,
   suppliersPage,
@@ -122,6 +125,8 @@ app.route('/api/transfers', transferRoutes);
 app.route('/api/suppliers', supplierRoutes);
 app.route('/api/maintenance', maintenanceRoutes);
 app.route('/api/customers', customerRoutes);
+app.route('/api/purchases', purchaseRoutes);
+app.route('/api/closings', closingRoutes);
 app.route('/api/platform', platformRoutes);
 app.route('/', setupRoutes);
 
@@ -401,6 +406,11 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         canEditExit: s.staffId === user.id || user.roleKey === 'SUPER_ADMIN',
       })),
       today: todayInCairo(),
+      // ⚠ الرقم جاي من حالة الاستخدام مش مكتوب في الواجهة —
+      // مصدر واحد. لو اتكتب في المكانين، هييجي يوم يتغيّر في
+      // واحد ويفضل القديم في التاني: الفاتورة تقول حاجة
+      // والشاشة تقول حاجة.
+      defaultWarrantyDays: DEFAULT_WARRANTY_DAYS,
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
@@ -678,6 +688,59 @@ app.get('/report', requireAuth({ redirectOnFail: true }), async (c) => {
       from: `${today.slice(0, 7)}-01`,
       to: today,
       today,
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+
+/**
+ * سجل اليوميات.
+ *
+ * ══ ليه الصلاحية `sales.view_branch` مش `report.view_branch`؟ ══
+ * التقرير فيه هوامش وتكاليف، فمقفول على المدير وفوق. أما سجل
+ * اليوميات فبيوصف **حركة الوردية**: باع كام، صرف كام، رجّع كام.
+ *
+ * والمندوب عنده الصلاحية دي أصلاً. لو حصرناها في المدير، المندوب
+ * اللي صاحب المحل اختاره يقفل مش هيقدر يشوف اللي بيقفله — وده
+ * زرار بيقفل على المجهول.
+ *
+ * ⚠ ولاحظ إن **مين يقدر يقفل** مش محسوب هنا خالص. ده إعداد على
+ * الفرع بيتقرا من قاعدة البيانات وقت المعاينة، مش صلاحية على
+ * المستخدم. الصفحة بتفتح للكل، والزرار بيظهر لمن يستحق.
+ */
+app.get('/closings', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.SALES_VIEW_BRANCH)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+  const isOwner = user.roleKey === 'SUPER_ADMIN';
+
+  // صاحب المحل مالوش فرع، فلازم يختار. غيره فرعه مقفول عليه
+  // من جلسته ومفيش قائمة أصلاً.
+  const branches = isOwner
+    ? await listBranches(container.branchOps, user).catch(() => [])
+    : [];
+
+  return c.html(
+    closingsPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel: await branchLabelFor(container, user),
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
+      isOwner,
+      branches: branches.map((b) => ({ id: b.id, name: b.name })),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRule.action,
