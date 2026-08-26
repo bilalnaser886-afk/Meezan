@@ -709,7 +709,108 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
         deletedSales: Number(row.deleted_sales),
       };
     },
+
+    // ─────────── الإعلانات ───────────
+
+    async branchesOf(actorId, tenantId) {
+      const { data, error } = await db.rpc('fn_tenant_branches', {
+        p_actor_id: actorId,
+        p_tenant_id: tenantId,
+      });
+      if (error) raisePlatformError(error, 'fn_tenant_branches');
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        branchId: String(r.branch_id),
+        branchName: String(r.branch_name),
+        branchCode: String(r.branch_code),
+      }));
+    },
+
+    /**
+     * ⚠ نداء واحد بيكتب صف لكل محل مستهدف، كلهم في معاملة
+     * واحدة. لو كتبناهم من هنا واحد واحد، أي فشل في النص كان
+     * هيسيب نص المحلات شايفة الإعلان والنص التاني لأ.
+     */
+    async broadcast(input) {
+      const { data, error } = await db.rpc('fn_platform_broadcast', {
+        p_actor_id: input.actorId,
+        p_tenant_id: input.tenantId,
+        p_audience: input.audience,
+        p_branch_id: input.branchId,
+        p_title: input.title,
+        p_body: input.body,
+        p_severity: input.severity,
+        p_is_mandatory: input.isMandatory,
+        p_ends_at: input.endsAt ? input.endsAt.toISOString() : null,
+      });
+      if (error) raisePlatformError(error, 'fn_platform_broadcast');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_platform_broadcast: مفيش نتيجة');
+
+      return { sentCount: Number(row.sent_count ?? 0) };
+    },
+
+    async announcements(actorId, limit) {
+      const { data, error } = await db.rpc('fn_platform_announcements', {
+        p_actor_id: actorId,
+        p_limit: limit,
+      });
+      if (error) raisePlatformError(error, 'fn_platform_announcements');
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        id: String(r.id),
+        tenantId: String(r.tenant_id),
+        tenantName: String(r.tenant_name),
+        title: String(r.title),
+        body: String(r.body),
+        severity: String(r.severity),
+        audience: String(r.audience),
+        branchName: r.branch_name === null || r.branch_name === undefined
+          ? null
+          : String(r.branch_name),
+        isMandatory: Boolean(r.is_mandatory),
+        startsAt: new Date(String(r.starts_at)),
+        endsAt: r.ends_at ? new Date(String(r.ends_at)) : null,
+        createdAt: new Date(String(r.created_at)),
+        readCount: Number(r.read_count ?? 0),
+        targetCount: Number(r.target_count ?? 0),
+      }));
+    },
+
+    async withdrawAnnouncement(actorId, announcementId) {
+      const { error } = await db.rpc('fn_withdraw_announcement', {
+        p_actor_id: actorId,
+        p_announcement_id: announcementId,
+      });
+      if (error) raisePlatformError(error, 'fn_withdraw_announcement');
+    },
   };
+}
+
+/**
+ * ترجمة أخطاء دوال المنصّة.
+ *
+ * ⚠ `MZ403` هنا معناها "مش مشغّل منصّة" — والرسالة العربية جاية
+ * من الدالة نفسها، فبنمرّرها زي ما هي.
+ */
+function raisePlatformError(
+  error: { code?: string; message?: string },
+  fn: string,
+): never {
+  const message = error.message?.trim() || 'تعذّر إتمام العملية.';
+
+  switch (error.code) {
+    case 'MZ400':
+      throw Errors.validation(message);
+    case 'MZ403':
+      throw Errors.forbidden(`${fn}: ${message}`);
+    case 'MZ404':
+      throw Errors.notFound('العنصر المطلوب');
+    default:
+      if (error.code === '23514') throw Errors.validation('قيمة غير مقبولة.');
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
 }
 
 // ─────────── الخزينة ───────────
