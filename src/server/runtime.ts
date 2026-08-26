@@ -28,6 +28,8 @@ import type { SupplierDeps } from '../application/use-cases/suppliers';
 import type { MaintenanceDeps } from '../application/use-cases/maintenance';
 import type { CustomerDeps } from '../application/use-cases/customers';
 import type { PlatformDeps } from '../application/use-cases/platform';
+import type { PurchaseDeps } from '../application/use-cases/purchases';
+import type { ClosingDeps } from '../application/use-cases/closings';
 import type { BranchRepository } from '../application/ports';
 import { AppError, Errors } from '../domain/errors';
 import { COOKIES, SESSION_POLICY, type Env } from '../domain/config';
@@ -44,7 +46,10 @@ import {
   createProductRepository,
   createRateLimiter,
   createAlertRepository,
+  createClosingRepository,
   createMaintenanceRepository,
+  createPurchaseRepository,
+  createWarrantyRepository,
   createSupplierRepository,
   createTransferRepository,
   createReportRepository,
@@ -75,6 +80,8 @@ export interface Container {
   maintenance: MaintenanceDeps;
   customers: CustomerDeps;
   platform: PlatformDeps;
+  purchases: PurchaseDeps;
+  closings: ClosingDeps;
   branches: BranchRepository;
   db: ReturnType<typeof createDb>;
 }
@@ -93,6 +100,10 @@ export function buildContainer(env: Env): Container {
   // نسخة واحدة عشان الاتنين يقروا من نفس المكان — لو عملنا
   // نسختين، أي تعديل مستقبلي في واحدة بيسيب التانية وراه.
   const saleRepo = createSaleRepository(db);
+  // ⚠ ونفس السبب بالظبط في الضمان: البيع بيكتبه، والمرتجع
+  // بيقراه ويحكم بيه. نسختين معناهم إن قاعدة "امتى الضمان
+  // انتهى" ممكن تختلف بين الشاشتين — وده أسوأ من غيابها.
+  const warrantyRepo = createWarrantyRepository(db);
 
   return {
     db,
@@ -144,6 +155,7 @@ export function buildContainer(env: Env): Container {
       sales: saleRepo,
       treasuries: treasuryRepo,
       users: userRepo,
+      warranty: warrantyRepo,
       clock: systemClock,
       audit,
     },
@@ -151,6 +163,7 @@ export function buildContainer(env: Env): Container {
       returns: createReturnRepository(db),
       sales: saleRepo,
       treasuries: treasuryRepo,
+      warranty: warrantyRepo,
       clock: systemClock,
       audit,
     },
@@ -189,6 +202,27 @@ export function buildContainer(env: Env): Container {
     platform: {
       tenants: tenantRepo,
       hasher,
+      clock: systemClock,
+      audit,
+    },
+    // ⚠ شرا البضاعة بياخد الخزينة، مش الموردين.
+    // السبب إن العملية **مالية** في جوهرها: فلوس بتطلع من الدرج
+    // وبيان بيتكتب جنبها. المورّد اسم على البيان مش طرف في
+    // المعاملة — الدين بيتسجّل في وحدة الموردين لوحدها.
+    purchases: {
+      purchases: createPurchaseRepository(db),
+      treasuries: treasuryRepo,
+      clock: systemClock,
+      audit,
+    },
+    // ⚠ واليومية بتاخد الفروع عشان صاحب المحل يختار،
+    // وما بتاخدش المبيعات ولا الخزينة: اللقطة كلها بتتبني جوّه
+    // قاعدة البيانات في نداء واحد. لو بنيناها هنا، كنا هنقرا
+    // المبيعات في رحلة والحركات في رحلة تانية — وأي بيعة
+    // بتتسجّل بينهم بتقع في الشق.
+    closings: {
+      closings: createClosingRepository(db),
+      branches: branchRepo,
       clock: systemClock,
       audit,
     },
