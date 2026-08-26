@@ -15,6 +15,20 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  WarrantyRepository,
+  WarrantyStatus,
+  PurchaseRepository,
+  PurchaseRow,
+  ClosingRepository,
+  ClosingRole,
+  ClosingSummary,
+  ClosingPreview,
+  ClosingDetail,
+  ClosingSaleLine,
+  ClosingMovementLine,
+  ClosingPurchaseLine,
+  ClosingCostSnapshot,
+  CloseDayResult,
   AnnouncementRecord,
   AnnouncementRepository,
   AuditLogger,
@@ -900,12 +914,16 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
     name: string;
     tenant_id: string;
     is_advance: boolean;
+    is_inventory?: boolean | null;
     branch_id: string | null;
   }): ExpenseReason => ({
     id: r.id,
     name: r.name,
     tenantId: r.tenant_id,
     isAdvance: r.is_advance,
+    // ⚠ الافتراضي false: لو العمود لسه ما اتضافش في بيئة قديمة،
+    // السبب بيتعامل كمصروف عادي بدل ما الشاشة توقع.
+    isInventory: r.is_inventory === true,
     branchId: r.branch_id,
   });
 
@@ -915,7 +933,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
       // الفرع نفسه لو موجود
       let query = db
         .from('expense_reasons')
-        .select('id, tenant_id, name, is_advance, branch_id')
+        .select('id, tenant_id, name, is_advance, is_inventory, branch_id')
         .is('deleted_at', null)
         .eq('is_active', true)
         .order('name');
@@ -930,7 +948,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
     async findById(id) {
       const { data, error } = await db
         .from('expense_reasons')
-        .select('id, tenant_id, name, is_advance, branch_id')
+        .select('id, tenant_id, name, is_advance, is_inventory, branch_id')
         .eq('id', id)
         .is('deleted_at', null)
         .eq('is_active', true)
@@ -1235,7 +1253,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
 
 const SALE_COLUMNS =
   'id, tenant_id, branch_id, staff_id, customer_name, customer_phone, total_piastres, ' +
-  'treasury_id, created_at, exit_date';
+  'treasury_id, created_at, exit_date, warranty_days';
 
 interface RawSale {
   id: string;
@@ -1248,6 +1266,7 @@ interface RawSale {
   treasury_id: string;
   created_at: string;
   exit_date: string;
+  warranty_days: number | string | null;
 }
 
 function toSale(raw: RawSale): SaleSummary {
@@ -1263,6 +1282,9 @@ function toSale(raw: RawSale): SaleSummary {
     createdAt: new Date(raw.created_at),
     // نص زي ما هو — تحويله لـ Date بيزحلقه يوم بالتوقيت
     exitDate: String(raw.exit_date).slice(0, 10),
+    // ⚠ null لازم تفضل null. لو حوّلناها لصفر، "بلا ضمان"
+    // هتبقى "ضمان صفر يوم" — والاتنين مختلفين في السجل.
+    warrantyDays: raw.warranty_days === null ? null : Number(raw.warranty_days),
   };
 }
 
@@ -1319,6 +1341,7 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
         p_customer_name: input.customerName,
         p_customer_phone: input.customerPhone,
         p_exit_date: input.exitDate,
+        p_warranty_days: input.warrantyDays,
       });
 
       if (error) raiseSaleError(error);
@@ -1870,6 +1893,7 @@ export function createReturnRepository(db: SupabaseClient): ReturnRepository {
         })),
         p_reason: input.reason,
         p_return_date: input.returnDate,
+        p_override_warranty: input.overrideWarranty,
       });
 
       if (error) raiseReturnError(error, 'fn_create_return');
@@ -1883,6 +1907,8 @@ export function createReturnRepository(db: SupabaseClient): ReturnRepository {
         feePiastres: Number(row.fee_piastres),
         itemCount: Number(row.item_count),
         movementId: String(row.movement_id),
+        // ⚠ من رد القاعدة مش من الطلب — النتيجة مش النيّة
+        warrantyOverridden: Boolean(row.warranty_overridden),
       };
     },
 
@@ -2466,6 +2492,389 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
       return {
         kind: String(row.unlock_kind),
         value: row.unlock_value ? String(row.unlock_value) : null,
+      };
+    },
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  الضمان · شراء البضاعة · تقفيل اليومية
+//
+//  ⚠ نفس قواعد الملف كله: كل نداء بيمرّ على دالة RPC موقّعة
+//  بـ service_role، ومفيش استعلام على جدول من غير محل.
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * ترجمة أخطاء دوال القاعدة.
+ *
+ * نفس نمط `raiseSaleError` و`raiseReturnError` في `database.ts`.
+ * الرسائل مكتوبة عربي جوّه الدوال، فبنمرّرها زي ما هي — هي
+ * مكتوبة أصلاً عشان الموظّف يقراها قدّام الزبون.
+ */
+function raiseError(error: { code?: string; message?: string }, fn: string): never {
+  const message = error.message?.trim() || 'تعذّر إتمام العملية.';
+
+  switch (error.code) {
+    case 'MZ400':
+    case 'MZ409':
+      throw Errors.validation(message);
+    case 'MZ403':
+      throw Errors.forbidden(`${fn}: ${message}`);
+    case 'MZ404':
+      throw Errors.notFound('العنصر المطلوب');
+    default:
+      if (error.code === '23514') throw Errors.validation('القيمة غير صالحة.');
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
+}
+
+/** قراءة رقم من رد القاعدة — bigint بيرجع نص من PostgREST */
+function num(value: unknown): number {
+  return Number(value ?? 0);
+}
+
+function text(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+// ═══════════════════ الضمان ═══════════════════
+
+export function createWarrantyRepository(db: SupabaseClient): WarrantyRepository {
+  return {
+    async status(saleId) {
+      const { data, error } = await db.rpc('fn_sale_warranty', { p_sale_id: saleId });
+      if (error) raiseError(error, 'fn_sale_warranty');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) return null;
+
+      return {
+        // ⚠ null هنا معناها "بلا ضمان" — مش صفر ومش الافتراضي
+        warrantyDays: row.warranty_days === null ? null : num(row.warranty_days),
+        startsOn: String(row.starts_on).slice(0, 10),
+        expiresOn: row.expires_on ? String(row.expires_on).slice(0, 10) : null,
+        daysLeft: row.days_left === null ? null : num(row.days_left),
+        isCovered: Boolean(row.is_covered),
+      } satisfies WarrantyStatus;
+    },
+
+    async setDays(saleId, actorId, warrantyDays) {
+      const { data, error } = await db.rpc('fn_set_sale_warranty', {
+        p_sale_id: saleId,
+        p_actor_id: actorId,
+        p_warranty_days: warrantyDays,
+      });
+      if (error) raiseError(error, 'fn_set_sale_warranty');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_set_sale_warranty: مفيش نتيجة');
+
+      return {
+        previousDays: row.previous_days === null ? null : num(row.previous_days),
+        newDays: row.new_days === null ? null : num(row.new_days),
+        expiresOn: row.expires_on ? String(row.expires_on).slice(0, 10) : null,
+      };
+    },
+  };
+}
+
+// ═══════════════════ شراء البضاعة ═══════════════════
+
+export function createPurchaseRepository(db: SupabaseClient): PurchaseRepository {
+  return {
+    async create(input) {
+      const { data, error } = await db.rpc('fn_record_purchase', {
+        p_actor_id: input.actorId,
+        p_treasury_id: input.treasuryId,
+        p_amount_piastres: input.amountPiastres,
+        p_item_name: input.itemName,
+        p_quantity: input.quantity,
+        p_supplier_id: input.supplierId,
+        p_note: input.note,
+      });
+      if (error) raiseError(error, 'fn_record_purchase');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_record_purchase: مفيش نتيجة');
+
+      return {
+        purchaseId: String(row.purchase_id),
+        movementId: String(row.movement_id),
+        status: String(row.status) === 'APPROVED' ? 'APPROVED' : 'PENDING',
+      };
+    },
+
+    async list(filter) {
+      const { data, error } = await db.rpc('fn_purchases', {
+        p_tenant_id: filter.tenantId,
+        p_branch_id: filter.branchId,
+        p_from: filter.from,
+        p_to: filter.to,
+        p_limit: filter.limit,
+      });
+      if (error) raiseError(error, 'fn_purchases');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map(
+        (row): PurchaseRow => ({
+          id: String(row.id),
+          movementId: String(row.movement_id),
+          itemName: String(row.item_name),
+          quantity: num(row.quantity),
+          amountPiastres: num(row.amount_piastres),
+          supplierId: text(row.supplier_id),
+          supplierName: text(row.supplier_name),
+          status: String(row.status),
+          note: text(row.note),
+          occurredAt: new Date(String(row.occurred_at)),
+          createdById: String(row.created_by_id),
+          createdByName: text(row.created_by_name),
+        }),
+      );
+    },
+
+    /**
+     * ⚠ الاستعلام بياخد المحل صراحةً في نفس السطر.
+     * ولا بيلمس أي عمود مالي — الاسم والمعرّف وبس.
+     */
+    async listSupplierNames(tenantId) {
+      const { data, error } = await db
+        .from('suppliers')
+        .select('id, name')
+        .eq('tenant_id', tenantId)
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .order('name');
+
+      if (error) throw Errors.internal(`suppliers.listNames: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+      }));
+    },
+  };
+}
+
+// ═══════════════════ تقفيل اليومية ═══════════════════
+
+/**
+ * قراءة مصفوفة الأدوار من القاعدة.
+ *
+ * ⚠ بنفلتر على القيم المعروفة بدل ما نثق في اللي جاي. القيد في
+ * القاعدة بيمنع غيرها أصلاً، بس النوع هنا بيبقى صادق من غير ما
+ * يعتمد على القيد ده.
+ */
+function toRoles(value: unknown): ClosingRole[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item))
+    .filter((item): item is ClosingRole => item === 'BRANCH_MANAGER' || item === 'STAFF');
+}
+
+/** اللقطات بترجع jsonb — ممكن توصل ككائن أو كنص حسب الرحلة */
+function parseArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function parseObject(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function toSummary(row: Record<string, unknown>): ClosingSummary {
+  return {
+    id: String(row.id),
+    branchId: String(row.branch_id),
+    branchName: String(row.branch_name),
+    periodFrom: new Date(String(row.period_from)),
+    periodTo: new Date(String(row.period_to)),
+    salesCount: num(row.sales_count),
+    salesPiastres: num(row.sales_piastres),
+    returnsCount: num(row.returns_count),
+    returnsPiastres: num(row.returns_piastres),
+    expensesPiastres: num(row.expenses_piastres),
+    advancesPiastres: num(row.advances_piastres),
+    purchasesPiastres: num(row.purchases_piastres),
+    cashInPiastres: num(row.cash_in_piastres),
+    cashOutPiastres: num(row.cash_out_piastres),
+    note: text(row.note),
+    closedById: String(row.closed_by_id ?? ''),
+    closedByName: text(row.closed_by_name),
+    closedAt: new Date(String(row.closed_at)),
+  };
+}
+
+export function createClosingRepository(db: SupabaseClient): ClosingRepository {
+  return {
+    async preview(branchId, actorId) {
+      const { data, error } = await db.rpc('fn_closing_preview', {
+        p_branch_id: branchId,
+        p_actor_id: actorId,
+      });
+      if (error) raiseError(error, 'fn_closing_preview');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_closing_preview: مفيش نتيجة');
+
+      return {
+        canClose: Boolean(row.can_close),
+        reason: text(row.reason),
+        periodFrom: new Date(String(row.period_from)),
+        minutesOpen: num(row.minutes_open),
+        minutesLeft: num(row.minutes_left),
+        salesCount: num(row.sales_count),
+        salesPiastres: num(row.sales_piastres),
+        returnsCount: num(row.returns_count),
+        movementsCount: num(row.movements_count),
+        closingRoles: toRoles(row.closing_roles),
+      } satisfies ClosingPreview;
+    },
+
+    /**
+     * ⚠ نداء واحد. كل اللقطات بتتبني جوّه القاعدة في نفس
+     * المعاملة اللي بتكتب الصف.
+     *
+     * لو بنيناها هنا، كنا هنقرا المبيعات في رحلة والحركات في
+     * رحلة تانية — وأي بيعة بتتسجّل بينهم بتقع في الشق: مش في
+     * اليومية القديمة ولا الجديدة.
+     */
+    async close(branchId, actorId, note) {
+      const { data, error } = await db.rpc('fn_close_day', {
+        p_branch_id: branchId,
+        p_actor_id: actorId,
+        p_note: note,
+      });
+      if (error) raiseError(error, 'fn_close_day');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_close_day: مفيش نتيجة');
+
+      return {
+        closingId: String(row.closing_id),
+        periodFrom: new Date(String(row.period_from)),
+        periodTo: new Date(String(row.period_to)),
+        salesCount: num(row.sales_count),
+        salesPiastres: num(row.sales_piastres),
+        returnsPiastres: num(row.returns_piastres),
+        expensesPiastres: num(row.expenses_piastres),
+        purchasesPiastres: num(row.purchases_piastres),
+        cashInPiastres: num(row.cash_in_piastres),
+        cashOutPiastres: num(row.cash_out_piastres),
+      } satisfies CloseDayResult;
+    },
+
+    /**
+     * ⚠ النطاق بيتفكّ هنا بدل ما يتبعت كقيمة.
+     *
+     * النوع `ListScope` بيمنع حالة "بلا محل" من الأساس، فمفيش
+     * فرع في الدالة دي بيبعت `p_tenant_id` فاضي.
+     */
+    async list(scope: ListScope, limit) {
+      if (!('tenantId' in scope)) {
+        throw Errors.forbidden('closings: tenant scope required');
+      }
+
+      const { data, error } = await db.rpc('fn_closings', {
+        p_tenant_id: scope.tenantId,
+        p_branch_id: 'branchId' in scope ? scope.branchId : null,
+        p_limit: limit,
+      });
+      if (error) raiseError(error, 'fn_closings');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map(toSummary);
+    },
+
+    async detail(closingId, tenantId, includeCost) {
+      const { data, error } = await db.rpc('fn_closing_detail', {
+        p_closing_id: closingId,
+        p_tenant_id: tenantId,
+        p_include_cost: includeCost,
+      });
+      if (error) raiseError(error, 'fn_closing_detail');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) return null;
+
+      const summary = toSummary(row);
+      const cost = parseObject(row.cost_snapshot);
+
+      const detail: ClosingDetail = {
+        id: summary.id,
+        branchId: summary.branchId,
+        branchName: summary.branchName,
+        periodFrom: summary.periodFrom,
+        periodTo: summary.periodTo,
+        salesCount: summary.salesCount,
+        salesPiastres: summary.salesPiastres,
+        returnsCount: summary.returnsCount,
+        returnsPiastres: summary.returnsPiastres,
+        expensesPiastres: summary.expensesPiastres,
+        advancesPiastres: summary.advancesPiastres,
+        purchasesPiastres: summary.purchasesPiastres,
+        cashInPiastres: summary.cashInPiastres,
+        cashOutPiastres: summary.cashOutPiastres,
+        note: summary.note,
+        closedByName: summary.closedByName,
+        closedAt: summary.closedAt,
+        sales: parseArray<ClosingSaleLine>(row.sales_snapshot),
+        movements: parseArray<ClosingMovementLine>(row.treasury_snapshot),
+        purchases: parseArray<ClosingPurchaseLine>(row.purchases_snapshot),
+      };
+
+      // ⚠ الحقل بيتضاف **بس** لو القاعدة رجّعته. القاعدة بترجّعه
+      // بس لو `includeCost` — فمفيش مسار بيحط صفر مكان الممنوع.
+      if (cost) {
+        detail.cost = {
+          cogsPiastres: num(cost.cogs_piastres),
+          grossProfitPiastres: num(cost.gross_profit_piastres),
+          lines: parseArray<Record<string, unknown>>(cost.lines).map((line) => ({
+            saleId: String(line.sale_id),
+            name: String(line.name),
+            quantity: num(line.quantity),
+            unitCostPiastres: num(line.unit_cost_piastres),
+            unitPricePiastres: num(line.unit_price_piastres),
+          })),
+        } satisfies ClosingCostSnapshot;
+      }
+
+      return detail;
+    },
+
+    async setRoles(branchId, actorId, roles) {
+      const { data, error } = await db.rpc('fn_set_closing_roles', {
+        p_branch_id: branchId,
+        p_actor_id: actorId,
+        p_roles: roles,
+      });
+      if (error) raiseError(error, 'fn_set_closing_roles');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_set_closing_roles: مفيش نتيجة');
+
+      return {
+        previousRoles: toRoles(row.previous_roles),
+        newRoles: toRoles(row.new_roles),
       };
     },
   };
