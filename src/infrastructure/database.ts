@@ -733,6 +733,7 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
         is_active: boolean;
         balance_piastres: number | string;
         movement_count: number | string;
+        provider: string | null;
       }>).map((r) => ({
         treasuryId: r.treasury_id,
         name: r.name,
@@ -742,6 +743,7 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
         // bigint ممكن يرجع كنص من PostgREST — بنوحّده لرقم
         balancePiastres: Number(r.balance_piastres),
         movementCount: Number(r.movement_count),
+        provider: r.provider ?? null,
       }));
     },
 
@@ -759,6 +761,129 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
 
       const r = data as { tenant_id: string; branch_id: string | null };
       return { tenantId: r.tenant_id, branchId: r.branch_id };
+    },
+
+    /**
+     * الملخّص المالي.
+     *
+     * ⚠ صف لكل خزينة، والتجميع بيحصل في حالة الاستخدام من نفس
+     * الصفوف دي. مفيش استعلام تاني للمجاميع — عشان يستحيل
+     * المجموع يخالف الأجزاء.
+     */
+    async summary(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_treasury_summary', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_treasury_summary: ${error.message}`);
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        treasuryId: String(r.treasury_id),
+        name: String(r.name),
+        type: String(r.type),
+        branchId: r.branch_id === null ? null : String(r.branch_id),
+        branchName: r.branch_name === null ? null : String(r.branch_name),
+        isActive: Boolean(r.is_active),
+        balancePiastres: Number(r.balance_piastres ?? 0),
+        movementCount: Number(r.movement_count ?? 0),
+        provider: r.provider === null || r.provider === undefined ? null : String(r.provider),
+        lastMovementAt: r.last_movement_at ? new Date(String(r.last_movement_at)) : null,
+      }));
+    },
+
+    async create(input) {
+      const { data, error } = await db.rpc('fn_create_treasury', {
+        p_actor_id: input.actorId,
+        p_branch_id: input.branchId,
+        p_name: input.name,
+        p_type: input.type,
+        p_provider: input.provider,
+      });
+      if (error) raiseTreasuryError(error, 'fn_create_treasury');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_create_treasury: مفيش نتيجة');
+      return { treasuryId: String(row.treasury_id) };
+    },
+
+    async update(input) {
+      const { data, error } = await db.rpc('fn_update_treasury', {
+        p_treasury_id: input.treasuryId,
+        p_actor_id: input.actorId,
+        p_name: input.name ?? null,
+        p_provider: input.provider ?? null,
+        p_is_active: input.isActive ?? null,
+      });
+      if (error) raiseTreasuryError(error, 'fn_update_treasury');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_update_treasury: مفيش نتيجة');
+      return {
+        treasuryId: String(row.treasury_id),
+        balancePiastres: Number(row.balance_piastres ?? 0),
+      };
+    },
+
+    /**
+     * ⚠ نداء واحد. الحركتين وسجل التحويل بيتكتبوا في معاملة
+     * واحدة جوّه القاعدة.
+     *
+     * لو كتبناهم من هنا، أي فشل في النص هيسيب فلوس طالعة من
+     * خزينة وما وصلتش للتانية — وده أسوأ من فشل كامل، لأنه
+     * بيبان كأنه نجح.
+     */
+    async transfer(input) {
+      const { data, error } = await db.rpc('fn_transfer_treasury', {
+        p_actor_id: input.actorId,
+        p_from_id: input.fromTreasuryId,
+        p_to_id: input.toTreasuryId,
+        p_sent_piastres: input.sentPiastres,
+        p_received_piastres: input.receivedPiastres,
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseTreasuryError(error, 'fn_transfer_treasury');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_transfer_treasury: مفيش نتيجة');
+
+      return {
+        transferId: String(row.transfer_id),
+        sentPiastres: Number(row.sent_piastres),
+        receivedPiastres: Number(row.received_piastres),
+        feePiastres: Number(row.fee_piastres),
+        outMovementId: String(row.out_movement_id),
+        inMovementId: String(row.in_movement_id),
+        fromBalance: Number(row.from_balance),
+        toBalance: Number(row.to_balance),
+      };
+    },
+
+    async listTransfers(tenantId, branchId, from, to, limit) {
+      const { data, error } = await db.rpc('fn_treasury_transfers', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+        p_from: from,
+        p_to: to,
+        p_limit: limit,
+      });
+      if (error) throw Errors.internal(`fn_treasury_transfers: ${error.message}`);
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        id: String(r.id),
+        fromName: String(r.from_name),
+        toName: String(r.to_name),
+        sentPiastres: Number(r.sent_piastres),
+        receivedPiastres: Number(r.received_piastres),
+        feePiastres: Number(r.fee_piastres),
+        transferDate: String(r.transfer_date).slice(0, 10),
+        note: r.note === null || r.note === undefined ? null : String(r.note),
+        createdByName:
+          r.created_by_name === null || r.created_by_name === undefined
+            ? null
+            : String(r.created_by_name),
+        createdAt: new Date(String(r.created_at)),
+      }));
     },
   };
 }
@@ -1299,6 +1424,40 @@ function toSale(raw: RawSale): SaleSummary {
  * الرسائل نفسها مكتوبة بالعربي جوّه الدالة، فبنمرّرها زي ما هي —
  * هي مكتوبة أصلاً عشان الموظّف يقراها قدّام الزبون.
  */
+/**
+ * ترجمة أخطاء دوال الخزينة.
+ *
+ * ⚠ الرسائل مكتوبة عربي جوّه الدوال وبتمرّ زي ما هي — هي
+ * مكتوبة أصلاً عشان المستخدم يقراها: "رصيد النقدي 196.50 —
+ * مش كفاية للتحويل" أنفع بكتير من "فشلت العملية".
+ */
+function raiseTreasuryError(
+  error: { code?: string; message?: string },
+  fn: string,
+): never {
+  const message = error.message?.trim() || 'تعذّر إتمام العملية.';
+
+  switch (error.code) {
+    case 'MZ400':
+    case 'MZ409':
+      throw Errors.validation(message);
+    case 'MZ403':
+      throw Errors.forbidden(`${fn}: ${message}`);
+    case 'MZ404':
+      throw Errors.notFound('العنصر المطلوب');
+    default:
+      // 23505 = تكرار. الفهرس الفريد على (المحل، الفرع، الاسم)
+      if (error.code === '23505') {
+        throw Errors.validation('فيه خزينة بنفس الاسم في الفرع ده.');
+      }
+      // 23514 = قيد رفض السجل. أشهرهم هنا: العمولة مش مساوية الفرق
+      if (error.code === '23514') {
+        throw Errors.validation('القيم غير متسقة — راجع المبالغ.');
+      }
+      throw Errors.internal(`${fn}: ${error.message}`);
+  }
+}
+
 function raiseSaleError(error: { code?: string; message?: string }): never {
   const message = error.message?.trim() || 'تعذّر إتمام البيع.';
 
@@ -1992,6 +2151,7 @@ export function createReportRepository(db: SupabaseClient): ReportRepository {
           expensesPiastres: 0,
           advancesPiastres: 0,
           inventoryPurchasesPiastres: 0,
+          transferFeesPiastres: 0,
         };
       }
 
@@ -2011,6 +2171,11 @@ export function createReportRepository(db: SupabaseClient): ReportRepository {
         expensesPiastres: Number(row.expenses_piastres),
         advancesPiastres: Number(row.advances_piastres),
         inventoryPurchasesPiastres: Number(row.inventory_purchases_piastres ?? 0),
+        // ⚠ `?? 0` هنا حارس مقصود مش كسل: لو الدالة في القاعدة
+        // اترجّعت لنسخة أقدم يوم ما، الشاشة بتقول صفر بدل ما
+        // توقع. بس ده بيخفي الغلط — فالفحص في آخر ملف SQL
+        // بيتأكد إن العمود موجود فعلاً.
+        transferFeesPiastres: Number(row.transfer_fees_piastres ?? 0),
       };
     },
 
