@@ -1154,6 +1154,14 @@ export interface DashboardData {
   canApproveExpenses: boolean;
   /** report.view_branch — صاحب المحل ومدير الفرع */
   canViewReport: boolean;
+  /**
+   * سجل اليوميات.
+   *
+   * ⚠ ده **مش** نفس `canViewReport`. التقرير محاسبي وبيتفتح مرة
+   * في الشهر؛ اليومية تشغيلية وبتتفتح كل وردية. والمندوب بيشوف
+   * التانية ومش بيشوف الأولى.
+   */
+  canViewClosings: boolean;
   /** profit.view_real — صاحب المحل وحده */
   canSeeCost: boolean;
   /** supplier.manage — صاحب المحل ومدير الفرع */
@@ -1537,6 +1545,15 @@ export function dashboardPage(data: DashboardData): Html {
       <span class="tile-note">
         ${data.canSeeCost ? 'كسبت كام هذا الشهر' : 'حركة فرعك هذا الشهر'}
       </span>
+    </a>`);
+  }
+
+  // ⚠ اليومية قبل الصيانة وبعد التقرير: دي بتتفتح كل وردية،
+  // والصيانة لما جهاز يدخل. الترتيب بيتبع الاستخدام زي البقية.
+  if (data.canViewClosings) {
+    tiles.push(html`<a class="tile" href="/closings">
+      <span class="tile-label">سجل اليوميات</span>
+      <span class="tile-note">تقفيل الوردية ومراجعتها</span>
     </a>`);
   }
 
