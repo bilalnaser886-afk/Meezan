@@ -19,6 +19,14 @@
  * لو الموظّف قفل المتصفح في نص العملية، أو النت قطع، أو الخادم
  * وقع — مفيش صف يتيم ولا خصم مخزون بلا سبب. القاعدة بترجّع كل
  * حاجة زي ما كانت لوحدها.
+ *
+ * ══ الضمان — إضافة جديدة ══
+ * كل فاتورة ليها مدة ضمان، واللي بيبيع هو اللي بيحددها وقت
+ * البيع حسب اتفاقه مع الزبون. مفيش فحص دور على الحاجة دي عن
+ * قصد — الاتفاق بيحصل على الكاونتر، واللي واقف عليه هو اللي
+ * عارفه.
+ *
+ * التعديل **بعد** البيع هو اللي مقفول على صاحب المحل.
  */
 
 import { DateError, parseDateInput } from '../../domain/dates';
@@ -37,14 +45,32 @@ import type {
   TreasuryRepository,
   UserRepository,
 } from '../ports';
+import type {
+  WarrantyChangeResult,
+  WarrantyRepository,
+  WarrantyStatus,
+} from '../ports';
 
 export interface SaleDeps {
   sales: SaleRepository;
   treasuries: TreasuryRepository;
   users: UserRepository;
+  warranty: WarrantyRepository;
   clock: Clock;
   audit: AuditLogger;
 }
+
+/**
+ * الضمان الافتراضي: 30 يوم.
+ *
+ * ⚠ الشاشة بتبدأ بالرقم ده، والموظّف يقدر يغيّره أو يفضّيه.
+ * وبيتصدّر من هنا عشان يكون **مصدر واحد**: لو اتكتب في الواجهة
+ * كمان، هييجي يوم يتغيّر في مكان ويفضل القديم في التاني.
+ */
+export const DEFAULT_WARRANTY_DAYS = 30;
+
+/** أقصى مدة مقبولة — نفس القيد اللي في قاعدة البيانات */
+const MAX_WARRANTY_DAYS = 3650;
 
 export interface CreateSaleRequest {
   treasuryId: string;
@@ -53,6 +79,19 @@ export interface CreateSaleRequest {
   customerPhone?: string | null;
   /** فاضي = تاريخ النهاردة بتوقيت القاهرة */
   exitDate?: string | null;
+  /**
+   * مدة الضمان بالأيام.
+   *
+   * ⚠ فيه فرق بين التلات حالات، وهو مقصود:
+   *   القيمة غايبة (undefined) → الافتراضي 30
+   *   القيمة null              → **مفيش ضمان** بقرار صريح
+   *   رقم                      → المدة دي
+   *
+   * الغياب معناه "ما حدّش قال حاجة" فبنطبّق سياسة المحل. أما
+   * الـ null فمعناها "الموظّف فضّى الخانة عن قصد" — ودي مش
+   * نفس الحاجة.
+   */
+  warrantyDays?: number | null;
 }
 
 /** سقف السلة — نفس الرقم الموجود في دالة قاعدة البيانات */
@@ -140,6 +179,9 @@ export async function createSale(
     throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
   }
 
+  // ─── الضمان ───
+  const warrantyDays = readWarrantyDays(input.warrantyDays);
+
   // ─── التنفيذ ───
   // ⚠ أهم سطر في الملف: `staffId` بيتاخد من **الجلسة** مش من
   // جسم الطلب. لو أخدناه من الطلب، أي موظّف يقدر يسجّل بيع باسم
@@ -153,6 +195,7 @@ export async function createSale(
     customerName,
     customerPhone,
     exitDate,
+    warrantyDays,
   });
 
   await deps.audit.record({
@@ -167,10 +210,94 @@ export async function createSale(
       branchId: scope.branchId,
       movementId: result.movementId,
       exitDate,
+      warrantyDays,
     },
   });
 
   return result;
+}
+
+// ─────────── الضمان ───────────
+
+/**
+ * حالة ضمان فاتورة.
+ *
+ * بتستخدمها شاشة الاسترجاع عشان تعرف تعرض إيه **قبل** ما
+ * الموظّف يضغط. زرار بيرفض بعد الضغط أسوأ من زرار بيقول السبب
+ * قبلها.
+ */
+export async function getSaleWarranty(
+  deps: SaleDeps,
+  actor: AuthenticatedUser,
+  saleId: string,
+): Promise<WarrantyStatus> {
+  const { scope, staffId } = readScope(actor);
+
+  const sale = await deps.sales.findById(saleId, { includeCost: false });
+  if (!sale) throw Errors.notFound('الفاتورة');
+
+  assertSaleReadable(actor, sale, scope, staffId);
+
+  const status = await deps.warranty.status(saleId);
+  if (!status) throw Errors.notFound('الفاتورة');
+
+  return status;
+}
+
+/**
+ * تعديل الضمان بعد البيع — صاحب المحل وحده.
+ *
+ * ══ ليه ده مقفول والتحديد وقت البيع مفتوح؟ ══
+ * تحديد الضمان وقت البيع جزء من الاتفاق اللي بيحصل قدّام
+ * الزبون. أما تعديله بعدين فده **تغيير التزام قديم** — وده
+ * قرار ملكية مش قرار تشغيلي.
+ *
+ * ══ والحريّة معاها أثر ══
+ * كل تعديل بيتسجّل بالقيمة القديمة والجديدة ومين عمله. لو
+ * اتسأل بعد شهور "هل الجهاز ده كان في الضمان؟"، الإجابة
+ * والسبب موثّقين.
+ *
+ * تشبيه محاسبي: القيد العكسي مسموح، بس بيتكتب في الدفتر
+ * بتوقيع. مش ممنوع — مكتوب.
+ */
+export async function setSaleWarranty(
+  deps: SaleDeps,
+  actor: AuthenticatedUser,
+  saleId: string,
+  rawDays: unknown,
+): Promise<WarrantyChangeResult> {
+  // ⚠ الفحص على الدور — نفس الاستثناء الواعي المشروح في
+  // `closings.ts`: مفيش صلاحية مخصّصة، وعمل واحدة عشان فعل
+  // نادر كان هيزوّد الكتالوج بلا فايدة.
+  if (actor.roleKey !== 'SUPER_ADMIN') {
+    throw Errors.forbidden('تعديل الضمان بعد البيع لصاحب المحل وحده.');
+  }
+
+  const sale = await deps.sales.findById(saleId, { includeCost: false });
+  if (!sale) throw Errors.notFound('الفاتورة');
+  // حاجز المحل — "غير موجودة" مش "ممنوع"
+  if (sale.tenantId !== actor.tenantId) throw Errors.notFound('الفاتورة');
+
+  const warrantyDays = readWarrantyDays(rawDays, { defaultWhenMissing: null });
+
+  const change = await deps.warranty.setDays(saleId, actor.id, warrantyDays);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'sale.warranty.update',
+    entity: 'Sale',
+    entityId: saleId,
+    // ⚠ القديم والجديد مع بعض. "اتغيّر" من غير "من إيه" مش سجل.
+    metadata: {
+      from: change.previousDays,
+      to: change.newDays,
+      expiresOn: change.expiresOn,
+      branchId: sale.branchId,
+      staffId: sale.staffId,
+    },
+  });
+
+  return change;
 }
 
 // ─────────── القراءة ───────────
@@ -209,6 +336,32 @@ function readScope(actor: AuthenticatedUser): { scope: ListScope; staffId?: stri
   }
 
   throw Errors.forbidden(PERMISSIONS.SALES_VIEW_OWN);
+}
+
+/**
+ * حراسة السجل الواحد.
+ *
+ * ⚠ الفلتر في الاستعلام بيخدم القوايم، لكن الجلب بالمعرّف
+ * المباشر لازم يتفحص بإيده — وإلا أي حد يعرف رقم فاتورة يقراها.
+ *
+ * اتفصلت في دالة عشان الضمان والتفاصيل يستخدموا **نفس** القاعدة.
+ * لو اتكررت، هييجي يوم تتعدّل في واحدة وتفضل القديمة في التانية.
+ */
+function assertSaleReadable(
+  actor: AuthenticatedUser,
+  sale: { tenantId: string; branchId: string; staffId: string },
+  scope: ListScope,
+  staffId?: string,
+): void {
+  // حاجز المحل الأول ودايمًا
+  if (sale.tenantId !== actor.tenantId) throw Errors.notFound('الفاتورة');
+
+  if ('branchId' in scope && sale.branchId !== scope.branchId) {
+    throw Errors.forbidden('branch scope');
+  }
+  if (staffId && sale.staffId !== staffId) {
+    throw Errors.forbidden('sale scope');
+  }
 }
 
 export async function listSales(
@@ -257,19 +410,7 @@ export async function getSale(
   const sale = await deps.sales.findById(saleId, { includeCost });
   if (!sale) throw Errors.notFound('الفاتورة');
 
-  // الحراسة بتتعمل تاني هنا على السجل نفسه. الفلتر في الاستعلام
-  // بيخدم القوايم، لكن الجلب بالمعرّف المباشر لازم يتفحص بإيده —
-  // وإلا أي حد يعرف رقم فاتورة يقراها.
-  // ⚠ حاجز المحل الأول ودايمًا. الجلب بالمعرّف المباشر لازم
-  // يتفحص بإيده — الفلتر في القوايم مش بيحمي النداء ده.
-  if (sale.tenantId !== actor.tenantId) throw Errors.notFound('الفاتورة');
-
-  if ('branchId' in scope && sale.branchId !== scope.branchId) {
-    throw Errors.forbidden('branch scope');
-  }
-  if (staffId && sale.staffId !== staffId) {
-    throw Errors.forbidden('sale scope');
-  }
+  assertSaleReadable(actor, sale, scope, staffId);
 
   return sale;
 }
@@ -284,12 +425,14 @@ export async function getSale(
  * ولو حصرناها في المدير، هيبقى لازم يسأله في كل تصحيح — والنتيجة
  * إن التصحيح ما بيحصلش أصلاً والتاريخ يفضل غلط.
  *
+ * ══ ⚠ والتاريخ ده بيحرّك الضمان معاه ══
+ * الضمان بيتحسب من `exitDate`. يعني تعديل التاريخ بيقدّم أو
+ * يأخّر تاريخ انتهاء الضمان تلقائيًا — وده الصح، لأن الضمان
+ * بيبدأ يوم ما البضاعة تخرج للزبون.
+ *
  * ══ الحريّة معاها أثر ══
  * تعديل التاريخ بينقل إيراد من شهر لشهر. فكل تعديل بيتسجّل في
  * سجل التدقيق بالقيمة القديمة والجديدة ومين عمله.
- *
- * تشبيه محاسبي: القيد العكسي مسموح، بس بيتكتب في الدفتر بتوقيع.
- * مش ممنوع — مكتوب.
  */
 export async function updateSaleExitDate(
   deps: SaleDeps,
@@ -340,6 +483,8 @@ export async function updateSaleExitDate(
       to: exitDate,
       totalPiastres: sale.totalPiastres,
       staffId: sale.staffId,
+      // الضمان بيتحرّك مع التاريخ، فالسجل لازم يقول كان كام
+      warrantyDays: sale.warrantyDays ?? null,
     },
   });
 
@@ -347,6 +492,36 @@ export async function updateSaleExitDate(
 }
 
 // ─────────── أدوات ───────────
+
+/**
+ * قراءة مدة الضمان.
+ *
+ * ⚠ التلات حالات مفصولة عن بعض عن قصد:
+ *   undefined → الافتراضي (30 وقت البيع، null وقت التعديل)
+ *   null      → مفيش ضمان، بقرار صريح
+ *   رقم       → المدة دي
+ *
+ * ولاحظ إن `0` **قيمة صحيحة** مش فاضية: معناها "ضمان صفر يوم"،
+ * يعني الجهاز خرج بلا ضمان وده مكتوب صراحةً. مختلف عن الخانة
+ * اللي محدش لمسها.
+ */
+function readWarrantyDays(
+  raw: unknown,
+  options: { defaultWhenMissing?: number | null } = {},
+): number | null {
+  if (raw === undefined) {
+    return options.defaultWhenMissing === undefined
+      ? DEFAULT_WARRANTY_DAYS
+      : options.defaultWhenMissing;
+  }
+  if (raw === null || raw === '') return null;
+
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days < 0 || days > MAX_WARRANTY_DAYS) {
+    throw Errors.validation(`مدة الضمان من 0 إلى ${MAX_WARRANTY_DAYS} يوم، أو اتركها فارغة.`);
+  }
+  return days;
+}
 
 function trimOrNull(value: string | null | undefined, max: number, message: string): string | null {
   const trimmed = typeof value === 'string' ? value.trim() : '';
