@@ -34,10 +34,15 @@ import {
 } from '../application/use-cases/users';
 import { createBranch, listBranches } from '../application/use-cases/branches';
 import {
+  createTreasury,
+  getFinancialSummary,
   getSalaryStatement,
   listBalances,
+  listTransfers,
   recordMovement,
   reviewMovement,
+  transferBetweenTreasuries,
+  updateTreasury,
 } from '../application/use-cases/treasury';
 import {
   createProduct,
@@ -716,6 +721,143 @@ treasuryRoutes.get(
     const statement = await getSalaryStatement(container.treasury, c.get('user'), userId, from, to);
 
     return c.json({ ok: true, statement });
+  },
+);
+
+
+/**
+ * الملخّص المالي — فلوسك فين.
+ *
+ * ⚠ نداء واحد بيرجّع الصفوف والمجاميع مع بعض، لأنهم متحسبين
+ * من **نفس** البيانات. لو الشاشة طلبت المجاميع في نداء تاني،
+ * كان ممكن يوصلها إجمالي من لحظة وأجزاء من لحظة تانية.
+ */
+treasuryRoutes.get(
+  '/summary',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const summary = await getFinancialSummary(container.treasury, c.get('user'));
+    return c.json({ ok: true, ...summary });
+  },
+);
+
+/**
+ * إنشاء خزينة — صاحب المحل وحده.
+ *
+ * ⚠ الحارس هنا بـ`EXPENSE_CREATE` بس؛ فحص الدور جوّه حالة
+ * الاستخدام وجوّه دالة القاعدة. مفيش صلاحية مخصّصة لإنشاء
+ * الخزائن، وعمل واحدة عشان فعل بيحصل مرة كل شهور كان هيزوّد
+ * الكتالوج بلا فايدة.
+ */
+treasuryRoutes.post(
+  '/treasuries',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }),
+  async (c) => {
+    const body = await readJson<{
+      branchId?: string;
+      name?: string;
+      type?: string;
+      provider?: string | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    const created = await createTreasury(container.treasury, c.get('user'), {
+      branchId: String(body.branchId ?? ''),
+      name: String(body.name ?? ''),
+      type: String(body.type ?? ''),
+      provider: body.provider ?? null,
+    });
+
+    return c.json({ ok: true, ...created, message: 'تمت إضافة الخزينة.' }, 201);
+  },
+);
+
+/**
+ * تعديل خزينة.
+ *
+ * ⚠ مفيش حقل للنوع هنا عن قصد. تحويل خزينة من نقدي لمحفظة بعد
+ * ما اتسجّل عليها حركات معناه إن كل حركة قديمة بقت في مكان غير
+ * اللي حصلت فيه — والدفتر بيكدب بأثر رجعي.
+ */
+treasuryRoutes.patch(
+  '/treasuries/:id',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الخزينة مفقود.');
+
+    const body = await readJson<{
+      name?: string | null;
+      provider?: string | null;
+      isActive?: boolean | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await updateTreasury(container.treasury, c.get('user'), id, body);
+
+    return c.json({ ok: true, ...result, message: 'تم حفظ التعديل.' });
+  },
+);
+
+/**
+ * تحويل بين خزينتين.
+ *
+ * ⚠ الطلب بياخد **طلع كام** و**وصل كام** — مفيش خانة للعمولة.
+ * هي الفرق بينهم، بتتحسب في القاعدة وبيحرسها قيد.
+ *
+ * لو كانت خانة تالتة، كان ممكن تتبعت أرقام متناقضة (طلع ١٠٠٠،
+ * وصل ٩٨٠، عمولة ٥٠) ومحدش يعرف مين الصح.
+ */
+treasuryRoutes.post(
+  '/transfers',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_APPROVE] }),
+  async (c) => {
+    const body = await readJson<{
+      fromTreasuryId?: string;
+      toTreasuryId?: string;
+      sent?: string;
+      received?: string;
+      note?: string | null;
+      date?: string | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await transferBetweenTreasuries(container.treasury, c.get('user'), {
+      fromTreasuryId: String(body.fromTreasuryId ?? ''),
+      toTreasuryId: String(body.toTreasuryId ?? ''),
+      sent: String(body.sent ?? ''),
+      received: String(body.received ?? ''),
+      note: body.note ?? null,
+      date: body.date ?? null,
+    });
+
+    return c.json(
+      {
+        ok: true,
+        ...result,
+        message:
+          result.feePiastres > 0
+            ? `تم التحويل. العمولة ${(result.feePiastres / 100).toFixed(2)} ج.م`
+            : 'تم التحويل بلا عمولة.',
+      },
+      201,
+    );
+  },
+);
+
+treasuryRoutes.get(
+  '/transfers',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const transfers = await listTransfers(
+      container.treasury,
+      c.get('user'),
+      c.req.query('from') ?? null,
+      c.req.query('to') ?? null,
+    );
+    return c.json({ ok: true, transfers });
   },
 );
 
