@@ -109,12 +109,16 @@ import {
 } from '../application/use-cases/closings';
 import {
   bootstrapPlatformAdmin,
+  broadcast,
   createTenant,
   getTenantCensus,
+  listPlatformAnnouncements,
+  listTenantBranches,
   listTenants,
   purgeTenant,
   setTenantActive,
   setTenantBranchLimit,
+  withdrawAnnouncement,
 } from '../application/use-cases/platform';
 import {
   createCustomer,
@@ -1961,6 +1965,108 @@ platformRoutes.post(
     return c.json({ ok: true, purged: result });
   },
 );
+
+/**
+ * فروع محل — لقائمة التوجيه.
+ *
+ * ⚠ الأسماء بس. الدالة في القاعدة بترفض أي حد مش مشغّل منصّة،
+ * والحارس هنا بيفحص `tenant.view` كمان.
+ */
+platformRoutes.get(
+  '/:id/branches',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_VIEW], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المحل مفقود.');
+
+    const container = buildContainer(c.env);
+    const branches = await listTenantBranches(container.platform, c.get('user'), id);
+    return c.json({ ok: true, branches });
+  },
+);
+
+/** سجل ما أُرسل، مع عدّاد القراءة */
+platformRoutes.get(
+  '/announcements',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const announcements = await listPlatformAnnouncements(container.platform, c.get('user'));
+    return c.json({ ok: true, announcements });
+  },
+);
+
+/**
+ * بثّ إعلان.
+ *
+ * ⚠ `tenantId` فاضي معناه **كل المحلات المفعّلة**. والرد بيقول
+ * `sentCount` — عدد المحلات اللي وصلها فعلاً.
+ *
+ * الرقم ده مهم في الرد مش في السجل بس: زرار واحد بيوصل لكل
+ * عملائك، والمستخدم لازم يشوف حجم اللي حصل فورًا.
+ */
+platformRoutes.post(
+  '/announcements',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }),
+  async (c) => {
+    const body = await readJson<{
+      tenantId?: string | null;
+      audience?: string;
+      branchId?: string | null;
+      title?: string;
+      body?: string;
+      severity?: string;
+      isMandatory?: boolean;
+      endsAt?: string | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    const result = await broadcast(container.platform, c.get('user'), {
+      tenantId: body.tenantId ?? null,
+      audience: body.audience,
+      branchId: body.branchId ?? null,
+      title: String(body.title ?? ''),
+      body: String(body.body ?? ''),
+      severity: body.severity,
+      isMandatory: body.isMandatory,
+      endsAt: body.endsAt ?? null,
+    });
+
+    return c.json(
+      {
+        ok: true,
+        ...result,
+        message:
+          result.sentCount === 1
+            ? 'تم البثّ لمحل واحد.'
+            : `تم البثّ لـ ${result.sentCount} محل.`,
+      },
+      201,
+    );
+  },
+);
+
+/**
+ * سحب إعلان.
+ *
+ * ⚠ بيشيل **صف واحد**. لو البثّ راح لأربعين محل، دول أربعين
+ * صف وكل واحد بيتسحب لوحده — عشان تقدر تسحب من محل وتسيبه
+ * عند الباقيين.
+ */
+platformRoutes.delete(
+  '/announcements/:id',
+  requireAuth({ requireAll: [PERMISSIONS.TENANT_MANAGE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الإعلان مفقود.');
+
+    const container = buildContainer(c.env);
+    await withdrawAnnouncement(container.platform, c.get('user'), id);
+
+    return c.json({ ok: true, message: 'تم سحب الإعلان.' });
+  },
+);
+
 
 /**
  * تأسيس أول حساب مشغّل منصّة.
