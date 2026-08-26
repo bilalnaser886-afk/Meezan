@@ -327,6 +327,96 @@ export interface TenantRepository {
     deletedUsers: number;
     deletedSales: number;
   }>;
+
+  // ─────────── الإعلانات ───────────
+  //
+  // ⚠ البثّ بقى لمشغّل المنصّة وحده، ومن غير أي صلاحية جديدة.
+  // القدرة جاية من فحص الدور جوّه دوال القاعدة — لأن الفحص
+  // الأمني الدوري بيفشل لو مشغّل المنصّة اتدّى أي صلاحية غير
+  // `tenant.view` و`tenant.manage`.
+
+  /**
+   * أسماء فروع محل — لشاشة التوجيه.
+   *
+   * ⚠ الأسماء بس. ولا رقم مالي ولا مبيعات ولا مستخدمين.
+   * كل عمود زيادة هنا بيوسّع اللي المنصّة بتشوفه عن عملائها،
+   * وده الحد الأدنى اللي التوجيه لفرع محتاجه.
+   */
+  branchesOf(actorId: string, tenantId: string): Promise<TenantBranchOption[]>;
+
+  /**
+   * البثّ.
+   *
+   * ⚠ `tenantId: null` معناها **كل المحلات المفعّلة**، والدالة
+   * بتكتب **صف لكل محل** مش صف واحد للكل.
+   *
+   * الصف الواحد كان هيكسر تلات حاجات: قاعدة "المحل على كل صف"،
+   * ومحو المحل ما يعرفش يشيل نصيبه، والإقرار بالقراءة يبقى
+   * مشترك بين محلات ما تعرفش بعض.
+   */
+  broadcast(input: PlatformBroadcastInput): Promise<{ sentCount: number }>;
+  announcements(actorId: string, limit: number): Promise<PlatformAnnouncementRow[]>;
+  withdrawAnnouncement(actorId: string, announcementId: string): Promise<void>;
+}
+
+// ─────────── إعلانات المنصّة ───────────
+
+export interface TenantBranchOption {
+  branchId: string;
+  branchName: string;
+  branchCode: string;
+}
+
+/**
+ * جمهور الإعلان.
+ *
+ * ⚠ نص مش enum في القاعدة — عشان أي قيمة جديدة تبقى سطر واحد
+ * بدل تشغيلتين منفصلتين. نفس اللي اتعمل في `product_type`
+ * و`treasuries.type`.
+ */
+export type AnnouncementAudience =
+  | 'ALL'
+  | 'OWNERS_ONLY'
+  | 'MANAGERS_ONLY'
+  | 'STAFF_ONLY'
+  | 'SINGLE_BRANCH';
+
+export interface PlatformBroadcastInput {
+  actorId: string;
+  /** null = كل المحلات المفعّلة */
+  tenantId: string | null;
+  audience: AnnouncementAudience;
+  /** إلزامي مع SINGLE_BRANCH بس */
+  branchId: string | null;
+  title: string;
+  body: string;
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  isMandatory: boolean;
+  endsAt: Date | null;
+}
+
+export interface PlatformAnnouncementRow {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  title: string;
+  body: string;
+  severity: string;
+  audience: string;
+  branchName: string | null;
+  isMandatory: boolean;
+  startsAt: Date;
+  endsAt: Date | null;
+  createdAt: Date;
+  /** كام واحد ضغط "قرأت وفهمت" */
+  readCount: number;
+  /**
+   * كام المفروض يشوفوه.
+   *
+   * ⚠ إعلان إلزامي من غير الرقم ده = بثّ في الفراغ. "٣ قروه"
+   * مالهاش معنى من غير ما تعرف ٣ من كام.
+   */
+  targetCount: number;
 }
 
 // ═══════════════════ الخزينة ═══════════════════
