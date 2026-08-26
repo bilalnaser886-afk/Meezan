@@ -320,6 +320,11 @@ app.get('/app', requireAuth({ redirectOnFail: true }), async (c) => {
       // ⚠ الاتنين دول مختلفين: الأولانية بتفتح الشاشة، والتانية
       // بتحدّد شكلها. مدير الفرع بيفتح ومش بيشوف التكلفة.
       canViewReport: user.permissions.includes(PERMISSIONS.REPORT_VIEW_BRANCH),
+      // ⚠ صلاحية مختلفة عن التقرير عن قصد: المندوب بيشوف
+      // اليومية (عشان يقفلها لو المالك اختاره) وما بيشوفش
+      // قائمة الدخل. لو استخدمنا نفس العلم، الزرار كان
+      // هيختفي عن اللي المفروض يضغطه.
+      canViewClosings: user.permissions.includes(PERMISSIONS.SALES_VIEW_BRANCH),
       canSeeCost: user.permissions.includes(PERMISSIONS.PROFIT_VIEW_REAL),
       canManageSuppliers: user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE),
       canViewMaintenance: user.permissions.includes(PERMISSIONS.MAINTENANCE_VIEW),
