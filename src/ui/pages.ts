@@ -23,6 +23,10 @@ import { BASE_CSS } from './styles';
 import { formatDate } from '../domain/dates';
 import { PWA_REGISTER_JS } from './icons';
 import { formatPiastres } from '../domain/money';
+import {
+  TREASURY_TYPE_LABELS,
+  treasuryLabel,
+} from '../application/use-cases/treasury';
 
 
 /**
@@ -2039,7 +2043,61 @@ export interface TreasuryPageData {
     type: string;
     balancePiastres: number;
     movementCount: number;
+    provider?: string | null;
   }>;
+
+  /**
+   * الملخّص المالي — فلوسك فين.
+   *
+   * ⚠ المجاميع جاية **محسوبة** من حالة الاستخدام مش بتتحسب هنا.
+   * لو الشاشة حسبتها بنفسها، كان ممكن تختلف مع اللي الـAPI
+   * بيرجّعه لأي حد تاني بيقرا نفس البيانات.
+   */
+  summary: {
+    rows: Array<{
+      treasuryId: string;
+      name: string;
+      type: string;
+      provider: string | null;
+      branchId: string | null;
+      branchName: string | null;
+      isActive: boolean;
+      balancePiastres: number;
+      movementCount: number;
+    }>;
+    branches: Array<{
+      branchId: string | null;
+      branchName: string;
+      totalPiastres: number;
+      rows: Array<{
+        treasuryId: string;
+        name: string;
+        type: string;
+        provider: string | null;
+        balancePiastres: number;
+      }>;
+    }>;
+    byType: Array<{ type: string; label: string; totalPiastres: number; count: number }>;
+    totalPiastres: number;
+    scopeLabel: string;
+  };
+
+  transfers: Array<{
+    id: string;
+    fromName: string;
+    toName: string;
+    sentPiastres: number;
+    receivedPiastres: number;
+    feePiastres: number;
+    transferDate: string;
+    createdByName: string | null;
+  }>;
+
+  /** صاحب المحل — بيضيف خزائن ويختار الفرع */
+  isOwner: boolean;
+  /** expense.approve — نفس صلاحية الإيداع والسحب */
+  canTransfer: boolean;
+  branches: Array<{ id: string; name: string }>;
   movements: TreasuryMovementView[];
   pending: TreasuryMovementView[];
   /**
@@ -2081,11 +2139,18 @@ const TYPE_LABEL: Record<string, string> = {
   ADJUSTMENT: 'تسوية',
 };
 
-const TREASURY_TYPE_LABEL: Record<string, string> = {
-  CASH: 'كاش',
-  VISA: 'فيزا',
-  INSTAPAY: 'إنستاباي',
-};
+/**
+ * ⚠ الأسماء بتتقرا من حالة الاستخدام مش مكتوبة هنا.
+ *
+ * كانت مكتوبة في المكانين، والنسخة اللي هنا كانت بتقول "كاش"
+ * للنقدي — وهي دلوقتي اسم نوع تاني تمامًا (المحفظة). يعني
+ * الشاشة كانت هتقول "كاش" للدرج و"محفظة" لفودافون، والموظّف
+ * يختار غلط.
+ *
+ * ده بالظبط اللي بيحصل لما نفس المعلومة تتكتب مرتين: بتتغيّر
+ * في واحدة وتفضل القديمة في التانية.
+ */
+const TREASURY_TYPE_LABEL: Record<string, string> = TREASURY_TYPE_LABELS;
 
 function movementRowsHtml(items: TreasuryMovementView[], currentUserId: string, canApprove: boolean): Html {
   if (items.length === 0) return html`<p class="muted">لا توجد حركات.</p>`;
@@ -2126,22 +2191,71 @@ function movementRowsHtml(items: TreasuryMovementView[], currentUserId: string, 
 }
 
 export function treasuryPage(data: TreasuryPageData): Html {
-  const total = data.balances.reduce((sum, b) => sum + b.balancePiastres, 0);
+  // ⚠ الإجمالي من الملخّص مش محسوب هنا.
+  //
+  // الملخّص بيحسبه من نفس الصفوف اللي بيعرضها، فمستحيل الرقم
+  // اللي فوق يخالف اللي تحته. لو حسبناه هنا من `balances`،
+  // كان ممكن يبقى فيه مصدرين للرقم الواحد.
+  const total = data.summary.totalPiastres;
 
   const balancesHtml =
-    data.balances.length === 0
-      ? html`<p class="muted">لا توجد خزائن. يضيفها المالك من قاعدة البيانات حاليًا.</p>`
+    data.summary.rows.length === 0
+      ? html`<p class="muted">لا توجد خزائن بعد.</p>`
       : html`<div class="balances">
-          ${data.balances.map(
+          ${data.summary.rows.map(
             (b) => html`<div class="bal-card">
-              <span class="bal-name">${b.name}</span>
-              <span class="bal-meta">${TREASURY_TYPE_LABEL[b.type] ?? b.type} · ${b.movementCount} حركة</span>
+              <span class="bal-name">${treasuryLabel(b)}</span>
+              <span class="bal-meta">
+                ${TREASURY_TYPE_LABEL[b.type] ?? b.type} · ${b.movementCount} حركة${
+                  b.isActive ? '' : ' · موقوفة'
+                }
+              </span>
               <span class="bal-amount" data-negative="${b.balancePiastres < 0 ? 'true' : 'false'}">
                 ${formatPiastres(b.balancePiastres)}<span class="bal-cur">ج.م</span>
               </span>
             </div>`,
           )}
         </div>`;
+
+  /**
+   * الملخّص المالي: نفس الفلوس من تلات زوايا.
+   *
+   * ⚠ التلاتة مجموعهم واحد بالظبط — لأنهم متحسبين من نفس
+   * الصفوف. الزاوية بتتغيّر، الرقم لأ.
+   *
+   *   بالنوع  → نقدي كام، محافظ كام، فيزا كام
+   *   بالفرع  → كل فرع فيه كام، ومقسّمة على خزائنه
+   *   الإجمالي → المجموع
+   */
+  const summaryHtml = html`
+    <div class="balances">
+      ${data.summary.byType.map(
+        (t) => html`<div class="bal-card">
+          <span class="bal-name">${t.label}</span>
+          <span class="bal-meta">${t.count} خزينة</span>
+          <span class="bal-amount" data-negative="${t.totalPiastres < 0 ? 'true' : 'false'}">
+            ${formatPiastres(t.totalPiastres)}<span class="bal-cur">ج.م</span>
+          </span>
+        </div>`,
+      )}
+    </div>
+
+    ${data.summary.branches.map(
+      (br) => html`<details class="panel">
+        <summary>${br.branchName} — ${formatPiastres(br.totalPiastres)} ج.م</summary>
+        <div class="panel-body">
+          ${br.rows.map(
+            (r) => html`<div class="mv-row">
+              <span class="mv-title">${treasuryLabel(r)}</span>
+              <span class="mv-sub">${TREASURY_TYPE_LABEL[r.type] ?? r.type}</span>
+              <span class="mv-amount" data-dir="${r.balancePiastres < 0 ? 'OUT' : 'IN'}">
+                ${formatPiastres(r.balancePiastres)}
+              </span>
+            </div>`,
+          )}
+        </div>
+      </details>`,
+    )}
 
   return shell({
     title: 'الخزينة',
@@ -2157,11 +2271,131 @@ export function treasuryPage(data: TreasuryPageData): Html {
 <main class="shell">
   <div class="balances" style="margin-bottom:18px">
     ${balancesHtml}
-    ${data.balances.length > 1
+    ${data.summary.rows.length > 1
       ? html`<div class="bal-card bal-total">
-          <span class="bal-name">الإجمالي</span>
+          <span class="bal-name">الإجمالي — ${data.summary.scopeLabel}</span>
           <span class="bal-amount" data-negative="${total < 0 ? 'true' : 'false'}">${formatPiastres(total)}<span class="bal-cur">ج.م</span></span>
         </div>`
+      : ''}
+
+    ${data.summary.branches.length > 1 || data.summary.byType.length > 1
+      ? html`<details class="panel">
+          <summary>فلوسك فين</summary>
+          <div class="panel-body">${summaryHtml}</div>
+        </details>`
+      : ''}
+
+    ${data.canTransfer
+      ? html`<details class="panel">
+          <summary>تحويل بين الخزائن</summary>
+          <div class="panel-body">
+            <p class="muted">
+              اكتب المبلغ الذي خرج والمبلغ الذي وصل. الفرق بينهما يُحسب عمولة تلقائيًا.
+            </p>
+
+            <div class="field">
+              <label class="field-label" for="tr-from">من خزينة</label>
+              <select class="field-input" id="tr-from">
+                ${data.summary.rows
+                  .filter((r) => r.isActive)
+                  .map((r) => html`<option value="${r.treasuryId}">${treasuryLabel(r)}</option>`)}
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="tr-to">إلى خزينة</label>
+              <select class="field-input" id="tr-to">
+                ${data.summary.rows
+                  .filter((r) => r.isActive)
+                  .map((r) => html`<option value="${r.treasuryId}">${treasuryLabel(r)}</option>`)}
+              </select>
+              <p class="field-hint">لا بد أن تكون الخزينتان في نفس الفرع.</p>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="tr-sent">المبلغ الذي خرج</label>
+              <input class="field-input" id="tr-sent" type="text" inputmode="decimal" dir="ltr">
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="tr-recv">المبلغ الذي وصل</label>
+              <input class="field-input" id="tr-recv" type="text" inputmode="decimal" dir="ltr">
+              <p class="field-hint" id="tr-fee">العمولة تظهر هنا.</p>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="tr-note">ملاحظة (اختياري)</label>
+              <input class="field-input" id="tr-note" type="text" maxlength="500">
+            </div>
+
+            <button class="btn-primary" type="button" id="tr-go">تنفيذ التحويل</button>
+          </div>
+        </details>`
+      : ''}
+
+    ${data.transfers.length > 0
+      ? html`<details class="panel">
+          <summary>آخر التحويلات</summary>
+          <div class="panel-body">
+            ${data.transfers.map(
+              (t) => html`<div class="mv-row">
+                <span class="mv-title">${t.fromName} ← ${t.toName}</span>
+                <span class="mv-sub">
+                  ${formatDate(t.transferDate)} · خرج ${formatPiastres(t.sentPiastres)} ·
+                  وصل ${formatPiastres(t.receivedPiastres)}${
+                    t.feePiastres > 0 ? ` · عمولة ${formatPiastres(t.feePiastres)}` : ''
+                  }${t.createdByName ? ` — ${t.createdByName}` : ''}
+                </span>
+              </div>`,
+            )}
+          </div>
+        </details>`
+      : ''}
+
+    ${data.isOwner
+      ? html`<details class="panel">
+          <summary>إضافة خزينة</summary>
+          <div class="panel-body">
+            <p class="muted">
+              كل وسيلة دفع خزينة مستقلة. يمكن إنشاء أكثر من واحدة من النوع نفسه —
+              فيزا الأهلي وفيزا CIB، أو محفظتين تحت فودافون.
+            </p>
+
+            <div class="field">
+              <label class="field-label" for="tz-branch">الفرع</label>
+              <select class="field-input" id="tz-branch">
+                ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="tz-type">النوع</label>
+              <select class="field-input" id="tz-type">
+                <option value="CASH">نقدي — ورق في الدرج</option>
+                <option value="WALLET">محفظة — فودافون كاش وأمثالها</option>
+                <option value="VISA">فيزا أو حساب بنكي</option>
+                <option value="INSTAPAY">إنستاباي</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="tz-name">اسم الخزينة</label>
+              <input class="field-input" id="tz-name" type="text" maxlength="60"
+                placeholder="مثال: محفظة فودافون — الكاشير">
+            </div>
+
+            <div class="field" id="tz-prov-field">
+              <label class="field-label" for="tz-prov">الجهة</label>
+              <input class="field-input" id="tz-prov" type="text" maxlength="60"
+                placeholder="فودافون · الأهلي · CIB">
+              <p class="field-hint">
+                البنك للفيزا، وشركة الاتصالات للمحفظة. النقدي لا جهة له.
+              </p>
+            </div>
+
+            <button class="btn-primary" type="button" id="tz-go">إضافة</button>
+          </div>
+        </details>`
       : ''}
   </div>
 
@@ -2472,6 +2706,164 @@ ${MENU_JS}
       btn.disabled = false;
     }
   });
+
+  /**
+   * رسالة للمستخدم في شريط الحركات.
+   *
+   * ⚠ اتعرّفت هنا لأن السكربت ده مالوش دالة رسايل مشتركة —
+   * كل معالج بيجيب العناصر بنفسه. ونداء say من غير تعريف
+   * بيرمي خطأ وقت التشغيل بس، والزرار بيسكت بلا أي رسالة.
+   *
+   * ده الفخ رقم ١٦ في وثيقة المشروع، ومسكه الفاحص.
+   */
+  function say(message, ok) {
+    var el = document.getElementById('mvmsg');
+    var txt = document.getElementById('mvmsg-text');
+    if (!el || !txt) return;
+
+    el.hidden = false;
+    if (ok) el.setAttribute('data-tone', 'ok');
+    else el.removeAttribute('data-tone');
+    txt.textContent = message;
+  }
+
+  // ══════════ التحويل بين الخزائن ══════════
+  //
+  // ⚠ مفيش خانة للعمولة — هي الفرق بين اللي خرج واللي وصل،
+  // وبتتعرض لحظيًا وإنت بتكتب.
+  //
+  // لو كانت خانة تالتة، كان ممكن تكتب أرقام متناقضة (خرج ١٠٠٠،
+  // وصل ٩٨٠، عمولة ٥٠) — ودلوقتي التناقض ده مستحيل.
+  var trSent = document.getElementById('tr-sent');
+  var trRecv = document.getElementById('tr-recv');
+  var trFee  = document.getElementById('tr-fee');
+
+  function trNum(el) {
+    if (!el) return NaN;
+    var raw = String(el.value || '').trim()
+      .replace(/[\u0660-\u0669]/g, function (d) {
+        return String(d.charCodeAt(0) - 0x0660);
+      })
+      .replace(/[\s,_]/g, '');
+    if (raw === '') return NaN;
+    return parseFloat(raw);
+  }
+
+  function showFee() {
+    if (!trFee) return;
+    var a = trNum(trSent);
+    var b = trNum(trRecv);
+
+    if (isNaN(a) || isNaN(b)) { trFee.textContent = 'العمولة تظهر هنا.'; return; }
+    if (b > a) { trFee.textContent = 'المبلغ الذي وصل أكبر من الذي خرج.'; return; }
+
+    var fee = Math.round((a - b) * 100) / 100;
+    trFee.textContent = fee === 0
+      ? 'بلا عمولة.'
+      : 'العمولة: ' + fee.toFixed(2) + ' ج.م';
+  }
+
+  if (trSent) trSent.addEventListener('input', showFee);
+  if (trRecv) trRecv.addEventListener('input', showFee);
+
+  var trGo = document.getElementById('tr-go');
+  if (trGo) {
+    trGo.addEventListener('click', async function () {
+      var from = document.getElementById('tr-from');
+      var to   = document.getElementById('tr-to');
+      if (!from || !to) return;
+
+      // الحارس ده قدّام الرد من الخادم: السبب المحدد أنفع من
+      // رسالة عامة بعد رحلة شبكة
+      if (from.value === to.value) {
+        say('اختر خزينتين مختلفتين.', false);
+        return;
+      }
+
+      trGo.disabled = true;
+      try {
+        var res = await fetch('/api/treasury/transfers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            fromTreasuryId: from.value,
+            toTreasuryId: to.value,
+            sent: trSent ? trSent.value : '',
+            received: trRecv ? trRecv.value : '',
+            note: (document.getElementById('tr-note') || {}).value || null
+          })
+        });
+        var d = await res.json().catch(function () { return null; });
+
+        if (res.ok && d && d.ok) {
+          say(d.message || 'تم التحويل.', true);
+          setTimeout(function () { location.reload(); }, 900);
+          return;
+        }
+        say((d && d.error && d.error.message) || 'تعذّر التحويل.', false);
+      } catch (err) {
+        // ⚠ مش بنقول "ما اتحوّلش" — إحنا مش عارفين. الطلب ممكن
+        // يكون وصل واتنفّذ والرد هو اللي ضاع.
+        say('انقطع الاتصال. حدّث الصفحة وتأكّد قبل إعادة المحاولة.', false);
+      } finally {
+        trGo.disabled = false;
+      }
+    });
+  }
+
+  // ══════════ إضافة خزينة ══════════
+  var tzType = document.getElementById('tz-type');
+  var tzProv = document.getElementById('tz-prov-field');
+
+  function syncProvider() {
+    if (!tzType || !tzProv) return;
+    // ⚠ النقدي مالوش جهة — الدرج مش بنك
+    tzProv.hidden = tzType.value === 'CASH';
+  }
+  if (tzType) { tzType.addEventListener('change', syncProvider); syncProvider(); }
+
+  var tzGo = document.getElementById('tz-go');
+  if (tzGo) {
+    tzGo.addEventListener('click', async function () {
+      var branch = document.getElementById('tz-branch');
+      var name   = document.getElementById('tz-name');
+      if (!branch || !name) return;
+
+      if (!branch.value) { say('اختر الفرع.', false); return; }
+      if (String(name.value || '').trim().length < 2) {
+        say('اكتب اسم الخزينة.', false);
+        return;
+      }
+
+      tzGo.disabled = true;
+      try {
+        var res = await fetch('/api/treasury/treasuries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            branchId: branch.value,
+            name: name.value,
+            type: tzType ? tzType.value : 'CASH',
+            provider: (document.getElementById('tz-prov') || {}).value || null
+          })
+        });
+        var d = await res.json().catch(function () { return null; });
+
+        if (res.ok && d && d.ok) {
+          say(d.message || 'تمت الإضافة.', true);
+          setTimeout(function () { location.reload(); }, 900);
+          return;
+        }
+        say((d && d.error && d.error.message) || 'تعذّرت الإضافة.', false);
+      } catch (err) {
+        say('تعذّر الاتصال بالخادم.', false);
+      } finally {
+        tzGo.disabled = false;
+      }
+    });
+  }
 })();
 `;
 }
