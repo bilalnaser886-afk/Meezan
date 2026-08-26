@@ -658,6 +658,27 @@ function shell(opts: { title: string; noIndex?: boolean; body: Html; script: str
 <title>${opts.title}</title>
 ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive">') : ''}
 
+<!-- ═══ الإضاءة — قبل أي رسم ═══
+     ⚠ السكربت ده لازم يفضل هنا في الرأس ومتزامن.
+     لو اتأخر لآخر الصفحة، المتصفح بيرسم الوضع الفاتح الأول
+     وبعدين يقلبه — وميض أبيض في وش المستخدم كل تحميل.
+     ولو كان في وضع ليلي في أوضة ضلمة، الوميض ده بيوجع فعلاً.
+
+     والمفتاح مخزّن محليًا مش على الخادم: ده تفضيل عرض،
+     ما يستاهلش رحلة شبكة ولا صف في قاعدة البيانات.
+
+     ⚠ وفيه try حواليه لأن بعض المتصفحات بتمنع التخزين المحلي
+     في التصفح الخاص — والثيم ما يصحّش يمنع الصفحة من الفتح. -->
+<script>
+(function(){
+  try{
+    var t = localStorage.getItem('mz-theme');
+    if(!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    if(t === 'dark') document.documentElement.setAttribute('data-theme','dark');
+  }catch(e){}
+})();
+</script>
+
 <!-- ═══ التثبيت كتطبيق ═══
      البيان بيخدم أندرويد وويندوز وماك. سفاري على iOS ما بيقراش
      البيان للأيقونة، فبيحتاج apple-touch-icon صراحةً. -->
@@ -792,6 +813,9 @@ function appBar(opts: {
       </div>
       <a class="menu-item" href="/customers">بيانات العملاء</a>
       <a class="menu-item" href="/password">تغيير كلمة المرور</a>
+      <button class="menu-item" type="button" data-action="theme">
+        الإضاءة<span class="menu-note" id="theme-label"></span>
+      </button>
       <button class="menu-item" type="button" data-action="lock">قفل الشاشة</button>
       <button class="menu-item" type="button" data-action="logout" data-danger>تسجيل الخروج</button>
     </div>
@@ -876,9 +900,49 @@ const MENU_JS = `
     if (e.key === 'Escape' && menu.open) menu.open = false;
   });
 
+  // ══════════ الإضاءة ══════════
+  //
+  // ⚠ التطبيق الفعلي في رأس الصفحة قبل الرسم. الجزء ده
+  // للتبديل واللافتة بس.
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark'
+      ? 'dark' : 'light';
+  }
+
+  function paintThemeLabel() {
+    var el = document.getElementById('theme-label');
+    if (!el) return;
+    // ⚠ اللافتة بتقول الوضع **الحالي** مش اللي هيتحوّل له.
+    // "نهاري" جنب زرار في وضع نهاري = حالة. لو كتبناها
+    // "تحويل لليلي" تبقى أمر، والاتنين مع بعض بيلخبطوا.
+    el.textContent = currentTheme() === 'dark' ? 'ليلي' : 'نهاري';
+  }
+
+  paintThemeLabel();
+
   menu.addEventListener('click', async function (e) {
     var btn = e.target.closest ? e.target.closest('[data-action]') : null;
     if (!btn) return;
+
+    if (btn.getAttribute('data-action') === 'theme') {
+      var next = currentTheme() === 'dark' ? 'light' : 'dark';
+
+      if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      else document.documentElement.removeAttribute('data-theme');
+
+      // ⚠ لون شريط المتصفح بيتغيّر معاه، وإلا هيفضل أخضر
+      // فاتح فوق شاشة غامقة في أندرويد
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', next === 'dark' ? '#0E1613' : '#16211D');
+
+      try { localStorage.setItem('mz-theme', next); } catch (err) {}
+      paintThemeLabel();
+
+      // ⚠ القايمة بتفضل مفتوحة عن قصد — عشان تشوف الفرق
+      // وإنت شايف الزرار، وتقدر ترجع بضغطة تانية لو ما عجبكش.
+      return;
+    }
+
     menu.open = false;
 
     if (btn.getAttribute('data-action') === 'logout') {
@@ -2372,9 +2436,9 @@ export function treasuryPage(data: TreasuryPageData): Html {
             <div class="field">
               <label class="field-label" for="tz-type">النوع</label>
               <select class="field-input" id="tz-type">
-                <option value="CASH">نقدي — ورق في الدرج</option>
-                <option value="WALLET">محفظة — فودافون كاش وأمثالها</option>
-                <option value="VISA">فيزا أو حساب بنكي</option>
+                <option value="CASH">نقدي</option>
+                <option value="WALLET">محفظة</option>
+                <option value="VISA">فيزا</option>
                 <option value="INSTAPAY">إنستاباي</option>
               </select>
             </div>
@@ -5746,6 +5810,9 @@ export function platformPage(data: PlatformPageData): Html {
     <div class="menu-panel" role="menu">
       <div class="menu-row"><span>الحساب</span><b>${data.username}</b></div>
       <a class="menu-item" href="/password">تغيير كلمة المرور</a>
+      <button class="menu-item" type="button" data-action="theme">
+        الإضاءة<span class="menu-note" id="theme-label"></span>
+      </button>
       <button class="menu-item" type="button" data-action="logout">تسجيل الخروج</button>
     </div>
   </div>
