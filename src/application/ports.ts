@@ -381,6 +381,17 @@ export interface ExpenseReason {
   tenantId: string;
   name: string;
   isAdvance: boolean;
+  /**
+   * سبب "شراء بضاعة" — أصل بيتحوّل لأصل، مش مصروف.
+   *
+   * ⚠ قائمة الدخل بتستبعده، وشاشة الخزينة بتخفيه من قائمة أسباب
+   * المصروف: الشرا له مساره الخاص اللي بيكتب بيان (صنف · كمية ·
+   * مورّد) جنب الحركة.
+   *
+   * من غير العلم ده، هيبقى فيه **طريقتين** لتسجيل نفس الحاجة —
+   * واحدة ببيان وواحدة من غير. والتانية بتلغي الميزة كلها.
+   */
+  isInventory: boolean;
   branchId: string | null;
 }
 
@@ -645,6 +656,14 @@ export interface CreateSaleInput {
   customerPhone: string | null;
   /** null = تاريخ النهاردة بتوقيت القاهرة */
   exitDate: string | null;
+  /**
+   * مدة الضمان بالأيام.
+   *
+   * ⚠ `null` معناها **مفيش ضمان**، مش "الافتراضي".
+   * الافتراضي (30) بيتحطّ في حالة الاستخدام قبل ما يوصل هنا،
+   * فاللي بيوصل للقاعدة دايمًا قرار صريح.
+   */
+  warrantyDays: number | null;
 }
 
 export interface CreateSaleResult {
@@ -671,6 +690,14 @@ export interface SaleSummary {
    * وده ختم تقني ما بيتغيّرش. تعديل الأول ما بيلمسش التاني.
    */
   exitDate: string;
+  /**
+   * مدة الضمان بالأيام — `null` يعني الفاتورة بلا ضمان.
+   *
+   * ⚠ تاريخ انتهاء الضمان = `exitDate + warrantyDays`. يعني
+   * تعديل تاريخ الخروج بيحرّك الضمان معاه، وده الصح: الضمان
+   * بيبدأ يوم ما البضاعة تخرج للزبون مش يوم تسجيل الفاتورة.
+   */
+  warrantyDays: number | null;
 }
 
 /** صف الفاتورة بعد إضافة اسم الموظّف — نفس نمط EnrichedMovement */
@@ -736,6 +763,14 @@ export interface CreateReturnInput {
   reason: string | null;
   /** فاضي = النهاردة بتوقيت القاهرة */
   returnDate: string | null;
+  /**
+   * تجاوز الضمان — صاحب المحل وحده.
+   *
+   * ⚠ القيمة دي **نيّة** مش نتيجة. القاعدة هي اللي بتقرر لو
+   * الضمان انتهى فعلاً؛ لو الفاتورة لسه في الضمان، العلم ده
+   * ما بيعملش حاجة والنتيجة بترجع `warrantyOverridden: false`.
+   */
+  overrideWarranty: boolean;
 }
 
 export interface CreateReturnResult {
@@ -745,6 +780,14 @@ export interface CreateReturnResult {
   feePiastres: number;
   itemCount: number;
   movementId: string;
+  /**
+   * هل حصل تجاوز ضمان فعلاً؟
+   *
+   * ⚠ دي **النتيجة** مش النيّة — وسجل التدقيق بيكتب منها هي،
+   * مش من اللي الطلب بعته. الفرق بيبان لما حد يبعت العلم على
+   * فاتورة لسه في الضمان: مفيش تجاوز حصل، والسجل لازم يقول كده.
+   */
+  warrantyOverridden: boolean;
 }
 
 /** صف في رفّ المراجعة — مرتجع مستنّي قرار */
@@ -1259,4 +1302,279 @@ export interface AnnouncementRepository {
     endsAt: Date | null;
     createdById: string;
   }): Promise<{ id: string }>;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  الضمان · شراء البضاعة · تقفيل اليومية
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════ الضمان ═══════════════════
+
+/**
+ * حالة ضمان فاتورة.
+ *
+ * ⚠ `warrantyDays === null` معناها **مفيش ضمان**، مش "الافتراضي".
+ * والفرق ده بيحكم الاسترجاع كله: الفاتورة اللي بلا ضمان كل مرتجع
+ * عليها محتاج موافقة صاحب المحل.
+ */
+export interface WarrantyStatus {
+  /** null = بلا ضمان */
+  warrantyDays: number | null;
+  /** تاريخ خروج البضاعة — الضمان بيبدأ منه مش من وقت التسجيل */
+  startsOn: string;
+  /** null لو مفيش ضمان */
+  expiresOn: string | null;
+  /** موجب = لسه فيه أيام. سالب = انتهى من كام يوم. null = مفيش ضمان */
+  daysLeft: number | null;
+  isCovered: boolean;
+}
+
+export interface WarrantyChangeResult {
+  previousDays: number | null;
+  newDays: number | null;
+  expiresOn: string | null;
+}
+
+export interface WarrantyRepository {
+  status(saleId: string): Promise<WarrantyStatus | null>;
+  /**
+   * تعديل الضمان بعد البيع.
+   *
+   * ⚠ الحراسة (صاحب المحل وحده + حاجز المحل) جوّه دالة قاعدة
+   * البيانات. الفحص في حالة الاستخدام بيتكرّر معاها عن قصد.
+   */
+  setDays(
+    saleId: string,
+    actorId: string,
+    warrantyDays: number | null,
+  ): Promise<WarrantyChangeResult>;
+}
+
+// ═══════════════════ شراء البضاعة ═══════════════════
+
+export interface CreatePurchaseInput {
+  actorId: string;
+  treasuryId: string;
+  amountPiastres: number;
+  itemName: string;
+  quantity: number;
+  supplierId: string | null;
+  note: string | null;
+}
+
+export interface CreatePurchaseResult {
+  purchaseId: string;
+  movementId: string;
+  /** PENDING لو المنفّذ مالوش صلاحية اعتماد */
+  status: 'PENDING' | 'APPROVED';
+}
+
+export interface PurchaseRow {
+  id: string;
+  movementId: string;
+  itemName: string;
+  quantity: number;
+  /** ⚠ مبلغ الحركة **هو** التكلفة. مفيش عمود تاني. */
+  amountPiastres: number;
+  supplierId: string | null;
+  supplierName: string | null;
+  status: string;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+  createdByName: string | null;
+}
+
+export interface PurchaseFilter {
+  tenantId: string;
+  branchId: string | null;
+  from: string | null;
+  to: string | null;
+  limit: number;
+}
+
+export interface PurchaseRepository {
+  /**
+   * تسجيل شراء — حركة الخزينة والبيان مع بعض في معاملة واحدة.
+   *
+   * ⚠ الاعتماد بيتحدّد **جوّه القاعدة** من صلاحيات المنفّذ، مش
+   * من الطلب. لو التطبيق هو اللي بيقول "دي معتمدة"، أي طلب
+   * معدّل بإيد يقدر يعتمد مصروف لنفسه.
+   */
+  create(input: CreatePurchaseInput): Promise<CreatePurchaseResult>;
+  list(filter: PurchaseFilter): Promise<PurchaseRow[]>;
+  /**
+   * أسماء الموردين بس — لملء القائمة المنسدلة.
+   *
+   * ⚠ ودي **مش** `SupplierRepository.listBalances`، والفرق مقصود:
+   * الأرصدة والديون معلومة مالية مقفولة بـ`supplier.manage`،
+   * لكن **الاسم** لازم يوصل لأي حد بيسجّل شرا.
+   *
+   * لو خلّينا المندوب يكتب الاسم بإيده، هنرجع لنفس بق
+   * `products.source`: "أحمد للموبايلات" و"احمد للموبايلات"
+   * تاجرين مختلفين والدين ما بيقفلش.
+   */
+  listSupplierNames(tenantId: string): Promise<{ id: string; name: string }[]>;
+}
+
+// ═══════════════════ تقفيل اليومية ═══════════════════
+
+/** الأدوار اللي ينفع تتختار. صاحب المحل خارج القايمة — بيقفل دايمًا. */
+export type ClosingRole = 'BRANCH_MANAGER' | 'STAFF';
+
+export interface ClosingPreview {
+  canClose: boolean;
+  /** السبب لو `canClose` بـ false — بيتعرض قبل الضغط مش بعده */
+  reason: string | null;
+  periodFrom: Date;
+  minutesOpen: number;
+  /** الدقايق الفاضلة على حارس التلات ساعات. صفر = تقدر تقفل. */
+  minutesLeft: number;
+  salesCount: number;
+  salesPiastres: number;
+  returnsCount: number;
+  movementsCount: number;
+  closingRoles: ClosingRole[];
+}
+
+export interface ClosingSummary {
+  id: string;
+  branchId: string;
+  branchName: string;
+  periodFrom: Date;
+  periodTo: Date;
+  salesCount: number;
+  salesPiastres: number;
+  returnsCount: number;
+  returnsPiastres: number;
+  expensesPiastres: number;
+  advancesPiastres: number;
+  purchasesPiastres: number;
+  cashInPiastres: number;
+  cashOutPiastres: number;
+  note: string | null;
+  closedById: string;
+  closedByName: string | null;
+  closedAt: Date;
+}
+
+/**
+ * سطر بيع جوّه اللقطة.
+ *
+ * ⚠ ده **نسخة مستقلة** مش رابط للفاتورة الحيّة. لو الفاتورة
+ * اتعدّلت بكرة، السطر ده ما بيتغيّرش — وده الغرض كله.
+ */
+export interface ClosingSaleLine {
+  id: string;
+  at: string;
+  exitDate: string;
+  totalPiastres: number;
+  customer: string | null;
+  phone: string | null;
+  staff: string | null;
+  treasury: string | null;
+  warrantyDays: number | null;
+  items: {
+    name: string;
+    serial: string | null;
+    quantity: number;
+    unitPricePiastres: number;
+  }[];
+}
+
+export interface ClosingMovementLine {
+  id: string;
+  at: string;
+  occurredAt: string;
+  type: string;
+  direction: string;
+  status: string;
+  amountPiastres: number;
+  reason: string | null;
+  person: string | null;
+  by: string | null;
+  treasury: string | null;
+  note: string | null;
+}
+
+export interface ClosingPurchaseLine {
+  movementId: string;
+  at: string;
+  amountPiastres: number;
+  status: string;
+  /** ممكن تكون فاضية: حركة شرا قديمة اتسجّلت قبل ما البيان يبقى موجود */
+  item: string | null;
+  quantity: number | null;
+  supplier: string | null;
+  by: string | null;
+  treasury: string | null;
+  note: string | null;
+}
+
+/**
+ * الظرف المقفول.
+ *
+ * ⚠ `undefined` هنا معناها **مالكش صلاحية** مش "مفيش بيانات".
+ * الدالة في قاعدة البيانات ما بترجّعهاش أصلاً لمن مالوش
+ * `profit.view_real` — فالرقم مش موجود في الرد الخام، مش مخفي
+ * في الشاشة.
+ */
+export interface ClosingCostSnapshot {
+  cogsPiastres: number;
+  grossProfitPiastres: number;
+  lines: {
+    saleId: string;
+    name: string;
+    quantity: number;
+    unitCostPiastres: number;
+    unitPricePiastres: number;
+  }[];
+}
+
+export interface ClosingDetail extends Omit<ClosingSummary, 'closedById'> {
+  sales: ClosingSaleLine[];
+  movements: ClosingMovementLine[];
+  purchases: ClosingPurchaseLine[];
+  /** موجودة لصاحب المحل بس */
+  cost?: ClosingCostSnapshot;
+}
+
+export interface CloseDayResult {
+  closingId: string;
+  periodFrom: Date;
+  periodTo: Date;
+  salesCount: number;
+  salesPiastres: number;
+  returnsPiastres: number;
+  expensesPiastres: number;
+  purchasesPiastres: number;
+  cashInPiastres: number;
+  cashOutPiastres: number;
+}
+
+export interface ClosingRolesChange {
+  previousRoles: ClosingRole[];
+  newRoles: ClosingRole[];
+}
+
+export interface ClosingRepository {
+  preview(branchId: string, actorId: string): Promise<ClosingPreview>;
+  close(branchId: string, actorId: string, note: string | null): Promise<CloseDayResult>;
+  list(scope: ListScope, limit: number): Promise<ClosingSummary[]>;
+  /**
+   * ⚠ `tenantId` معامل إلزامي مش سياق حواليه.
+   * الجلب بالمعرّف المباشر مش محمي بأي فلتر قوايم — من غيره أي
+   * حد يعرف رقم يومية يقراها من محل تاني.
+   */
+  detail(
+    closingId: string,
+    tenantId: string,
+    includeCost: boolean,
+  ): Promise<ClosingDetail | null>;
+  setRoles(
+    branchId: string,
+    actorId: string,
+    roles: ClosingRole[],
+  ): Promise<ClosingRolesChange>;
 }
