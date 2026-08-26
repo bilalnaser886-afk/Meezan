@@ -1,832 +1,1701 @@
 /**
- * الخزينة — منطق حركة الفلوس
+ * العقود (Ports)
  *
- * ══ المبدأ اللي بيحكم الملف كله ══
- * الدفتر هو الحقيقة. الرصيد مش رقم مخزّن، هو ناتج جمع الحركات
- * المعتمدة. والحركة المعلّقة **ما بتأثّرش على الرصيد** لحد ما
- * تتعتمد — زي شيك اتكتب ولسه ما اتصرفش.
+ * الملف ده بيوصف **الوظيفة** المطلوبة، مش الأداة.
+ * تشبيه: خطة المدرّب بتقول "قِس النبض"، مش "استخدم جهاز ماركة كذا".
  *
- * ══ تشبيه ══
- * الموظّف بيكتب طلب صرف في الدفتر. المدير بيمضي جنبه.
- * قبل الإمضا، الفلوس لسه في الخزنة على الورق.
- *
- * ══ والخزينة مش نوع واحد ══
- * نقدي · محفظة · فيزا · إنستاباي — وكل واحدة ليها **جهة**
- * (البنك أو شركة الاتصالات). وتقدر تعمل أكتر من واحدة من نفس
- * النوع: فيزا الأهلي وفيزا CIB، محفظة فودافون ومحفظة اتصالات.
- *
- * ⚠ والنقدي مش الكاش. فلوس محفظة فودافون **مش في الدرج** —
- * لو عدّيناها نقدي، هتقفل الدرج آخر اليوم تلاقي ورق أقل من
- * الدفتر، وتفضل تدوّر على فرق مش موجود.
+ * وده اللي خلّى نقلة المشروع من Node إلى كلاودفلير رخيصة:
+ * العقد اتغيّر في سطرين بس (التوكنات بقت async لأن Web Crypto async)،
+ * وكل المنطق فوقه فضل زي ما هو.
  */
 
-import { DateError, parseDateInput } from '../../domain/dates';
-import { Errors } from '../../domain/errors';
-import { MoneyError, parseMoneyToPiastres } from '../../domain/money';
-import { PERMISSIONS } from '../../domain/permissions';
-import type {
-  AuditLogger,
-  AuthenticatedUser,
-  Clock,
-  ListScope,
-  EnrichedMovement,
-  ExpenseReasonRepository,
-  ManualMovementType,
-  MovementDirection,
-  MovementRepository,
-  MovementStatus,
-  SalaryStatement,
-  TransferRow,
-  TransferTreasuryResult,
-  TreasuryBalance,
-  TreasuryRepository,
-  TreasurySummaryRow,
-  TreasuryType,
-  UserRepository,
-} from '../ports';
-
-export interface TreasuryDeps {
-  treasuries: TreasuryRepository;
-  movements: MovementRepository;
-  expenseReasons: ExpenseReasonRepository;
-  users: UserRepository;
-  clock: Clock;
-  audit: AuditLogger;
-}
+import type { PermissionKey } from '../domain/permissions';
 
 /**
- * أسماء الأنواع بالعربي.
+ * ⚠ لاحظ إن "المالك" اتقسم لاتنين.
  *
- * ⚠ مكانها هنا مش في الواجهة عشان تبقى **مصدر واحد**: الشاشة
- * والـAPI وأي تصدير مستقبلي بيقروا من نفس المكان. لو اتكتبت في
- * الواجهة كمان، هييجي يوم تتغيّر في واحدة وتفضل القديمة في التانية.
+ *   PLATFORM_ADMIN  إنت. بتفتح محلات وتوقف اللي ما دفعش،
+ *                   وما بتقراش أرباح حد.
+ *   SUPER_ADMIN     صاحب المحل. "مالك" جوّه محله بس، وما يعرفش
+ *                   إن فيه محلات تانية في النظام أصلاً.
+ *
+ * الكلمة كان معناها واحد لما كان المحل واحد.
  */
-export const TREASURY_TYPE_LABELS: Record<TreasuryType, string> = {
-  CASH: 'نقدي',
-  WALLET: 'محفظة',
-  VISA: 'فيزا',
-  INSTAPAY: 'إنستاباي',
-};
+export type RoleKey = 'PLATFORM_ADMIN' | 'SUPER_ADMIN' | 'BRANCH_MANAGER' | 'STAFF';
 
-const VALID_TYPES: TreasuryType[] = ['CASH', 'WALLET', 'VISA', 'INSTAPAY'];
-
-/**
- * اتجاه كل نوع حركة — ثابت مش اختيار من المستخدم.
- *
- * ليه؟ عشان "مصروف بيزوّد الرصيد" يبقى مستحيل. الاتجاه صفة
- * ملازمة للنوع، مش حقل حرّ حد ممكن يغلط فيه أو يتلاعب بيه.
- *
- * ⚠ لاحظ `ManualMovementType` مش `MovementType`.
- * نوع البيع (SALE) وأنواع التحويل (TRANSFER_IN/OUT) **مش** في
- * الجدول ده عن قصد — البيع بيتولّد من دالة البيع الذرية،
- * والتحويل من دالة التحويل الذرية. عمرهم ما بيتسجّلوا من شاشة
- * الحركات اليدوية.
- *
- * لو حد جه بكرة وحاول يضيفهم هنا عشان "يكمّل الجدول"، لازم
- * يقرا السطور دي الأول ويفهم إن النقص مقصود.
- */
-const DIRECTION: Record<ManualMovementType, MovementDirection> = {
-  DEPOSIT: 'IN',
-  WITHDRAWAL: 'OUT',
-  EXPENSE: 'OUT',
-  ADVANCE: 'OUT',
-  ADJUSTMENT: 'IN', // التسوية بتتعامل بشكل خاص تحت
-};
-
-/** الأنواع اللي محتاجة صلاحية اعتماد عشان تتسجّل أصلاً */
-const RESTRICTED_TYPES: ManualMovementType[] = ['DEPOSIT', 'WITHDRAWAL', 'ADJUSTMENT'];
-
-export interface RecordMovementInput {
-  treasuryId: string;
-  /** البيع مستبعد بالنوع نفسه — مفيش طريقة تمرّره من هنا */
-  type: ManualMovementType;
-  amountPiastres: number;
-  expenseReasonId?: string | null;
-  relatedUserId?: string | null;
-  note?: string | null;
-  /** للتسوية فقط — الأنواع التانية اتجاهها ثابت */
-  adjustmentDirection?: MovementDirection;
-}
-
-export async function recordMovement(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  input: RecordMovementInput,
-): Promise<{ id: string; status: MovementStatus }> {
-  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_CREATE)) {
-    throw Errors.forbidden(PERMISSIONS.EXPENSE_CREATE);
-  }
-
-  const canApprove = actor.permissions.includes(PERMISSIONS.EXPENSE_APPROVE);
-
-  // إيداع / سحب / تسوية: دي حركات بتغيّر الرصيد من بره دورة البيع
-  // العادية، فمينفعش موظّف يعملها حتى كطلب معلّق.
-  if (RESTRICTED_TYPES.includes(input.type) && !canApprove) {
-    throw Errors.forbidden(PERMISSIONS.EXPENSE_APPROVE);
-  }
-
-  if (!Number.isInteger(input.amountPiastres) || input.amountPiastres <= 0) {
-    throw Errors.validation('المبلغ غير صالح.');
-  }
-
-  // ─── نطاق الخزينة ───
-  const scope = await deps.treasuries.findScope(input.treasuryId);
-  if (!scope) throw Errors.notFound('الخزينة');
-  assertScopeAccess(actor, scope.tenantId, scope.branchId);
-
-  // ─── الحقول المشروطة بالنوع ───
-  let expenseReasonId: string | null = null;
-  let relatedUserId: string | null = null;
-
-  // ⚠ السبب مطلوب للمصروف وحده.
-  //
-  // السُلفة سببها معروف من نوعها — "سُلفة" هي السبب. لما كنّا
-  // بنطلب سبب معاها كمان، كان لازم يبقى فيه بند اسمه "سُلفة موظّف"
-  // في قائمة الأسباب، فيبقى نفس المعلومة مكتوبة في مكانين:
-  // في `type` وفي `expense_reason_id`. ولما يختلفوا، مين الصح؟
-  //
-  // قيد قاعدة البيانات `expense_needs_reason` أصلاً بيطلب السبب
-  // للمصروف بس — يعني الاشتراط الزيادة ده كان من عندنا، والقاعدة
-  // مش محتاجاه.
-  if (input.type === 'EXPENSE') {
-    if (!input.expenseReasonId) throw Errors.validation('اختر سبب الصرف.');
-
-    const reason = await deps.expenseReasons.findById(input.expenseReasonId);
-    // سبب من محل تاني = غير موجود بالنسبة لك
-    if (!reason || reason.tenantId !== actor.tenantId) {
-      throw Errors.validation('سبب الصرف غير موجود.');
-    }
-
-    // ⚠ شرا البضاعة له مساره الخاص اللي بيكتب بيان (صنف · كمية ·
-    // مورّد) جنب الحركة. لو سمحنا بيه هنا كمصروف عادي، هيبقى فيه
-    // طريقتين لتسجيل نفس الحاجة — واحدة ببيان وواحدة من غير،
-    // والتانية بتلغي الميزة كلها.
-    if (reason.isInventory) {
-      throw Errors.validation('استخدم "شراء بضاعة" من قائمة النوع لتسجيل بيانه.');
-    }
-
-    // سبب خاص بفرع تاني ما ينفعش يتستخدم هنا
-    if (reason.branchId && reason.branchId !== scope.branchId) {
-      throw Errors.validation('سبب الصرف هذا غير متاح لهذا الفرع.');
-    }
-    expenseReasonId = reason.id;
-  }
-
-  if (input.type === 'ADVANCE') {
-    if (!input.relatedUserId) throw Errors.validation('اختر الموظّف صاحب السُلفة.');
-
-    const target = await deps.users.findById(input.relatedUserId);
-    if (!target || target.deletedAt || target.tenantId !== actor.tenantId) {
-      throw Errors.validation('الموظّف غير موجود.');
-    }
-
-    // السُلفة بتتخصم من راتب حد — فلازم يكون في نطاقك
-    assertScopeAccess(actor, target.tenantId, target.branchId);
-    relatedUserId = target.id;
-  }
-
-  // ─── الاتجاه ───
-  const direction =
-    input.type === 'ADJUSTMENT' ? (input.adjustmentDirection ?? 'IN') : DIRECTION[input.type];
-
-  if (input.type === 'ADJUSTMENT' && direction !== 'IN' && direction !== 'OUT') {
-    throw Errors.validation('اتجاه التسوية غير صحيح.');
-  }
-
-  // ─── الاعتماد ───
-  // اللي عنده صلاحية اعتماد، حركته بتتعتمد فورًا وباسمه.
-  // اللي مالوش، حركته بتفضل معلّقة وما بتأثّرش على الرصيد.
-  const now = deps.clock.now();
-  const status: MovementStatus = canApprove ? 'APPROVED' : 'PENDING';
-
-  const note = input.note?.trim() || null;
-  if (note && note.length > 500) throw Errors.validation('الملاحظة طويلة جدًا.');
-
-  const created = await deps.movements.create({
-    tenantId: actor.tenantId,
-    treasuryId: input.treasuryId,
-    branchId: scope.branchId,
-    direction,
-    type: input.type,
-    amountPiastres: input.amountPiastres,
-    status,
-    expenseReasonId,
-    relatedUserId,
-    note,
-    occurredAt: now,
-    createdById: actor.id,
-    approvedById: canApprove ? actor.id : null,
-    approvedAt: canApprove ? now : null,
-  });
-
-  await deps.audit.record({
-    actorId: actor.id,
-    action: 'treasury.movement.create',
-    entity: 'TreasuryMovement',
-    entityId: created.id,
-    metadata: {
-      type: input.type,
-      direction,
-      amountPiastres: input.amountPiastres,
-      status,
-      treasuryId: input.treasuryId,
-    },
-  });
-
-  return { id: created.id, status };
-}
-
-/**
- * اعتماد أو رفض حركة معلّقة.
- *
- * ⚠ المعتمِد لازم يكون **غير** اللي أنشأها. من غير القاعدة دي،
- * "الاعتماد" يبقى خطوة شكلية أي حد يعمل لنفسه — وده اللي بيسمّى
- * في المحاسبة فصل المهام (segregation of duties).
- */
-export async function reviewMovement(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  movementId: string,
-  decision: 'APPROVED' | 'REJECTED',
-): Promise<void> {
-  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_APPROVE)) {
-    throw Errors.forbidden(PERMISSIONS.EXPENSE_APPROVE);
-  }
-
-  const movement = await deps.movements.findById(movementId);
-  if (!movement) throw Errors.notFound('الحركة');
-
-  if (movement.status !== 'PENDING') {
-    throw Errors.validation('سبق مراجعة هذه الحركة.');
-  }
-
-  // ⚠ حركة البيع معتمدة من لحظة إنشائها ومربوطة بفاتورة.
-  // الشرط اللي فوق بيمنعها أصلاً (حالتها APPROVED مش PENDING)،
-  // لكن الحارس ده صريح عشان أي تغيير مستقبلي في قواعد الاعتماد
-  // ما يفتحش باب "رفض" فاتورة مباعة والفلوس في الدرج.
-  if (movement.type === 'SALE') {
-    throw Errors.validation('لا تخضع حركة البيع للمراجعة. استخدم المرتجع.');
-  }
-
-  // ⚠ ونفس الكلام على التحويل: الفلوس اتنقلت فعلاً بين خزينتين،
-  // والطرفين مربوطين بمعرّف مجموعة واحد. "رفض" طرف واحد كان
-  // هيسيب فلوس طالعة من خزينة وما وصلتش للتانية.
-  if (movement.type === 'TRANSFER_IN' || movement.type === 'TRANSFER_OUT') {
-    throw Errors.validation('لا تخضع حركة التحويل للمراجعة.');
-  }
-
-  // فصل المهام: اللي كتب الطلب مش هو اللي يمضيه.
-  // عمليًا الحالة دي نادرة (صاحب صلاحية الاعتماد حركته بتتعتمد
-  // فورًا فما بتوصلش لحالة معلّقة)، بس الحارس موجود عشان أي
-  // تغيير مستقبلي في قواعد الاعتماد ما يفتحش الباب ده بالغلط.
-  if (movement.createdById === actor.id) {
-    throw Errors.forbidden('لا يمكن اعتماد حركة أنشأتها بنفسك.');
-  }
-
-  assertScopeAccess(actor, movement.tenantId, movement.branchId);
-
-  await deps.movements.review(movementId, decision, actor.id, deps.clock.now());
-
-  await deps.audit.record({
-    actorId: actor.id,
-    action: decision === 'APPROVED' ? 'treasury.movement.approve' : 'treasury.movement.reject',
-    entity: 'TreasuryMovement',
-    entityId: movementId,
-    metadata: { amountPiastres: movement.amountPiastres, type: movement.type },
-  });
-}
-
-// ─────────── الملخّص المالي ───────────
-
-export interface SummaryBranch {
+export interface AuthenticatedUser {
+  id: string;
+  username: string;
+  fullName: string;
+  roleKey: RoleKey;
+  /** ⚠ null معناها "كل فروع **محله هو**" — مش كل فروع النظام */
   branchId: string | null;
-  branchName: string;
-  totalPiastres: number;
-  rows: TreasurySummaryRow[];
-}
-
-export interface SummaryType {
-  type: string;
-  label: string;
-  totalPiastres: number;
-  count: number;
-}
-
-export interface FinancialSummary {
-  rows: TreasurySummaryRow[];
-  /** فلوسك مقسّمة على الفروع */
-  branches: SummaryBranch[];
-  /** ونفس الفلوس مقسّمة على الأنواع — نقدي كام، محافظ كام */
-  byType: SummaryType[];
-  /** المجموع الكلي */
-  totalPiastres: number;
-  scopeLabel: 'كل الفروع' | 'فرعك';
+  /** المحل اللي المستخدم تابع له. مفيش مستخدم بلا محل. */
+  tenantId: string;
+  tenantCode: string;
+  tenantName: string;
+  permissions: PermissionKey[];
+  mustChangePassword: boolean;
 }
 
 /**
- * الملخّص المالي: فلوسك فين، وكام في كل مكان.
+ * محتوى بطاقة الدخول. خفيف عمداً — بتتحمل مع كل طلب.
  *
- * ══ ⚠ كل الأرقام بتتحسب من **نفس الصفوف** ══
- * دي أهم تفصيلة في الدالة. المستودع بيرجّع صف لكل خزينة، وكل
- * المجاميع (الكلي · كل فرع · كل نوع) بتتحسب من المصفوفة دي هنا.
+ * ⚠ **المحل مش هنا عن قصد.**
  *
- * ليه مش تلات استعلامات؟ عشان **يستحيل المجموع يخالف الأجزاء**.
- * لو كل رقم له استعلامه، هييجي يوم واحد فيهم يتعدّل ويفضل الباقي
- * قديم — والشاشة تقول "الإجمالي ١٠٠٠" وتحته أربع خزائن مجموعهم
- * ٩٠٠، ومحدش يعرف مين الصح.
+ * الحارس بيقرا `sid` و `sub` بس، وبيجيب المستخدم وصلاحياته ومحله
+ * من قاعدة البيانات في كل طلب. باقي الحقول هنا معلوماتية.
  *
- * ودي نفس قاعدة الرصيد نفسه: **ناتج جمع مش رقم مخزّن**.
- *
- * ══ والموقوفة بتتحسب ══
- * الخزينة الموقوفة لسه فيها فلوس. إخفاؤها من المجموع كان هيخلّي
- * الإجمالي يكدب. وقاعدة البيانات بترفض إيقاف خزينة رصيدها مش
- * صفر أصلاً، فالحالة دي نادرة — بس المجموع لازم يفضل صادق.
+ * ولو حطّينا المحل في البطاقة، هيبقى عندنا نسخة تانية من الحقيقة
+ * بتعيش خمس دقايق: محل يتوقف اشتراكه، وموظّفه يفضل شغّال لحد ما
+ * بطاقته تنتهي. القراءة من القاعدة كل طلب بتخلّي الإيقاف فوري.
  */
-export async function getFinancialSummary(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-): Promise<FinancialSummary> {
-  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_CREATE)) {
-    throw Errors.forbidden(PERMISSIONS.EXPENSE_CREATE);
-  }
-
-  const branchScope = branchScopeFor(actor);
-  const rows = await deps.treasuries.summary(actor.tenantId, branchScope);
-
-  // ─── التجميع بالفرع ───
-  const branchMap = new Map<string, SummaryBranch>();
-  for (const row of rows) {
-    const key = row.branchId ?? '__tenant__';
-    let group = branchMap.get(key);
-    if (!group) {
-      group = {
-        branchId: row.branchId,
-        branchName: row.branchName ?? 'على مستوى المحل',
-        totalPiastres: 0,
-        rows: [],
-      };
-      branchMap.set(key, group);
-    }
-    group.rows.push(row);
-    group.totalPiastres += row.balancePiastres;
-  }
-
-  // ─── التجميع بالنوع ───
-  const typeMap = new Map<string, SummaryType>();
-  for (const row of rows) {
-    let group = typeMap.get(row.type);
-    if (!group) {
-      group = {
-        type: row.type,
-        label: TREASURY_TYPE_LABELS[row.type as TreasuryType] ?? row.type,
-        totalPiastres: 0,
-        count: 0,
-      };
-      typeMap.set(row.type, group);
-    }
-    group.totalPiastres += row.balancePiastres;
-    group.count += 1;
-  }
-
-  return {
-    rows,
-    branches: [...branchMap.values()],
-    byType: [...typeMap.values()],
-    totalPiastres: rows.reduce((sum, row) => sum + row.balancePiastres, 0),
-    scopeLabel: branchScope === null ? 'كل الفروع' : 'فرعك',
-  };
+export interface AccessTokenPayload {
+  sub: string; // معرّف المستخدم
+  sid: string; // معرّف الجلسة
+  role: RoleKey;
+  branchId: string | null;
+  perms: string[];
+  ver: number;
 }
 
-// ─────────── إدارة الخزائن ───────────
+export interface PasswordHasher {
+  hash(plain: string): Promise<string>;
+  verify(stored: string, plain: string): Promise<boolean>;
+  needsRehash(stored: string): boolean;
+}
 
-export interface CreateTreasuryRequest {
-  branchId: string;
+export interface TokenService {
+  signAccessToken(payload: AccessTokenPayload, ttlSeconds: number, secret: string): Promise<string>;
+  verifyAccessToken(token: string, secret: string): Promise<AccessTokenPayload>;
+  createRefreshToken(): Promise<{ raw: string; digest: string }>;
+  digestRefreshToken(raw: string): Promise<string>;
+}
+
+export interface Clock {
+  now(): Date;
+}
+
+export interface AuditLogger {
+  record(entry: {
+    actorId?: string | null;
+    action: string;
+    entity?: string;
+    entityId?: string;
+    metadata?: Record<string, unknown>;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  }): Promise<void>;
+}
+
+export interface RateLimiter {
+  /** بترجع الثواني المتبقية لو محظور، أو null لو مسموح */
+  check(key: string, limit: number, windowSeconds: number): Promise<number | null>;
+  reset(key: string): Promise<void>;
+}
+
+export interface UserRecord {
+  id: string;
+  tenantId: string;
+  tenantCode: string;
+  tenantName: string;
+  /** اشتراك المحل مفعّل؟ لو لأ، الدخول بيترفض برسالة مختلفة */
+  tenantActive: boolean;
+  username: string;
+  fullName: string;
+  passwordHash: string;
+  adminPasskeyHash: string | null;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  failedLoginCount: number;
+  lockedUntil: Date | null;
+  deletedAt: Date | null;
+  branchId: string | null;
+  roleKey: RoleKey;
+  permissions: PermissionKey[];
+}
+
+export interface UserRepository {
+  /**
+   * ⚠ الاسم لوحده مش كافي يميّز حد بعد نظام المحلات.
+   * نفس اسم المستخدم في محلّين = شخصين مختلفين تمامًا.
+   */
+  findByTenantAndUsername(tenantCode: string, username: string): Promise<UserRecord | null>;
+  findById(id: string): Promise<UserRecord | null>;
+  registerFailedLogin(userId: string, lockUntil: Date | null): Promise<void>;
+  clearLoginFailures(userId: string, loginAt: Date): Promise<void>;
+  updatePasswordHash(userId: string, hash: string): Promise<void>;
+  create(data: CreateUserInput): Promise<{ id: string }>;
+  listInScope(scope: ListScope): Promise<TeamMember[]>;
+  setActive(userId: string, isActive: boolean): Promise<void>;
+}
+
+/**
+ * نطاق البحث — صريح عمداً.
+ *
+ * ══ ليه مش `branchId: string | null`؟ ══
+ * لأن null معناها الغامض "كل الفروع"، ولو وصلت بالغلط من مدير فرع
+ * كان هيشوف كل مستخدمي النظام. ده اسمه fail-open: القفل يتعطّل
+ * فيفتح.
+ *
+ * ══ ⚠ التغيير الأخطر في المشروع كله ══
+ * النوع ده كان `{ allBranches: true } | { branchId }`.
+ * و `allBranches` كانت معناها في الكود: **ما تحطّش أي فلتر**.
+ *
+ * ده كان صح لما كل الفروع لمحل واحد. مع محلات كتير في نفس قاعدة
+ * البيانات، الجملة دي معناها إن كل صاحب محل بيشوف مبيعات وتكاليف
+ * وأرباح كل المحلات التانية.
+ *
+ * دلوقتي **مفيش حالة بلا محل** غير حالة واحدة صريحة اسمها
+ * `allTenants` لمشغّل المنصّة. أي استعلام ناسي المحل مش هيتبني
+ * أصلاً — المترجم بيقف عنده.
+ *
+ * تشبيه: قفل الباب مش لافتة عليه. اللافتة بتتقرا أو ما تتقراش،
+ * القفل بيشتغل في الحالتين.
+ */
+export type ListScope =
+  | { allTenants: true }
+  | { tenantId: string }
+  | { tenantId: string; branchId: string };
+
+/** بيانات إنشاء حساب جديد. الهاش يوصل هنا جاهز — المستودع لا يعرف شيئاً عن التشفير. */
+export interface CreateUserInput {
+  tenantId: string;
+  username: string;
+  fullName: string;
+  passwordHash: string;
+  roleKey: RoleKey;
+  branchId: string | null;
+}
+
+/** صف واحد في قائمة "الفريق" المعروضة للمدير أو المالك */
+export interface TeamMember {
+  id: string;
+  username: string;
+  fullName: string;
+  roleKey: RoleKey;
+  branchId: string | null;
+  isActive: boolean;
+  createdAt: Date;
+}
+
+export interface BranchSummary {
+  id: string;
+  tenantId: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+}
+
+export interface CreateBranchInput {
+  tenantId: string;
+  code: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+}
+
+export interface BranchRepository {
+  /** الفروع النشطة فقط — للقوائم المنسدلة */
+  listActive(tenantId: string): Promise<BranchSummary[]>;
+  /** كل الفروع غير المحذوفة، بما فيها المعطّلة — لشاشة الإدارة */
+  listAll(tenantId: string): Promise<BranchSummary[]>;
+  /**
+   * ⚠ المحل جزء من الفحص مش سياق حواليه.
+   * من غيره، صاحب محل يقدر يربط موظّف بفرع محل تاني لو خمّن معرّفه.
+   */
+  exists(tenantId: string, branchId: string): Promise<boolean>;
+  findByCode(tenantId: string, code: string): Promise<BranchSummary | null>;
+  create(data: CreateBranchInput): Promise<{ id: string }>;
+  /** عدد الفروع الحالية — لفحص حد الاشتراك */
+  countActive(tenantId: string): Promise<number>;
+}
+
+// ═══════════════════ المحلات ═══════════════════
+
+export interface TenantRecord {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  maxBranches: number;
+  notes: string | null;
+  createdAt: Date;
+}
+
+/** صف في شاشة إدارة المحلات — حجم استخدام، مش أرقام مالية */
+export interface TenantOverview extends TenantRecord {
+  branchCount: number;
+  userCount: number;
+  ownerName: string | null;
+}
+
+export interface TenantBranchInput {
+  code: string;
+  name: string;
+}
+
+export interface TenantUserInput {
+  username: string;
+  fullName: string;
+  /** الهاش بيوصل جاهز — المستودع ما بيعرفش حاجة عن كلمات المرور */
+  passwordHash: string;
+  role: 'BRANCH_MANAGER' | 'STAFF';
+  /** كود الفرع جوّه نفس المحل — بيتحوّل لمعرّف في قاعدة البيانات */
+  branchCode: string;
+}
+
+export interface CreateTenantInput {
+  code: string;
+  name: string;
+  maxBranches: number;
+  ownerUsername: string;
+  ownerFullName: string;
+  ownerPasswordHash: string;
+  /** فرع واحد على الأقل. كل فرع بياخد خزينة كاش تلقائيًا. */
+  branches: TenantBranchInput[];
+  /** ممكن تبقى فاضية — صاحب المحل يقدر يضيف بعدين */
+  users: TenantUserInput[];
+}
+
+/**
+ * جرد المحل قبل المحو.
+ *
+ * ⚠ ده الاستثناء الوحيد اللي بيوصل فيه رقم مالي لمشغّل المنصّة،
+ * وبيوصل في لحظة واحدة بس: شاشة تأكيد الحذف.
+ *
+ * السبب إنه **مش تقرير**، ده عدّاد خطورة. الفرق بين محل تجربة
+ * ومحل زبون حقيقي بيبان في رقم واحد — وبدونه المحو بيبقى دوسة
+ * في الضلمة.
+ */
+export interface TenantCensus {
+  code: string;
+  name: string;
+  isActive: boolean;
+  branchCount: number;
+  userCount: number;
+  productCount: number;
+  customerCount: number;
+  saleCount: number;
+  salesTotalPiastres: number;
+  movementCount: number;
+  auditCount: number;
+  /** لو true، المحو مرفوض: الحساب ده جوّاه ومسحه بيقفلك بره */
+  hasPlatformAdmin: boolean;
+}
+
+export interface TenantRepository {
+  findById(id: string): Promise<TenantRecord | null>;
+  findByCode(code: string): Promise<TenantRecord | null>;
+  /**
+   * ⚠ بترجّع حجم الاستخدام بس: عدد الفروع والمستخدمين.
+   * مفيش مبيعات ولا أرباح ولا أرصدة. مشغّل المنصّة بيحاسب على
+   * الاشتراك، مش بيتفرّج على الشغل.
+   */
+  listOverview(): Promise<TenantOverview[]>;
+  /**
+   * بتنشئ المحل وفروعه وحساباته وأسباب الصرف وخزائنه — كله معًا.
+   * يا الكل يتعمل يا مفيش حاجة تتعمل.
+   */
+  create(data: CreateTenantInput): Promise<{
+    tenantId: string;
+    ownerId: string;
+    branchCount: number;
+    userCount: number;
+  }>;
+  setActive(id: string, isActive: boolean): Promise<void>;
+  setMaxBranches(id: string, maxBranches: number): Promise<void>;
+  platformAdminExists(): Promise<boolean>;
+  createPlatformAdmin(data: {
+    tenantId: string;
+    username: string;
+    fullName: string;
+    passwordHash: string;
+    passkeyHash: string;
+  }): Promise<{ id: string }>;
+  /** جرد قبل المحو — قراءة بس، ما بتغيّرش ولا صف */
+  census(id: string): Promise<TenantCensus | null>;
+  /**
+   * المحو النهائي. **مفيش تراجع.**
+   *
+   * الأقفال الأربعة كلها متطبّقة جوّه دالة قاعدة البيانات كمان،
+   * مش هنا بس — عشان أي نداء من أي مكان يفضل محروس.
+   */
+  purge(id: string, actorId: string): Promise<{
+    code: string;
+    name: string;
+    deletedUsers: number;
+    deletedSales: number;
+  }>;
+}
+
+// ═══════════════════ الخزينة ═══════════════════
+
+export type MovementDirection = 'IN' | 'OUT';
+
+/**
+ * كل أنواع الحركة الموجودة في قاعدة البيانات.
+ *
+ * ⚠ التحويلات (TRANSFER_*) موجودة في القاعدة لكن لسه مش مفعّلة
+ * في التطبيق، فمش مدرجة هنا.
+ */
+export type MovementType =
+  | 'DEPOSIT'
+  | 'WITHDRAWAL'
+  | 'EXPENSE'
+  | 'ADVANCE'
+  | 'ADJUSTMENT'
+  | 'SALE'
+  | 'REFUND';
+
+/**
+ * الأنواع اللي المستخدم يقدر يسجّلها **بإيده** من شاشة الخزينة.
+ *
+ * ══ ليه البيع مستثنى بنوع منفصل؟ ══
+ * حركة البيع مش بتتكتب من شاشة الخزينة أبدًا — بتتولّد جوّه دالة
+ * البيع الذرية مع الفاتورة وخصم المخزون في نفس اللحظة.
+ *
+ * لو سمحنا بتسجيلها يدويًا، هيبقى ممكن تدخل فلوس على إنها "بيع"
+ * من غير فاتورة ولا خصم مخزون — يعني إيراد من غير بضاعة خرجت.
+ *
+ * `Exclude` هنا بتخلّي ده **خطأ في وقت البناء** مش خطأ وقت التشغيل.
+ * تشبيه: مش لافتة مكتوب عليها "ممنوع الدخول"، ده حيط.
+ */
+export type ManualMovementType = Exclude<MovementType, 'SALE' | 'REFUND'>;
+
+export type MovementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/** أنواع الخزائن — نص + CHECK في القاعدة، مش enum */
+export type TreasuryType = 'CASH' | 'WALLET' | 'VISA' | 'INSTAPAY';
+
+export interface TreasuryBalance {
+  treasuryId: string;
   name: string;
   type: string;
-  provider?: string | null;
+  branchId: string | null;
+  isActive: boolean;
+  /** بالقرش دايمًا */
+  balancePiastres: number;
+  movementCount: number;
+  /**
+   * الجهة — البنك للفيزا، وشركة الاتصالات للمحفظة.
+   *
+   * ⚠ عمود واحد للاتنين عن قصد: دول نفس السؤال — "الفلوس دي
+   * عند مين؟". عمودين معناهم إن كل تجميع لازم يفحص النوع الأول
+   * عشان يعرف يقرا من أنهي عمود، وأول واحد ينسى يطلّع تجميع
+   * ناقص وساكت.
+   *
+   * `null` للنقدي — الدرج مش بنك.
+   */
+  provider: string | null;
 }
 
-/**
- * إنشاء خزينة — صاحب المحل وحده.
- *
- * ══ ليه مقفولة عليه؟ ══
- * إضافة خزينة = فتح **مكان جديد الفلوس تعيش فيه**. وده قرار
- * مِلكية زي إنشاء فرع، مش قرار تشغيلي زي تسجيل مصروف.
- *
- * ولو فتحناها لمدير الفرع، كان هيقدر يعمل خزينة جديدة ويحوّل
- * عليها — والمجموع يبان مظبوط والفلوس في مكان مالكش عليه عين.
- *
- * ⚠ الفحص على الدور مباشرةً، وبيتكرّر جوّه دالة القاعدة.
- */
-export async function createTreasury(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  input: CreateTreasuryRequest,
-): Promise<{ treasuryId: string }> {
-  if (actor.roleKey !== 'SUPER_ADMIN') {
-    throw Errors.forbidden('إنشاء الخزائن لصاحب المحل وحده.');
-  }
-
-  const branchId = String(input.branchId ?? '').trim();
-  if (!branchId) throw Errors.validation('اختر الفرع.');
-
-  const name = String(input.name ?? '').trim();
-  if (name.length < 2 || name.length > 60) {
-    throw Errors.validation('اسم الخزينة من حرفين إلى 60 حرفًا.');
-  }
-
-  const type = String(input.type ?? '').trim().toUpperCase() as TreasuryType;
-  if (!VALID_TYPES.includes(type)) {
-    throw Errors.validation('نوع الخزينة غير معروف.');
-  }
-
-  // ⚠ النقدي مالوش جهة — الدرج مش بنك. بنفضّيها بهدوء بدل ما
-  // نرفض: المستخدم ممكن يكون ساب القيمة من اختيار قبله.
-  const provider = type === 'CASH' ? null : readProvider(input.provider);
-
-  const created = await deps.treasuries.create({
-    actorId: actor.id,
-    branchId,
-    name,
-    type,
-    provider,
-  });
-
-  await deps.audit.record({
-    actorId: actor.id,
-    action: 'treasury.create',
-    entity: 'Treasury',
-    entityId: created.treasuryId,
-    metadata: { name, type, provider, branchId, tenantId: actor.tenantId },
-  });
-
-  return created;
+/** صف في الملخّص المالي — رصيد خزينة واحدة باسم فرعها */
+export interface TreasurySummaryRow extends TreasuryBalance {
+  branchName: string | null;
+  lastMovementAt: Date | null;
 }
 
-export interface UpdateTreasuryRequest {
+export interface CreateTreasuryInput {
+  actorId: string;
+  branchId: string;
+  name: string;
+  type: TreasuryType;
+  provider: string | null;
+}
+
+export interface UpdateTreasuryInput {
+  treasuryId: string;
+  actorId: string;
   name?: string | null;
   provider?: string | null;
   isActive?: boolean | null;
 }
 
-/**
- * تعديل خزينة — الاسم والجهة والتفعيل.
- *
- * ⚠ النوع **ما بيتعدّلش**، ومفيش حقل ليه هنا أصلاً.
- *
- * تحويل خزينة من نقدي لمحفظة بعد ما اتسجّل عليها حركات معناه إن
- * كل حركة قديمة بقت في مكان غير اللي حصلت فيه فعلاً — والدفتر
- * بيكدب بأثر رجعي.
- *
- * عايز تغيّر النوع؟ اعمل خزينة جديدة وحوّل الرصيد. خطوتين
- * ظاهرتين في الدفتر أحسن من تعديل صامت.
- */
-export async function updateTreasury(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  treasuryId: string,
-  input: UpdateTreasuryRequest,
-): Promise<{ treasuryId: string; balancePiastres: number }> {
-  if (actor.roleKey !== 'SUPER_ADMIN') {
-    throw Errors.forbidden('تعديل الخزائن لصاحب المحل وحده.');
-  }
-  if (!treasuryId) throw Errors.validation('معرّف الخزينة مفقود.');
-
-  const patch: UpdateTreasuryRequest = {};
-
-  if (input.name !== undefined && input.name !== null) {
-    const name = String(input.name).trim();
-    if (name.length < 2 || name.length > 60) {
-      throw Errors.validation('اسم الخزينة من حرفين إلى 60 حرفًا.');
-    }
-    patch.name = name;
-  }
-  if (input.provider !== undefined) patch.provider = readProvider(input.provider);
-  if (input.isActive !== undefined && input.isActive !== null) {
-    patch.isActive = input.isActive === true;
-  }
-
-  if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
-
-  const result = await deps.treasuries.update({
-    treasuryId,
-    actorId: actor.id,
-    name: patch.name ?? null,
-    provider: patch.provider ?? null,
-    isActive: patch.isActive ?? null,
-  });
-
-  await deps.audit.record({
-    actorId: actor.id,
-    action: 'treasury.update',
-    entity: 'Treasury',
-    entityId: treasuryId,
-    metadata: { changed: Object.keys(patch), balancePiastres: result.balancePiastres },
-  });
-
-  return result;
-}
-
 // ─────────── التحويل بين الخزائن ───────────
 
-export interface TransferRequest {
+export interface TransferTreasuryInput {
+  actorId: string;
   fromTreasuryId: string;
   toTreasuryId: string;
-  /** نص من المستخدم — اللي طلع من المصدر */
-  sent: string;
-  /** نص كمان — اللي وصل للوجهة */
-  received: string;
-  note?: string | null;
-  date?: string | null;
+  /** اللي طلع من المصدر */
+  sentPiastres: number;
+  /** اللي وصل للوجهة */
+  receivedPiastres: number;
+  note: string | null;
+  date: string | null;
+}
+
+export interface TransferTreasuryResult {
+  transferId: string;
+  sentPiastres: number;
+  receivedPiastres: number;
+  /**
+   * ⚠ محسوبة مش مكتوبة — الفرق بين اللي طلع واللي وصل.
+   * وفيه قيد في القاعدة بيفرض إنها تساويه، فمستحيل تختلف.
+   */
+  feePiastres: number;
+  outMovementId: string;
+  inMovementId: string;
+  fromBalance: number;
+  toBalance: number;
+}
+
+export interface TransferRow {
+  id: string;
+  fromName: string;
+  toName: string;
+  sentPiastres: number;
+  receivedPiastres: number;
+  feePiastres: number;
+  transferDate: string;
+  note: string | null;
+  createdByName: string | null;
+  createdAt: Date;
+}
+
+export interface ExpenseReason {
+  id: string;
+  tenantId: string;
+  name: string;
+  isAdvance: boolean;
+  /**
+   * سبب "شراء بضاعة" — أصل بيتحوّل لأصل، مش مصروف.
+   *
+   * ⚠ قائمة الدخل بتستبعده، وشاشة الخزينة بتخفيه من قائمة أسباب
+   * المصروف: الشرا له مساره الخاص اللي بيكتب بيان (صنف · كمية ·
+   * مورّد) جنب الحركة.
+   *
+   * من غير العلم ده، هيبقى فيه **طريقتين** لتسجيل نفس الحاجة —
+   * واحدة ببيان وواحدة من غير. والتانية بتلغي الميزة كلها.
+   */
+  isInventory: boolean;
+  branchId: string | null;
+}
+
+export interface MovementRecord {
+  id: string;
+  tenantId: string;
+  treasuryId: string;
+  branchId: string | null;
+  direction: MovementDirection;
+  type: MovementType;
+  amountPiastres: number;
+  status: MovementStatus;
+  expenseReasonId: string | null;
+  relatedUserId: string | null;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+}
+
+/** سجل حركة بعد إضافة الأسماء — المستودع بيرجّع معرّفات، وحالة
+ *  الاستخدام بتحوّلها لأسماء من قوائم عندها أصلاً. ده بيتجنّب
+ *  ربط أربع علاقات في استعلام واحد (المستخدمون مربوطين 4 مرات
+ *  بجدول الحركات) — أبسط وأقل عرضة للكسر. */
+export interface EnrichedMovement extends MovementRecord {
+  treasuryName: string;
+  reasonName: string | null;
+  relatedUserName: string | null;
+  createdByName: string | null;
+}
+
+export interface CreateMovementInput {
+  tenantId: string;
+  treasuryId: string;
+  branchId: string | null;
+  direction: MovementDirection;
+  /** المستودع بيقدر يكتب أي نوع — الحراسة فوق في حالة الاستخدام */
+  type: MovementType;
+  amountPiastres: number;
+  status: MovementStatus;
+  expenseReasonId: string | null;
+  relatedUserId: string | null;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+  approvedById: string | null;
+  approvedAt: Date | null;
+}
+
+export interface MovementFilter {
+  tenantId: string;
+  /** null = كل فروع المحل (لصاحب المحل فقط) */
+  branchId: string | null;
+  status?: MovementStatus;
+  limit: number;
+}
+
+export interface SalaryStatement {
+  baseSalaryPiastres: number;
+  totalAdvancesPiastres: number;
+  netDuePiastres: number;
+  carriedDebtPiastres: number;
+  advanceCount: number;
+}
+
+export interface TreasuryRepository {
+  /** ⚠ المحل إلزامي. الفرع اختياري (null = كل فروع المحل). */
+  listBalances(tenantId: string, branchId: string | null): Promise<TreasuryBalance[]>;
+  /** بيرجّع المحل والفرع، أو null لو الخزينة مش موجودة */
+  findScope(treasuryId: string): Promise<{ tenantId: string; branchId: string | null } | null>;
+
+  /**
+   * الملخّص المالي — صف لكل خزينة، باسم فرعها.
+   *
+   * ⚠ دالة واحدة، والتطبيق بيجمّع منها المجموع الكلي ومجموع كل
+   * فرع ومجموع كل نوع. ليه مش تلات دوال؟ عشان **يستحيل المجموع
+   * يخالف الأجزاء**.
+   *
+   * لو كل رقم له استعلامه، هييجي يوم واحد يتعدّل ويفضل الباقي
+   * قديم — والشاشة تقول "الإجمالي ١٠٠٠" وتحته خزائن مجموعهم ٩٠٠.
+   */
+  summary(tenantId: string, branchId: string | null): Promise<TreasurySummaryRow[]>;
+
+  /** ⚠ صاحب المحل وحده — الحراسة جوّه دالة القاعدة */
+  create(input: CreateTreasuryInput): Promise<{ treasuryId: string }>;
+  update(input: UpdateTreasuryInput): Promise<{ treasuryId: string; balancePiastres: number }>;
+
+  /**
+   * تحويل بين خزينتين — عملية ذرية.
+   *
+   * ⚠ حركتين بمعرّف مجموعة مشترك (`transfer_group_id`)، عشان
+   * الطرفين يتعاملوا كوحدة واحدة في الدفتر.
+   */
+  transfer(input: TransferTreasuryInput): Promise<TransferTreasuryResult>;
+  listTransfers(
+    tenantId: string,
+    branchId: string | null,
+    from: string | null,
+    to: string | null,
+    limit: number,
+  ): Promise<TransferRow[]>;
+}
+
+export interface MovementRepository {
+  create(data: CreateMovementInput): Promise<{ id: string }>;
+  list(filter: MovementFilter): Promise<MovementRecord[]>;
+  findById(id: string): Promise<MovementRecord | null>;
+  review(
+    id: string,
+    status: 'APPROVED' | 'REJECTED',
+    reviewerId: string,
+    at: Date,
+  ): Promise<void>;
+  salaryStatement(userId: string, from: Date, to: Date): Promise<SalaryStatement>;
+}
+
+export interface ExpenseReasonRepository {
+  /** أسباب الفرع + أسباب المحل العامة (branch_id = null) */
+  listForBranch(tenantId: string, branchId: string | null): Promise<ExpenseReason[]>;
+  findById(id: string): Promise<ExpenseReason | null>;
+}
+
+// ═══════════════════ المنتجات ═══════════════════
+
+/**
+ * ⚠ لاحظ إن `costPiastres` **اختياري** في النوع ده، وده مقصود
+ * ومركزي في التصميم.
+ *
+ * التكلفة مش بتتخفي في الواجهة — بتتشال من الكائن نفسه في طبقة
+ * قاعدة البيانات قبل ما يرجع. اللي مالوش `profit.view_real`
+ * بيوصله كائن **مفيهوش الحقل أصلاً**، مش كائن فيه الحقل مخفي.
+ *
+ * تشبيه: الفرق بين إنك تدّي حد ملف وتقوله "متبصّش على الصفحة
+ * التالتة"، وبين إنك تشيل الصفحة التالتة قبل ما تديله الملف.
+ * الأولى شرف، والتانية أمان.
+ *
+ * علامة `?` هنا هي اللي بتخلّي تايب سكريبت يفكّرك إن الحقل ممكن
+ * ما يكونش موجود، فما تكتبش كود بيفترض وجوده.
+ */
+/**
+ * نوع المنتج — قسمة بتغيّر قواعد اللعب مش مجرد تصنيف.
+ *
+ *   device    جهاز. قطعة فعلية واحدة بسريال. كل وحدة صف منفصل،
+ *             حتى لو نفس الموديل بالظبط.
+ *   accessory إكسسوار. صنف بكمية، زي ما كان.
+ *
+ * تشبيه المخزن: علب الشاي كلها "علبة شاي" فبتعدّها. الموبايلات
+ * كل واحد ليه رقم على ضهره فبتسجّله بالرقم.
+ */
+export type ProductType = 'device' | 'accessory';
+
+export interface ProductRecord {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  name: string;
+  productType: ProductType;
+  /** للأجهزة فقط. الإكسسوار بيفضل null. */
+  serialNumber: string | null;
+  /** اسم التاجر أو المحل اللي اتشترى منه. نص حر. */
+  source: string | null;
+  /** YYYY-MM-DD — نص مش Date، عشان ما يتزحلقش يوم بالتوقيت */
+  entryDate: string;
+  /**
+   * ⚠ بقى اختياري. منتج ممكن يدخل المخزن قبل ما يتسعّر.
+   * والبيع بيطلب السعر يدويًا وقت الفاتورة لو الحقل ده فاضي.
+   */
+  pricePiastres: number | null;
+  costPiastres?: number;
+  quantityOnHand: number;
+  /**
+   * الحد الأدنى للتنبيه. **صفر = معطّل** وهو الافتراضي.
+   * للإكسسوارات فقط — الجهاز كميته 1 وبتبقى صفر بعد البيع،
+   * وده بيع ناجح مش نقص مخزون.
+   */
+  reorderPoint: number;
+  /** مرتجع مستنّي المراجعة — مش متاح للبيع */
+  quarantinedQuantity: number;
+  /**
+   * خلوّ الجمارك — تسجيل يدوي من المستلم.
+   * ⚠ false معناها **"مش متأكد"** مش "مش مخلّص". غياب المعلومة
+   * مش نفي.
+   */
+  customsCleared: boolean;
+  /**
+   * صحة البطارية من 0 لـ 100.
+   * ⚠ null معناها **"ما اتقاسش"** مش صفر. جهاز جديد ما حدش قاس
+   * بطاريته، وجهاز بطاريته خربانة قيمته 0 — والاتنين مختلفين.
+   */
+  batteryHealth: number | null;
+  /** المساحة كنص: "256GB" · "8/256" · "1TB". نص عشان يستوعب الكل. */
+  storageCapacity: string | null;
+  isActive: boolean;
+}
+
+export interface CreateProductInput {
+  tenantId: string;
+  branchId: string;
+  name: string;
+  productType: ProductType;
+  serialNumber: string | null;
+  source: string | null;
+  /** null = سيب الافتراضي (تاريخ النهاردة بتوقيت القاهرة) */
+  entryDate: string | null;
+  pricePiastres: number | null;
+  costPiastres: number;
+  quantityOnHand: number;
+  createdById: string;
+}
+
+export interface UpdateProductInput {
+  name?: string;
+  pricePiastres?: number | null;
+  costPiastres?: number;
+  isActive?: boolean;
+  source?: string | null;
+  serialNumber?: string | null;
+  entryDate?: string;
+  /** محكوم بصلاحية `inventory.reorder_point` — صاحب المحل وحده */
+  reorderPoint?: number;
+  customsCleared?: boolean;
+  batteryHealth?: number | null;
+  storageCapacity?: string | null;
+  /**
+   * ⚠ إلزامي في كل تعديل.
+   * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
+   * والمشغّل ما بيعرفش المستخدم من نفسه.
+   */
+  updatedById: string;
 }
 
 /**
- * تحويل بين خزينتين، والعمولة بتتحسب.
+ * سطر في سجل الأسعار.
  *
- * ══ ⚠ إنت بتكتب اللي شفته ══
- * طلع كام، ووصل كام. والفرق **هو** العمولة — محسوبة مش مكتوبة.
- *
- * البديل كان خانة تالتة للعمولة، وساعتها ممكن تكتب أرقام
- * متناقضة (طلع ١٠٠٠، وصل ٩٨٠، عمولة ٥٠) ومحدش يعرف مين الصح.
- * دلوقتي التناقض ده **مستحيل تمثيليًا**، وفيه قيد في القاعدة
- * بيحرسه كمان.
- *
- * ══ ومين يقدر؟ ══
- * اللي عنده `expense.approve` — نفس قاعدة الإيداع والسحب
- * والتسوية. دي حركات بتغيّر الرصيد من بره دورة البيع العادية.
- *
- * والخطر الحقيقي مش التحويل (الفلوس بتفضل عندك)، الخطر هو
- * **العمولة**: حد يكتب عمولة ٢٠٠ على تحويل ١٠٠٠ ويحط ١٨٠ في
- * جيبه. عشان كده الرقمين بيتسجّلوا والفرق بيتحفظ.
- *
- * ══ وجوّه الفرع الواحد بس ══
- * الفلوس بين فرعين بتبقى في جيب واحد في العربية — نفس مشكلة
- * "بضاعة بالطريق". الحارس ده جوّه دالة القاعدة.
+ * القيمتين بيقبلوا null: منتج كان بلا سعر واتسعّر أول مرة
+ * (القديم null)، أو سعره اتشال (الجديد null).
  */
-export async function transferBetweenTreasuries(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  input: TransferRequest,
-): Promise<TransferTreasuryResult> {
-  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_APPROVE)) {
-    throw Errors.forbidden(PERMISSIONS.EXPENSE_APPROVE);
-  }
-  if (actor.roleKey === 'PLATFORM_ADMIN') {
-    throw Errors.forbidden('platform admin has no shop data access');
-  }
-
-  const fromTreasuryId = String(input.fromTreasuryId ?? '').trim();
-  const toTreasuryId = String(input.toTreasuryId ?? '').trim();
-
-  if (!fromTreasuryId || !toTreasuryId) throw Errors.validation('اختر الخزينتين.');
-  if (fromTreasuryId === toTreasuryId) {
-    throw Errors.validation('اختر خزينتين مختلفتين.');
-  }
-
-  const sentPiastres = readAmount(input.sent, 'المبلغ المُرسَل');
-  const receivedPiastres = readAmount(input.received, 'المبلغ المستلَم');
-
-  if (receivedPiastres > sentPiastres) {
-    throw Errors.validation('المبلغ المستلَم أكبر من المُرسَل.');
-  }
-
-  // ─── نطاق الخزينتين ───
-  //
-  // ⚠ الفحص هنا بيطلّع رسالة عربية واضحة، والحراسة الحقيقية
-  // (نفس الفرع · الرصيد كافي · الصلاحية) جوّه دالة القاعدة.
-  const fromScope = await deps.treasuries.findScope(fromTreasuryId);
-  if (!fromScope || fromScope.tenantId !== actor.tenantId) {
-    throw Errors.notFound('الخزينة المُرسِلة');
-  }
-  const toScope = await deps.treasuries.findScope(toTreasuryId);
-  if (!toScope || toScope.tenantId !== actor.tenantId) {
-    throw Errors.notFound('الخزينة المستقبِلة');
-  }
-  assertScopeAccess(actor, fromScope.tenantId, fromScope.branchId);
-
-  let date: string | null;
-  try {
-    date = parseDateInput(input.date);
-  } catch (error) {
-    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
-  }
-
-  const note = String(input.note ?? '').trim() || null;
-  if (note && note.length > 500) throw Errors.validation('الملاحظة طويلة جدًا.');
-
-  const result = await deps.treasuries.transfer({
-    // ⚠ من الجلسة مش من الطلب. التحويل بيحرّك فلوس — لو أخدناه
-    // من الطلب، أي حد يسجّل باسم زميله ويختفي من السجل.
-    actorId: actor.id,
-    fromTreasuryId,
-    toTreasuryId,
-    sentPiastres,
-    receivedPiastres,
-    note,
-    date,
-  });
-
-  await deps.audit.record({
-    actorId: actor.id,
-    action: 'treasury.transfer',
-    entity: 'TreasuryTransfer',
-    entityId: result.transferId,
-    // ⚠ العمولة من رد القاعدة مش من حسابنا. لو اتغيّرت قاعدة
-    // الحساب يوم ما، السجل بيفضل صادق مع اللي اتكتب فعلاً.
-    metadata: {
-      fromTreasuryId,
-      toTreasuryId,
-      sentPiastres: result.sentPiastres,
-      receivedPiastres: result.receivedPiastres,
-      feePiastres: result.feePiastres,
-      outMovementId: result.outMovementId,
-      inMovementId: result.inMovementId,
-      branchId: fromScope.branchId,
-      date,
-      note,
-    },
-  });
-
-  return result;
+export interface PriceChangeRecord {
+  oldPricePiastres: number | null;
+  newPricePiastres: number | null;
+  changedById: string | null;
+  changedAt: Date;
 }
 
-export async function listTransfers(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  rawFrom?: string | null,
-  rawTo?: string | null,
-): Promise<TransferRow[]> {
-  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_CREATE)) {
-    throw Errors.forbidden(PERMISSIONS.EXPENSE_CREATE);
-  }
-
-  let from: string | null;
-  let to: string | null;
-  try {
-    from = parseDateInput(rawFrom);
-    to = parseDateInput(rawTo);
-  } catch (error) {
-    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
-  }
-  if (from && to && from > to) {
-    throw Errors.validation('تاريخ البداية بعد تاريخ النهاية.');
-  }
-
-  return deps.treasuries.listTransfers(actor.tenantId, branchScopeFor(actor), from, to, 100);
+/** نفس نمط EnrichedMovement — المستودع بيرجّع معرّف، والاسم بيتركّب فوق */
+export interface PriceChange extends PriceChangeRecord {
+  changedByName: string | null;
 }
 
-// ─────────── القراءة ───────────
-
-export async function listBalances(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-): Promise<TreasuryBalance[]> {
-  return deps.treasuries.listBalances(actor.tenantId, branchScopeFor(actor));
+export interface ProductListOptions {
+  /** بيتحدّد من صلاحية `profit.view_real` بس. مفيش مصدر تاني. */
+  includeCost: boolean;
+  /** المنتجات المفعّلة بس — لشاشة الكاشير */
+  activeOnly?: boolean;
 }
 
-export async function listMovements(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  status?: MovementStatus,
-): Promise<EnrichedMovement[]> {
-  const branchScope = branchScopeFor(actor);
+export interface ProductRepository {
+  list(scope: ListScope, options: ProductListOptions): Promise<ProductRecord[]>;
+  findById(id: string, options: { includeCost: boolean }): Promise<ProductRecord | null>;
+  create(data: CreateProductInput): Promise<{ id: string }>;
+  update(id: string, data: UpdateProductInput): Promise<void>;
+  /**
+   * تعديل الكمية بفرق (زيادة أو نقص) وبترجع الكمية الجديدة.
+   *
+   * ⚠ التنفيذ لازم يكون آمن ضد التزامن: لو الموظّف باع في نفس
+   * اللحظة اللي المدير بيورّد فيها، البيع ما يضيعش.
+   */
+  adjustQuantity(id: string, delta: number): Promise<number>;
+  /** آخر تغييرات السعر، الأحدث الأول */
+  listPriceHistory(productId: string, limit: number): Promise<PriceChangeRecord[]>;
+}
 
-  // أربع قوائم صغيرة على التوازي، وبنركّب الأسماء منها.
-  // أرخص وأمتن من ربط جدول المستخدمين أربع مرات في استعلام واحد.
-  //
-  // ⚠ كل واحدة فيهم بتاخد المحل صراحةً. مفيش واحدة بتستنتجه.
-  const [movements, treasuries, reasons, team] = await Promise.all([
-    deps.movements.list({ tenantId: actor.tenantId, branchId: branchScope, status, limit: 50 }),
-    deps.treasuries.listBalances(actor.tenantId, branchScope),
-    deps.expenseReasons.listForBranch(actor.tenantId, actor.branchId),
-    deps.users.listInScope(listScopeFor(actor)),
-  ]);
+// ═══════════════════ المبيعات ═══════════════════
 
-  const treasuryNames = new Map(treasuries.map((t) => [t.treasuryId, treasuryLabel(t)]));
-  const reasonNames = new Map(reasons.map((r) => [r.id, r.name]));
-  const userNames = new Map(team.map((u) => [u.id, u.fullName]));
+export interface SaleLineInput {
+  productId: string;
+  quantity: number;
+  /**
+   * السعر اليدوي — للمنتجات اللي مالهاش سعر مسجّل بس.
+   *
+   * ⚠ لو المنتج له سعر، دالة قاعدة البيانات بتتجاهل القيمة دي
+   * تمامًا وبتستخدم سعر المنتج. من غير القاعدة دي، أي حد يقدر
+   * يبيع بأي سعر بتعديل بسيط في الطلب.
+   */
+  unitPricePiastres?: number | null;
+}
 
-  return movements.map((m) => ({
-    ...m,
-    treasuryName: treasuryNames.get(m.treasuryId) ?? '—',
-    reasonName: m.expenseReasonId ? (reasonNames.get(m.expenseReasonId) ?? null) : null,
-    relatedUserName: m.relatedUserId ? (userNames.get(m.relatedUserId) ?? null) : null,
-    createdByName: userNames.get(m.createdById) ?? null,
-  }));
+export interface CreateSaleInput {
+  tenantId: string;
+  staffId: string;
+  treasuryId: string;
+  items: SaleLineInput[];
+  customerName: string | null;
+  customerPhone: string | null;
+  /** null = تاريخ النهاردة بتوقيت القاهرة */
+  exitDate: string | null;
+  /**
+   * مدة الضمان بالأيام.
+   *
+   * ⚠ `null` معناها **مفيش ضمان**، مش "الافتراضي".
+   * الافتراضي (30) بيتحطّ في حالة الاستخدام قبل ما يوصل هنا،
+   * فاللي بيوصل للقاعدة دايمًا قرار صريح.
+   */
+  warrantyDays: number | null;
+}
+
+export interface CreateSaleResult {
+  saleId: string;
+  totalPiastres: number;
+  movementId: string;
+  itemCount: number;
+}
+
+export interface SaleSummary {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  staffId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  totalPiastres: number;
+  treasuryId: string;
+  createdAt: Date;
+  /**
+   * YYYY-MM-DD — إمتى البضاعة سابت المحل فعلاً.
+   *
+   * ⚠ منفصل تمامًا عن createdAt. ده تاريخ تجاري قابل للتعديل،
+   * وده ختم تقني ما بيتغيّرش. تعديل الأول ما بيلمسش التاني.
+   */
+  exitDate: string;
+  /**
+   * مدة الضمان بالأيام — `null` يعني الفاتورة بلا ضمان.
+   *
+   * ⚠ تاريخ انتهاء الضمان = `exitDate + warrantyDays`. يعني
+   * تعديل تاريخ الخروج بيحرّك الضمان معاه، وده الصح: الضمان
+   * بيبدأ يوم ما البضاعة تخرج للزبون مش يوم تسجيل الفاتورة.
+   */
+  warrantyDays: number | null;
+}
+
+/** صف الفاتورة بعد إضافة اسم الموظّف — نفس نمط EnrichedMovement */
+export interface EnrichedSale extends SaleSummary {
+  staffName: string | null;
+  treasuryName: string | null;
+}
+
+export interface SaleItemLine {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPricePiastres: number;
+  /** محجوب عن غير `profit.view_real` — نفس قاعدة المنتجات */
+  unitCostPiastres?: number;
+  lineTotalPiastres: number;
+}
+
+export interface SaleDetail extends SaleSummary {
+  items: SaleItemLine[];
+}
+
+export interface SaleFilter {
+  scope: ListScope;
+  /** لو موجود، بيحصر النتيجة في فواتير موظّف واحد (`sales.view_own`) */
+  staffId?: string;
+  limit: number;
+}
+
+// ─────────── المرتجعات ورفّ المراجعة ───────────
+
+/**
+ * بند قابل للاسترجاع من فاتورة.
+ *
+ * ⚠ `quantityRemaining` هو الرقم اللي بيحكم. اللي اترجّع قبل كده
+ * محسوب فيه، فالبند اللي خلص بيرجع بصفر والواجهة بتعرضه باهت.
+ * من غير الرقم ده، حد يقدر يرجّع ٣ من حاجة اتباع منها ٢.
+ */
+export interface ReturnableLine {
+  saleItemId: string;
+  productId: string;
+  productName: string;
+  productType: string;
+  serialNumber: string | null;
+  quantitySold: number;
+  quantityReturned: number;
+  quantityRemaining: number;
+  unitPricePiastres: number;
+}
+
+export interface ReturnLineInput {
+  saleItemId: string;
+  quantity: number;
+  /** المرتجع للوحدة — ممكن يكون أقل من سعر البيع، والفرق رسوم */
+  unitRefundPiastres: number;
+}
+
+export interface CreateReturnInput {
+  saleId: string;
+  actorId: string;
+  treasuryId: string;
+  items: ReturnLineInput[];
+  reason: string | null;
+  /** فاضي = النهاردة بتوقيت القاهرة */
+  returnDate: string | null;
+  /**
+   * تجاوز الضمان — صاحب المحل وحده.
+   *
+   * ⚠ القيمة دي **نيّة** مش نتيجة. القاعدة هي اللي بتقرر لو
+   * الضمان انتهى فعلاً؛ لو الفاتورة لسه في الضمان، العلم ده
+   * ما بيعملش حاجة والنتيجة بترجع `warrantyOverridden: false`.
+   */
+  overrideWarranty: boolean;
+}
+
+export interface CreateReturnResult {
+  returnId: string;
+  refundedPiastres: number;
+  /** الفرق اللي ما خرجش من الدرج — إيراد رسوم استرجاع */
+  feePiastres: number;
+  itemCount: number;
+  movementId: string;
+  /**
+   * هل حصل تجاوز ضمان فعلاً؟
+   *
+   * ⚠ دي **النتيجة** مش النيّة — وسجل التدقيق بيكتب منها هي،
+   * مش من اللي الطلب بعته. الفرق بيبان لما حد يبعت العلم على
+   * فاتورة لسه في الضمان: مفيش تجاوز حصل، والسجل لازم يقول كده.
+   */
+  warrantyOverridden: boolean;
+}
+
+/** صف في رفّ المراجعة — مرتجع مستنّي قرار */
+export interface QuarantineRow {
+  productId: string;
+  productName: string;
+  productType: string;
+  serialNumber: string | null;
+  branchId: string;
+  quarantinedQuantity: number;
+  lastReturnDate: string | null;
+  lastReason: string | null;
+}
+
+export type QuarantineDecision = 'RELEASE' | 'SCRAP';
+
+export interface QuarantineReviewResult {
+  productName: string;
+  movedQuantity: number;
+  remainingHeld: number;
+  nowOnHand: number;
+}
+
+// ─────────── الصيانة ───────────
+
+export interface RepairShop {
+  id: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  isActive: boolean;
+}
+
+/** جهاز **المحل** في الورشة — مربوط بالمخزون */
+export interface MaintenanceRecord {
+  id: string;
+  productId: string;
+  productName: string;
+  serialNumber: string | null;
+  shopName: string | null;
+  repairShopId: string | null;
+  faultNote: string;
+  costPiastres: number;
+  sentDate: string;
+  returnedDate: string | null;
+  status: 'SENT' | 'RETURNED' | 'CANCELLED';
+  resultNote: string | null;
+  /** كام يوم بره — بيغذّي التنبيه بعد 3 أيام */
+  daysOut: number;
+}
+
+export type TicketStatus =
+  | 'CHECKING'
+  | 'WAITING_PART'
+  | 'READY'
+  | 'DELIVERED'
+  | 'CANCELLED';
+
+/**
+ * تذكرة جهاز **عميل** — مالهاش أي علاقة بـ `products`.
+ *
+ * ⚠ `hasUnlock` بتقول إن فيه بيانات فتح، **من غير ما تبعتها**.
+ * القيمة نفسها بتتجاب بنداء منفصل محصور على اللي استلم الجهاز
+ * أو صاحب صلاحية الإدارة.
+ */
+export interface RepairTicket {
+  id: string;
+  customerName: string;
+  customerPhone: string | null;
+  deviceName: string;
+  serialNumber: string | null;
+  deviceColor: string | null;
+  conditionNote: string | null;
+  complaint: string;
+  shopName: string | null;
+  repairShopId: string | null;
+  costPiastres: number;
+  receivedDate: string;
+  promisedDate: string | null;
+  deliveredDate: string | null;
+  status: TicketStatus;
+  workNote: string | null;
+  /** NONE · PASSWORD · PATTERN — النوع بس، القيمة بنداء منفصل */
+  unlockKind: string;
+  hasUnlock: boolean;
+  parentId: string | null;
+  /** 1 للأصلية، 2 لأول رجعة… بيتحسب في القاعدة */
+  visitNumber: number;
+  createdById: string;
+  createdByName: string | null;
+  daysOpen: number;
+}
+
+export interface ShopHistoryRow {
+  kind: 'OWN' | 'CUSTOMER';
+  refId: string;
+  title: string;
+  detail: string;
+  costPiastres: number;
+  onDate: string;
+  status: string;
+}
+
+/** فلاتر مشتركة بين التذاكر وأجهزة المحل */
+export interface MaintenanceFilter {
+  /** OPEN عندنا · DELIVERED/RETURNED اتسلّمت · ALL */
+  scope: string;
+  search: string | null;
+  from: string | null;
+  to: string | null;
+  shopId: string | null;
+}
+
+/** سطر في تاريخ صيانة منتج — بيتعرض في كارت المنتج */
+export interface ProductMaintenanceRow {
+  id: string;
+  shopName: string | null;
+  faultNote: string;
+  resultNote: string | null;
+  costPiastres: number;
+  sentDate: string;
+  returnedDate: string | null;
+  status: string;
+  daysOut: number;
+}
+
+export interface MaintenanceRepository {
+  listShops(tenantId: string): Promise<RepairShop[]>;
+  createShop(data: {
+    tenantId: string;
+    name: string;
+    phone: string | null;
+    notes: string | null;
+    createdById: string;
+  }): Promise<{ id: string }>;
+  shopHistory(shopId: string, tenantId: string): Promise<ShopHistoryRow[]>;
+
+  /** إرسال جهاز المحل — بيخصم من المخزون ذريًا */
+  sendToShop(input: {
+    productId: string;
+    actorId: string;
+    shopId: string | null;
+    fault: string;
+    costPiastres: number;
+  }): Promise<{ recordId: string; productName: string }>;
+  returnFromShop(
+    recordId: string,
+    actorId: string,
+    status: 'RETURNED' | 'CANCELLED',
+    costPiastres: number | null,
+    note: string | null,
+  ): Promise<{ productName: string; finalStatus: string }>;
+  listRecords(
+    tenantId: string,
+    branchId: string | null,
+    filter: MaintenanceFilter,
+  ): Promise<MaintenanceRecord[]>;
+  /** تاريخ صيانة منتج واحد */
+  productHistory(productId: string): Promise<ProductMaintenanceRow[]>;
+
+  listTickets(
+    tenantId: string,
+    branchId: string | null,
+    filter: MaintenanceFilter,
+  ): Promise<RepairTicket[]>;
+  createTicket(data: Record<string, unknown>): Promise<{ id: string }>;
+  updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
+  findTicket(id: string): Promise<{ id: string; tenantId: string; branchId: string } | null>;
+  /** ⚠ محصور — الحراسة جوّه دالة القاعدة كمان */
+  unlock(
+    ticketId: string,
+    actorId: string,
+    canManage: boolean,
+  ): Promise<{ kind: string; value: string | null }>;
+}
+
+// ─────────── الموردين والديون ───────────
+
+export interface SupplierBalance {
+  supplierId: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  isActive: boolean;
+  productCount: number;
+  debtPiastres: number;
+  paidPiastres: number;
+  /** الدين = الزيادات ناقص السداد. ناتج جمع مش رقم مخزّن. */
+  balancePiastres: number;
+  lastMovement: string | null;
+}
+
+export interface SupplierRepository {
+  listBalances(tenantId: string): Promise<SupplierBalance[]>;
+  create(data: {
+    tenantId: string;
+    name: string;
+    phone: string | null;
+    notes: string | null;
+    createdById: string;
+  }): Promise<{ id: string }>;
+  update(
+    id: string,
+    data: { name?: string; phone?: string | null; notes?: string | null; isActive?: boolean },
+  ): Promise<void>;
+  findById(id: string): Promise<{ id: string; tenantId: string; name: string } | null>;
+  /** دين — ما بيمسّش الخزينة */
+  recordDebt(input: {
+    supplierId: string;
+    actorId: string;
+    amountPiastres: number;
+    note: string | null;
+    date: string | null;
+  }): Promise<{ movementId: string; newBalance: number }>;
+  /**
+   * سداد — **بيمسّ الخزينة ذريًا**.
+   *
+   * الفلوس بتطلع من الدرج فعلاً. لو سجّلناه في دفتر الموردين
+   * بس، رصيد الخزينة يبقى أكبر من الحقيقة بمقدار كل ما دفعته.
+   */
+  recordPayment(input: {
+    supplierId: string;
+    actorId: string;
+    treasuryId: string;
+    amountPiastres: number;
+    note: string | null;
+    date: string | null;
+  }): Promise<{ movementId: string; treasuryMovementId: string; newBalance: number }>;
+}
+
+// ─────────── التحويل بين الفروع ───────────
+
+/**
+ * ⚠ الاتجاه بيتحسب من فرع القارئ:
+ *   IN   جايلك، وإنت اللي بتأكّد الاستلام
+ *   OUT  بعتّها، وإنت اللي تقدر تلغيها
+ *   BOTH صاحب المحل — بيشوف الاتنين
+ */
+export type TransferDirection = 'IN' | 'OUT' | 'BOTH';
+export type TransferDecision = 'RECEIVE' | 'CANCEL';
+
+export interface PendingTransfer {
+  id: string;
+  direction: TransferDirection;
+  productName: string;
+  productType: string;
+  serialNumber: string | null;
+  quantity: number;
+  fromBranch: string;
+  toBranch: string;
+  note: string | null;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface TransferRepository {
+  /**
+   * الإنشاء بيخصم الكمية **فورًا**.
+   *
+   * البضاعة سابت الرفّ، فما ينفعش تفضل متاحة للبيع. بتبقى في
+   * حالة "طايرة" — مش عند حد — لحد ما تتستلم أو تتلغى.
+   */
+  create(input: {
+    productId: string;
+    actorId: string;
+    toBranchId: string;
+    quantity: number;
+    note: string | null;
+  }): Promise<{ transferId: string; productName: string; moved: number }>;
+
+  /** استلام أو إلغاء — الحراسة على الفرع جوّه دالة القاعدة */
+  resolve(
+    transferId: string,
+    actorId: string,
+    decision: TransferDecision,
+  ): Promise<{ productName: string; moved: number; finalStatus: string }>;
+
+  listPending(tenantId: string, branchId: string | null): Promise<PendingTransfer[]>;
+}
+
+// ─────────── التنبيهات ───────────
+
+/**
+ * ⚠ التنبيه **بيتحسب** لحظة الطلب، مش بيتقرا من جدول.
+ *
+ * السبب: كل التنبيهات دي بتوصف حالة قائمة ("باقي ٢")، مش حدث
+ * حصل. ولو خزّنّاها، هتفضل معلّقة بعد ما المشكلة تتحل.
+ *
+ * نفس مبدأ رصيد الخزينة: ناتج جمع، مش رقم مخزّن.
+ */
+export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE';
+export type AlertSeverity = 'HIGH' | 'MEDIUM';
+
+export interface AlertRow {
+  alertType: AlertType;
+  severity: AlertSeverity;
+  entityId: string;
+  title: string;
+  detail: string;
+  metric: number;
+}
+
+export interface AlertRepository {
+  list(tenantId: string, branchId: string | null): Promise<AlertRow[]>;
+}
+
+// ─────────── التقارير ───────────
+
+/**
+ * قائمة الدخل لفترة.
+ *
+ * ⚠ أعمدة التكلفة والربح **nullable** عن قصد. مين مالوش
+ * `profit.view_real` بيرجعله `null` — مش صفر ومش رقم مخفي في
+ * الواجهة. الفرق مهم: الصفر رقم، و null معناها "مش من حقك".
+ *
+ * والقيمة ما بتتحسبش في قاعدة البيانات أصلاً لما الصلاحية غايبة.
+ */
+export interface IncomeStatement {
+  salesCount: number;
+  salesPiastres: number;
+  refundsCount: number;
+  refundsPiastres: number;
+  refundFeesPiastres: number;
+  netSalesPiastres: number;
+
+  cogsPiastres: number | null;
+  returnedCogsPiastres: number | null;
+  grossProfitPiastres: number | null;
+  netProfitPiastres: number | null;
+
+  expensesPiastres: number;
+  /**
+   * عمولات تحويل الخزائن — **جوّه الحساب**.
+   *
+   * ⚠ ودي عكس السُلفة تحتها بالظبط. العمولة فلوس **خرجت
+   * ومارجعتش** — الوكيل خدها. فهي تكلفة حقيقية بتقلّل الربح.
+   *
+   * السُلفة فلوس خرجت و**هترجع** من الراتب، فهي دَين مش مصروف.
+   *
+   * ⚠ ومش محجوبة بصلاحية التكلفة: العمولة رسم دفعته مش هامش
+   * ربح، ومدير الفرع بيشوف المصروفات أصلاً.
+   */
+  transferFeesPiastres: number;
+  /**
+   * ⚠ بره الحساب عن قصد. السُلفة دَين على الموظّف بيتخصم من
+   * راتبه، مش مصروف على المحل. لو حسبناها مصروف هتتحسب مرتين:
+   * مرة كسُلفة ومرة لما الراتب يتصرف.
+   */
+  advancesPiastres: number;
+  /**
+   * ⚠ بره الحساب لنفس السبب. شرا البضاعة تحويل فلوس لمخزون —
+   * أصل بيتحوّل لأصل تاني، مش مصروف. والتكلفة بتتحسب وقت البيع
+   * في `cogsPiastres`. لو حسبناها الاتنين، كل بضاعة تشتريها
+   * بتقلّل أرباحك المعروضة مرتين.
+   */
+  inventoryPurchasesPiastres: number;
+}
+
+export interface ExpenseLine {
+  reasonName: string;
+  movementCount: number;
+  totalPiastres: number;
+}
+
+export interface ReportRepository {
+  incomeStatement(
+    tenantId: string,
+    branchId: string | null,
+    from: string,
+    to: string,
+    includeCost: boolean,
+  ): Promise<IncomeStatement>;
+  expenseBreakdown(
+    tenantId: string,
+    branchId: string | null,
+    from: string,
+    to: string,
+  ): Promise<ExpenseLine[]>;
+}
+
+export interface ReturnRepository {
+  /** البنود القابلة للاسترجاع في فاتورة — قراءة بس */
+  returnableLines(saleId: string): Promise<ReturnableLine[]>;
+  /**
+   * الاسترجاع في عملية واحدة لا تتجزّأ.
+   *
+   * الأربع خطوات (فحص المتبقي · رفّ المراجعة · سجل المرتجع ·
+   * حركة الخزينة) بتحصل جوّه دالة قاعدة البيانات: يا كلها يا
+   * ولا واحدة. مفيش حالة "الفلوس طلعت والبضاعة ما رجعتش".
+   */
+  create(input: CreateReturnInput): Promise<CreateReturnResult>;
+  /** رفّ المراجعة — المرتجعات اللي لسه مستنية قرار */
+  quarantineList(tenantId: string, branchId: string | null): Promise<QuarantineRow[]>;
+  /** سليم (يرجع للبيع) أو تالف (يتشطب) */
+  review(
+    productId: string,
+    actorId: string,
+    quantity: number,
+    decision: QuarantineDecision,
+  ): Promise<QuarantineReviewResult>;
+}
+
+export interface SaleRepository {
+  /**
+   * إنشاء بيع كامل في عملية واحدة لا تتجزّأ.
+   *
+   * التنفيذ بينادي دالة في قاعدة البيانات بتعمل الأربع خطوات
+   * (فحص الكمية، الخصم، الفاتورة، حركة الخزينة) مع بعض:
+   * يا كلها تنجح يا مفيش حاجة فيها تحصل.
+   */
+  create(input: CreateSaleInput): Promise<CreateSaleResult>;
+  list(filter: SaleFilter): Promise<SaleSummary[]>;
+  findById(id: string, options: { includeCost: boolean }): Promise<SaleDetail | null>;
+  /**
+   * تعديل تاريخ الخروج وحده.
+   *
+   * ⚠ التنفيذ ممنوع يلمس `created_at` بأي شكل. الختم التقني هو
+   * أساس سجل المراجعة — لو اتحرّك معاه، القدرة على اكتشاف
+   * التسجيل المتأخر بتضيع.
+   */
+  updateExitDate(id: string, exitDate: string): Promise<void>;
+}
+
+// ═══════════════════ العملاء ═══════════════════
+
+export interface CustomerRecord {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  createdAt: Date;
+  /**
+   * عدد **الأجهزة** اللي اشتراها — مش عدد القطع.
+   *
+   * اللي أخد تلات أجهزة عميل مختلف عن اللي أخد تلاتين جراب.
+   * عدد القطع بيساوي بينهم، والأجهزة هي اللي بتفرق.
+   */
+  deviceCount: number;
+  purchaseCount: number;
+  totalPiastres: number;
+}
+
+export interface CreateCustomerInput {
+  tenantId: string;
+  branchId: string;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  createdById: string;
+}
+
+export interface UpdateCustomerInput {
+  name?: string;
+  phone?: string | null;
+  notes?: string | null;
+}
+
+export interface CustomerRepository {
+  /**
+   * القائمة مرتّبة بعدد الأجهزة تنازليًا.
+   * `search` بيدوّر في الاسم والرقم مع بعض.
+   */
+  list(scope: ListScope, search: string | null, limit: number): Promise<CustomerRecord[]>;
+  findById(id: string): Promise<CustomerRecord | null>;
+  create(data: CreateCustomerInput): Promise<{ id: string }>;
+  update(id: string, data: UpdateCustomerInput): Promise<void>;
+  /** حذف ناعم — السجل بيفضل في القاعدة ومش بيظهر في القوائم */
+  softDelete(id: string, actorId: string, at: Date): Promise<void>;
+}
+
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  lastSeenAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  /** لو مش null، الشاشة مقفولة والجلسة لسه حيّة */
+  lockedAt: Date | null;
+}
+
+export interface SessionRepository {
+  create(data: {
+    userId: string;
+    refreshTokenHash: string;
+    expiresAt: Date;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  }): Promise<SessionRecord>;
+  findActiveByDigest(digest: string): Promise<SessionRecord | null>;
+  findActiveById(id: string): Promise<SessionRecord | null>;
+  touch(id: string, at: Date): Promise<void>;
+  rotate(id: string, newDigest: string, at: Date): Promise<void>;
+  revoke(id: string, reason: string, at: Date): Promise<void>;
+  revokeAllForUser(userId: string, reason: string, at: Date): Promise<void>;
+  /** قفل الشاشة — الجلسة تفضل حيّة */
+  lock(id: string, at: Date): Promise<void>;
+  /** فك القفل + تصفير عدّاد الخمول في نفس العملية */
+  unlock(id: string, at: Date): Promise<void>;
+}
+
+export interface AnnouncementRecord {
+  id: string;
+  title: string;
+  body: string;
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  isMandatory: boolean;
+  createdAt: Date;
+}
+
+export interface AnnouncementRepository {
+  findPendingFor(user: AuthenticatedUser, now: Date): Promise<AnnouncementRecord[]>;
+  acknowledge(announcementId: string, userId: string, at: Date): Promise<void>;
+  create(data: {
+    title: string;
+    body: string;
+    severity: 'INFO' | 'WARNING' | 'CRITICAL';
+    audience: 'ALL' | 'MANAGERS_ONLY' | 'STAFF_ONLY' | 'SINGLE_BRANCH';
+    tenantId: string;
+    branchId: string | null;
+    isMandatory: boolean;
+    startsAt: Date;
+    endsAt: Date | null;
+    createdById: string;
+  }): Promise<{ id: string }>;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  الضمان · شراء البضاعة · تقفيل اليومية
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════ الضمان ═══════════════════
+
+/**
+ * حالة ضمان فاتورة.
+ *
+ * ⚠ `warrantyDays === null` معناها **مفيش ضمان**، مش "الافتراضي".
+ * والفرق ده بيحكم الاسترجاع كله: الفاتورة اللي بلا ضمان كل مرتجع
+ * عليها محتاج موافقة صاحب المحل.
+ */
+export interface WarrantyStatus {
+  /** null = بلا ضمان */
+  warrantyDays: number | null;
+  /** تاريخ خروج البضاعة — الضمان بيبدأ منه مش من وقت التسجيل */
+  startsOn: string;
+  /** null لو مفيش ضمان */
+  expiresOn: string | null;
+  /** موجب = لسه فيه أيام. سالب = انتهى من كام يوم. null = مفيش ضمان */
+  daysLeft: number | null;
+  isCovered: boolean;
+}
+
+export interface WarrantyChangeResult {
+  previousDays: number | null;
+  newDays: number | null;
+  expiresOn: string | null;
+}
+
+export interface WarrantyRepository {
+  status(saleId: string): Promise<WarrantyStatus | null>;
+  /**
+   * تعديل الضمان بعد البيع.
+   *
+   * ⚠ الحراسة (صاحب المحل وحده + حاجز المحل) جوّه دالة قاعدة
+   * البيانات. الفحص في حالة الاستخدام بيتكرّر معاها عن قصد.
+   */
+  setDays(
+    saleId: string,
+    actorId: string,
+    warrantyDays: number | null,
+  ): Promise<WarrantyChangeResult>;
+}
+
+// ═══════════════════ شراء البضاعة ═══════════════════
+
+export interface CreatePurchaseInput {
+  actorId: string;
+  treasuryId: string;
+  amountPiastres: number;
+  itemName: string;
+  quantity: number;
+  supplierId: string | null;
+  note: string | null;
+}
+
+export interface CreatePurchaseResult {
+  purchaseId: string;
+  movementId: string;
+  /** PENDING لو المنفّذ مالوش صلاحية اعتماد */
+  status: 'PENDING' | 'APPROVED';
+}
+
+export interface PurchaseRow {
+  id: string;
+  movementId: string;
+  itemName: string;
+  quantity: number;
+  /** ⚠ مبلغ الحركة **هو** التكلفة. مفيش عمود تاني. */
+  amountPiastres: number;
+  supplierId: string | null;
+  supplierName: string | null;
+  status: string;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+  createdByName: string | null;
+}
+
+export interface PurchaseFilter {
+  tenantId: string;
+  branchId: string | null;
+  from: string | null;
+  to: string | null;
+  limit: number;
+}
+
+export interface PurchaseRepository {
+  /**
+   * تسجيل شراء — حركة الخزينة والبيان مع بعض في معاملة واحدة.
+   *
+   * ⚠ الاعتماد بيتحدّد **جوّه القاعدة** من صلاحيات المنفّذ، مش
+   * من الطلب. لو التطبيق هو اللي بيقول "دي معتمدة"، أي طلب
+   * معدّل بإيد يقدر يعتمد مصروف لنفسه.
+   */
+  create(input: CreatePurchaseInput): Promise<CreatePurchaseResult>;
+  list(filter: PurchaseFilter): Promise<PurchaseRow[]>;
+  /**
+   * أسماء الموردين بس — لملء القائمة المنسدلة.
+   *
+   * ⚠ ودي **مش** `SupplierRepository.listBalances`، والفرق مقصود:
+   * الأرصدة والديون معلومة مالية مقفولة بـ`supplier.manage`،
+   * لكن **الاسم** لازم يوصل لأي حد بيسجّل شرا.
+   *
+   * لو خلّينا المندوب يكتب الاسم بإيده، هنرجع لنفس بق
+   * `products.source`: "أحمد للموبايلات" و"احمد للموبايلات"
+   * تاجرين مختلفين والدين ما بيقفلش.
+   */
+  listSupplierNames(tenantId: string): Promise<{ id: string; name: string }[]>;
+}
+
+// ═══════════════════ تقفيل اليومية ═══════════════════
+
+/** الأدوار اللي ينفع تتختار. صاحب المحل خارج القايمة — بيقفل دايمًا. */
+export type ClosingRole = 'BRANCH_MANAGER' | 'STAFF';
+
+export interface ClosingPreview {
+  canClose: boolean;
+  /** السبب لو `canClose` بـ false — بيتعرض قبل الضغط مش بعده */
+  reason: string | null;
+  periodFrom: Date;
+  minutesOpen: number;
+  /** الدقايق الفاضلة على حارس التلات ساعات. صفر = تقدر تقفل. */
+  minutesLeft: number;
+  salesCount: number;
+  salesPiastres: number;
+  returnsCount: number;
+  movementsCount: number;
+  closingRoles: ClosingRole[];
+}
+
+export interface ClosingSummary {
+  id: string;
+  branchId: string;
+  branchName: string;
+  periodFrom: Date;
+  periodTo: Date;
+  salesCount: number;
+  salesPiastres: number;
+  returnsCount: number;
+  returnsPiastres: number;
+  expensesPiastres: number;
+  advancesPiastres: number;
+  purchasesPiastres: number;
+  cashInPiastres: number;
+  cashOutPiastres: number;
+  note: string | null;
+  closedById: string;
+  closedByName: string | null;
+  closedAt: Date;
 }
 
 /**
- * لافتة الخزينة: الاسم + الجهة.
+ * سطر بيع جوّه اللقطة.
  *
- * ⚠ من غير الجهة، تلات فيزا في نفس الفرع بيبانوا "فيزا · فيزا ·
- * فيزا" في كل قايمة — والموظّف بيختار عشوائي، والفلوس تتسجّل في
- * المكان الغلط.
- *
- * ⚠ ومُصدَّرة عشان كل شاشة تستخدم **نفس** اللافتة. لو كل شاشة
- * ركّبتها بطريقتها، هتلاقي نفس الخزينة باسمين مختلفين.
+ * ⚠ ده **نسخة مستقلة** مش رابط للفاتورة الحيّة. لو الفاتورة
+ * اتعدّلت بكرة، السطر ده ما بيتغيّرش — وده الغرض كله.
  */
-export function treasuryLabel(t: { name: string; provider?: string | null }): string {
-  const provider = t.provider?.trim();
-  return provider ? `${t.name} — ${provider}` : t.name;
+export interface ClosingSaleLine {
+  id: string;
+  at: string;
+  exitDate: string;
+  totalPiastres: number;
+  customer: string | null;
+  phone: string | null;
+  staff: string | null;
+  treasury: string | null;
+  warrantyDays: number | null;
+  items: {
+    name: string;
+    serial: string | null;
+    quantity: number;
+    unitPricePiastres: number;
+  }[];
 }
 
-export async function listExpenseReasons(deps: TreasuryDeps, actor: AuthenticatedUser) {
-  return deps.expenseReasons.listForBranch(actor.tenantId, actor.branchId);
+export interface ClosingMovementLine {
+  id: string;
+  at: string;
+  occurredAt: string;
+  type: string;
+  direction: string;
+  status: string;
+  amountPiastres: number;
+  reason: string | null;
+  person: string | null;
+  by: string | null;
+  treasury: string | null;
+  note: string | null;
+}
+
+export interface ClosingPurchaseLine {
+  movementId: string;
+  at: string;
+  amountPiastres: number;
+  status: string;
+  /** ممكن تكون فاضية: حركة شرا قديمة اتسجّلت قبل ما البيان يبقى موجود */
+  item: string | null;
+  quantity: number | null;
+  supplier: string | null;
+  by: string | null;
+  treasury: string | null;
+  note: string | null;
 }
 
 /**
- * كشف حساب الموظّف.
- * الموظّف يقدر يشوف كشفه هو. المدير يشوف كشوف فرعه. المالك الكل.
- */
-export async function getSalaryStatement(
-  deps: TreasuryDeps,
-  actor: AuthenticatedUser,
-  targetUserId: string,
-  from: Date,
-  to: Date,
-): Promise<SalaryStatement> {
-  if (targetUserId !== actor.id) {
-    if (!actor.permissions.includes(PERMISSIONS.USER_VIEW)) {
-      throw Errors.forbidden(PERMISSIONS.USER_VIEW);
-    }
-    const target = await deps.users.findById(targetUserId);
-    if (!target || target.tenantId !== actor.tenantId) throw Errors.notFound('الموظّف');
-    assertScopeAccess(actor, target.tenantId, target.branchId);
-  }
-
-  if (!(from instanceof Date) || Number.isNaN(from.getTime())) {
-    throw Errors.validation('تاريخ البداية غير صالح.');
-  }
-  if (!(to instanceof Date) || Number.isNaN(to.getTime()) || to <= from) {
-    throw Errors.validation('يجب أن يكون تاريخ النهاية بعد تاريخ البداية.');
-  }
-
-  return deps.movements.salaryStatement(targetUserId, from, to);
-}
-
-// ─────────── فاحصات المدخلات ───────────
-
-function readAmount(raw: string, label: string): number {
-  try {
-    // نفس دالة الفلوس المستخدمة في كل النظام — بتقبل الأرقام
-    // العربية وبترفض السالب والكسور الزيادة
-    return parseMoneyToPiastres(String(raw ?? ''));
-  } catch (error) {
-    throw Errors.validation(
-      error instanceof MoneyError ? `${label}: ${error.message}` : `${label} غير صالح.`,
-    );
-  }
-}
-
-function readProvider(raw: string | null | undefined): string | null {
-  const provider = String(raw ?? '').trim();
-  if (!provider) return null;
-  if (provider.length < 2 || provider.length > 60) {
-    throw Errors.validation('اسم الجهة من حرفين إلى 60 حرفًا.');
-  }
-  return provider;
-}
-
-// ─────────── حراسة النطاق ───────────
-
-/**
- * الفرع اللي بيتفلتر بيه — **جوّه المحل**.
+ * الظرف المقفول.
  *
- * ⚠ null هنا معناها "كل فروع محله هو"، مش "كل النظام".
- * المحل نفسه بيتبعت منفصل لكل استعلام وما بيعتمدش على الدالة دي.
+ * ⚠ `undefined` هنا معناها **مالكش صلاحية** مش "مفيش بيانات".
+ * الدالة في قاعدة البيانات ما بترجّعهاش أصلاً لمن مالوش
+ * `profit.view_real` — فالرقم مش موجود في الرد الخام، مش مخفي
+ * في الشاشة.
  */
-function branchScopeFor(actor: AuthenticatedUser): string | null {
-  if (actor.roleKey === 'PLATFORM_ADMIN') {
-    throw Errors.forbidden('platform admin has no shop data access');
-  }
-  if (actor.roleKey === 'SUPER_ADMIN') return null;
-  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف المحل كله
-  return actor.branchId ?? '__none__';
+export interface ClosingCostSnapshot {
+  cogsPiastres: number;
+  grossProfitPiastres: number;
+  lines: {
+    saleId: string;
+    name: string;
+    quantity: number;
+    unitCostPiastres: number;
+    unitPricePiastres: number;
+  }[];
 }
 
-/** نطاق قائمة الفريق — النوع بيجبرنا نذكر المحل */
-function listScopeFor(actor: AuthenticatedUser): ListScope {
-  if (actor.roleKey === 'SUPER_ADMIN') return { tenantId: actor.tenantId };
-  return { tenantId: actor.tenantId, branchId: actor.branchId ?? '__none__' };
+export interface ClosingDetail extends Omit<ClosingSummary, 'closedById'> {
+  sales: ClosingSaleLine[];
+  movements: ClosingMovementLine[];
+  purchases: ClosingPurchaseLine[];
+  /** موجودة لصاحب المحل بس */
+  cost?: ClosingCostSnapshot;
 }
 
-/**
- * حراسة السجل الواحد: المحل الأول، وبعدين الفرع.
- *
- * ⚠ لما المحل ما يطابقش، بنرمي "غير موجود" مش "ممنوع".
- * "ممنوع" بتأكّد للسائل إن الحاجة موجودة في مكان ما — ودي معلومة
- * ما ينفعش يعرفها عن محل تاني أصلاً.
- */
-function assertScopeAccess(
-  actor: AuthenticatedUser,
-  targetTenantId: string,
-  targetBranchId: string | null,
-): void {
-  if (targetTenantId !== actor.tenantId) throw Errors.notFound('العنصر');
-  if (actor.roleKey === 'SUPER_ADMIN') return;
-  if (!actor.branchId) throw Errors.forbidden('branch scope');
+export interface CloseDayResult {
+  closingId: string;
+  periodFrom: Date;
+  periodTo: Date;
+  salesCount: number;
+  salesPiastres: number;
+  returnsPiastres: number;
+  expensesPiastres: number;
+  purchasesPiastres: number;
+  cashInPiastres: number;
+  cashOutPiastres: number;
+}
 
-  // خزينة على مستوى المحل كله (branchId = null) لصاحب المحل بس
-  if (targetBranchId === null) throw Errors.forbidden('tenant-level treasury');
-  if (targetBranchId !== actor.branchId) throw Errors.forbidden('branch scope');
+export interface ClosingRolesChange {
+  previousRoles: ClosingRole[];
+  newRoles: ClosingRole[];
+}
+
+export interface ClosingRepository {
+  preview(branchId: string, actorId: string): Promise<ClosingPreview>;
+  close(branchId: string, actorId: string, note: string | null): Promise<CloseDayResult>;
+  list(scope: ListScope, limit: number): Promise<ClosingSummary[]>;
+  /**
+   * ⚠ `tenantId` معامل إلزامي مش سياق حواليه.
+   * الجلب بالمعرّف المباشر مش محمي بأي فلتر قوايم — من غيره أي
+   * حد يعرف رقم يومية يقراها من محل تاني.
+   */
+  detail(
+    closingId: string,
+    tenantId: string,
+    includeCost: boolean,
+  ): Promise<ClosingDetail | null>;
+  setRoles(
+    branchId: string,
+    actorId: string,
+    roles: ClosingRole[],
+  ): Promise<ClosingRolesChange>;
 }
