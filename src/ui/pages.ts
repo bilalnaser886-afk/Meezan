@@ -2256,6 +2256,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
         </div>
       </details>`,
     )}
+  `;
 
   return shell({
     title: 'الخزينة',
