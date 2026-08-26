@@ -37,9 +37,11 @@ import { listBranchesForActor, listTeam } from './application/use-cases/users';
 import { listRepairShops } from './application/use-cases/maintenance';
 import { listBranches } from './application/use-cases/branches';
 import {
+  getFinancialSummary,
   listBalances,
   listExpenseReasons,
   listMovements,
+  listTransfers,
 } from './application/use-cases/treasury';
 import { listProducts, listSellableProducts } from './application/use-cases/products';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
@@ -770,15 +772,26 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
 
   const branchName = await branchLabelFor(container, user);
 
-  const [balances, movements, reasons, team, pending] = await Promise.all([
-    listBalances(container.treasury, user),
-    listMovements(container.treasury, user),
-    listExpenseReasons(container.treasury, user),
-    user.permissions.includes(PERMISSIONS.USER_VIEW)
-      ? listTeam(container.users, user)
-      : Promise.resolve([]),
-    canApprove ? listMovements(container.treasury, user, 'PENDING') : Promise.resolve([]),
-  ]);
+  const isOwner = user.roleKey === 'SUPER_ADMIN';
+
+  const [balances, movements, reasons, team, pending, summary, transfers, branches] =
+    await Promise.all([
+      listBalances(container.treasury, user),
+      listMovements(container.treasury, user),
+      listExpenseReasons(container.treasury, user),
+      user.permissions.includes(PERMISSIONS.USER_VIEW)
+        ? listTeam(container.users, user)
+        : Promise.resolve([]),
+      canApprove ? listMovements(container.treasury, user, 'PENDING') : Promise.resolve([]),
+      // ⚠ الملخّص نداء واحد بيرجّع الصفوف والمجاميع مع بعض —
+      // متحسبين من نفس البيانات، فمستحيل يختلفوا.
+      getFinancialSummary(container.treasury, user),
+      // التحويلات بتظهر لكل من يشوف الخزينة، والتنفيذ لمن
+      // يقدر يعتمد بس. الفرق بين "تشوف" و"تعمل".
+      listTransfers(container.treasury, user).catch(() => []),
+      // صاحب المحل مالوش فرع، فلازم يختار عند إضافة خزينة
+      isOwner ? listBranches(container.branchOps, user).catch(() => []) : Promise.resolve([]),
+    ]);
 
   return c.html(
     treasuryPage({
@@ -796,6 +809,11 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
       pending,
       reasons,
       team: team.filter((t) => t.isActive),
+      summary,
+      transfers,
+      isOwner,
+      canTransfer: canApprove,
+      branches: branches.map((b) => ({ id: b.id, name: b.name })),
       idleTimeoutSeconds: idleRuleFor(user.roleKey).seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRuleFor(user.roleKey).action,
