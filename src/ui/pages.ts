@@ -664,13 +664,37 @@ const FONTS =
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
-function shell(opts: { title: string; noIndex?: boolean; body: Html; script: string }): Html {
+/**
+ * ⚠ `tenantName` **إلزامي مش اختياري**، وده مقصود.
+ *
+ * لو خلّيناه اختياري، أي صفحة جديدة تنساه هتشتغل عادي وعنوانها
+ * يطلع ناقص — ومحدش هيلاحظ. وهو إلزامي دلوقتي، فالمترجم بيرفض
+ * الصفحة قبل ما تتنشر أصلاً.
+ *
+ * القيمة `null` معناها "الصفحة دي **فعلاً** مالهاش محل" — الدخول
+ * والتأسيس وشاشة المنصّة. يعني قرار مكتوب، مش سهو.
+ */
+function shell(opts: {
+  title: string;
+  tenantName: string | null;
+  noIndex?: boolean;
+  body: Html;
+  script: string;
+}): Html {
   return html`<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${opts.title}</title>
+<!-- ═══ عنوان التبويب ═══
+     اسم المحل جنب اسم الشاشة: "الرئيسية · محل النور".
+
+     ⚠ ودي مش تفصيلة شكلية. لما النظام يتثبّت كتطبيق على
+     الكمبيوتر، **عنوان النافذة نفسها** بياخد النص ده — يعني
+     العميل بيشوف اسم محله على شريط النافذة زي أي برنامج
+     اشتراه. وده اللي بيخلّيه يحس إنه برنامجه هو مش موقع
+     بيدخل عليه. -->
+<title>${opts.tenantName ? `${opts.title} · ${opts.tenantName}` : opts.title}</title>
 ${opts.noIndex ? raw('<meta name="robots" content="noindex, nofollow, noarchive">') : ''}
 
 <!-- ═══ التثبيت كتطبيق ═══
@@ -907,6 +931,33 @@ function brandGlyph(): string {
   return `<span class="brandmark" data-size="sm">${meezanMark(24)}</span>`;
 }
 
+/**
+ * ختم الصانع.
+ *
+ * ══ ليه موجود أصلاً؟ ══
+ * الشركات اللي بتبني منتجات لغيرها بتسيب توقيعها **جوّه** المنتج،
+ * مش على البوّابة بس. العميل بيشوف اسم محله فوق وبيشوف مين بنى
+ * النظام في القدم — والاتنين ما بيتنافسوش لأنهم في مكانين
+ * مختلفين وبخطّين مختلفين.
+ *
+ * ══ ⚠ ومكانه بيتغيّر بالشاشة ══
+ * قدم الكعب على الكمبيوتر، وقدم قائمة النقط الثلاث على الموبايل.
+ * نفس المكوّن بالحرف، غلاف مختلف — والغلاف هو اللي بيتخفي في
+ * الأنماط حسب عرض الشاشة.
+ *
+ * ⚠ `aria-hidden` مقصودة: ده توقيع بصري، وقارئ الشاشة اللي
+ * بيقراه في كل صفحة بيتحوّل لضجيج.
+ */
+function makerStamp(): string {
+  return (
+    `<div class="stamp-by" aria-hidden="true">` +
+    meezanMark(18) +
+    `<span class="stamp-by-word">ميزان</span>` +
+    `<span class="stamp-by-note">by Meazan</span>` +
+    `</div>`
+  );
+}
+
 const ROLE_STAMP: Record<string, string> = {
   SUPER_ADMIN: 'المالك',
   BRANCH_MANAGER: 'مدير فرع',
@@ -924,14 +975,29 @@ function appBar(opts: {
   username: string;
   roleKey: string;
   branchLabel: string | null;
-  /** اسم المحل — بيظهر في القائمة عشان الموظّف يتأكد إنه في المكان الصح */
+  /**
+   * اسم المحل.
+   *
+   * ⚠ على الكمبيوتر ده بقى **السطر الكبير** في الشريط، واسم
+   * الموظّف نزل تحته صغير. السبب: صاحب المحل لما يفتح النظام على
+   * مكتبه، أول حاجة تقع عليها عينه المفروض تكون محله هو — مش
+   * اسم المستخدم اللي هو عارفه أصلاً.
+   *
+   * على الموبايل مخفي زي ما كان، والاسم فوق زي ما هو.
+   * `null` معناها صفحة مالهاش محل (شاشة المنصّة).
+   */
   tenantName?: string | null;
 }): Html {
   return html`<header class="app-bar">
-  <div class="who">
+  <div class="who" ${opts.tenantName ? raw('data-shop') : ''}>
     ${raw(brandGlyph())}
-    <span class="who-name">${opts.fullName}</span>
-    <span class="stamp" data-role="${opts.roleKey}">${ROLE_STAMP[opts.roleKey] ?? opts.roleKey}</span>
+    <span class="who-stack">
+      ${opts.tenantName ? html`<span class="who-shop">${opts.tenantName}</span>` : ''}
+      <span class="who-line">
+        <span class="who-name">${opts.fullName}</span>
+        <span class="stamp" data-role="${opts.roleKey}">${ROLE_STAMP[opts.roleKey] ?? opts.roleKey}</span>
+      </span>
+    </span>
   </div>
 
   <details class="menu" id="menu">
@@ -953,6 +1019,7 @@ function appBar(opts: {
       </button>
       <button class="menu-item" type="button" data-action="lock">قفل الشاشة</button>
       <button class="menu-item" type="button" data-action="logout" data-danger>تسجيل الخروج</button>
+      <div class="menu-stamp">${raw(makerStamp())}</div>
     </div>
   </details>
 </header>`;
@@ -992,6 +1059,7 @@ function tabBar(active: 'app' | 'pos' | 'products' | 'treasury', access: NavAcce
         <span class="tabbar-icon" aria-hidden="true">₤</span>الخزينة
       </a>`
     : ''}
+  <div class="rail-stamp">${raw(makerStamp())}</div>
 </nav>`;
 }
 
@@ -1084,6 +1152,7 @@ const MENU_JS = `
 export function loginPage(opts: { expired: boolean }): Html {
   return shell({
     title: 'تسجيل الدخول',
+    tenantName: null,
     script: LOGIN_SCRIPT,
     body: html`<main class="counter"><div>
 ${raw(receiptEdge())}
@@ -1152,33 +1221,6 @@ const LOGIN_SCRIPT = `
   var box = document.getElementById('err');
   var text = document.getElementById('err-text');
 
-  // ══ كود المحل من الرابط ══
-  //
-  // /login?shop=NASER  بيملا خانة كود المحل لوحده.
-  //
-  // ══ ليه؟ ══
-  // موظّف المحل بيكتب نفس الكود كل يوم، وهو حاجة ثابتة مش سرّ.
-  // فالمحل يقدر يحفظ رابط دخول لموظفينه ويخلص من الخانة دي.
-  //
-  // ⚠ والخانة بتفضل **مفتوحة للتعديل**. الرابط بيقترح، ما بيفرضش —
-  // لو الموظّف دخل برابط محل تاني بالغلط، يقدر يصلّحها بإيده بدل
-  // ما يتقفل بره ومحدش عارف ليه.
-  //
-  // ولو الرابط مفيهوش shop، مفيش أي حاجة بتتغيّر.
-  try {
-    var wanted = new URLSearchParams(location.search).get('shop');
-    var tenantField = document.getElementById('tenant');
-    if (wanted && tenantField && !tenantField.value) {
-      // نفس التطبيع اللي في الخادم: الأكواد كلها حروف كبيرة
-      tenantField.value = wanted.trim().toUpperCase();
-      // والمؤشّر بيروح للخانة اللي بعدها، مش لأول خانة مليانة
-      var next = document.getElementById('username');
-      if (next) next.focus();
-    }
-  } catch (err) {
-    // رابط تالف ما يصحّش يمنع الدخول. الخانة تفضل فاضية والموظّف يكتبها.
-  }
-
   function fail(message) {
     text.textContent = message;
     box.hidden = false;
@@ -1239,6 +1281,7 @@ const LOGIN_SCRIPT = `
 export function setupPage(): Html {
   return shell({
     title: 'الإعداد الأوّلي',
+    tenantName: null,
     noIndex: true,
     script: SETUP_SCRIPT,
     body: html`<main class="counter"><div>
@@ -1402,6 +1445,7 @@ export interface DashboardData {
 export function lockedPage(): Html {
   return shell({
     title: 'الشاشة مقفولة',
+    tenantName: null,
     noIndex: true,
     script: LOCKED_PAGE_SCRIPT,
     body: html`<main class="lock-screen">
@@ -1822,6 +1866,7 @@ export function dashboardPage(data: DashboardData): Html {
 
   return shell({
     title: 'الرئيسية',
+    tenantName: data.tenantName,
     script: dashboardScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`${appBar({
       fullName: data.fullName,
@@ -2466,6 +2511,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
   return shell({
     title: 'الخزينة',
+    tenantName: data.tenantName,
     script: treasuryScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`${appBar({
       fullName: data.fullName,
@@ -3178,6 +3224,7 @@ export function posPage(data: PosPageData): Html {
 
   return shell({
     title: 'البيع',
+    tenantName: data.tenantName,
     script: posScript(
       data.idleTimeoutSeconds,
       data.idleWarningSeconds,
@@ -4607,6 +4654,7 @@ export function productsPage(data: ProductsPageData): Html {
 
   return shell({
     title: 'المنتجات',
+    tenantName: data.tenantName,
     script: productsScript(
       data.idleTimeoutSeconds,
       data.idleWarningSeconds,
@@ -5617,6 +5665,7 @@ export function customersPage(data: CustomersPageData): Html {
 
   return shell({
     title: 'العملاء',
+    tenantName: data.tenantName,
     script: customersScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`${appBar({
       fullName: data.fullName,
@@ -5938,6 +5987,7 @@ export function platformPage(data: PlatformPageData): Html {
 
   return shell({
     title: 'المحلات',
+    tenantName: null,
     noIndex: true,
     script: platformScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`<header class="app-bar">
@@ -6841,6 +6891,7 @@ ${MENU_JS}
 export function platformSetupPage(): Html {
   return shell({
     title: 'تأسيس المنصّة',
+    tenantName: null,
     noIndex: true,
     script: PLATFORM_SETUP_SCRIPT,
     body: html`<main class="counter"><div>
@@ -6969,6 +7020,7 @@ export function passwordPage(data: {
 }): Html {
   return shell({
     title: 'تغيير كلمة المرور',
+    tenantName: data.tenantName,
     noIndex: true,
     script: PASSWORD_SCRIPT,
     body: html`${appBar({
@@ -7119,6 +7171,7 @@ export interface ReportPageData {
 export function reportPage(data: ReportPageData): Html {
   return shell({
     title: 'قائمة الدخل',
+    tenantName: data.tenantName,
     script: reportScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`${appBar({
       fullName: data.fullName,
@@ -7437,6 +7490,7 @@ export interface SuppliersPageData {
 export function suppliersPage(data: SuppliersPageData): Html {
   return shell({
     title: 'الموردين',
+    tenantName: data.tenantName,
     script: suppliersScript(
       data.idleTimeoutSeconds,
       data.idleWarningSeconds,
@@ -7741,6 +7795,7 @@ export interface MaintenancePageData {
 export function maintenancePage(data: MaintenancePageData): Html {
   return shell({
     title: 'الصيانة',
+    tenantName: data.tenantName,
     script: maintenanceScript(
       data.idleTimeoutSeconds,
       data.idleWarningSeconds,
@@ -8708,6 +8763,7 @@ export interface ClosingsPageData {
 export function closingsPage(data: ClosingsPageData): Html {
   return shell({
     title: 'سجل اليوميات',
+    tenantName: data.tenantName,
     script: closingsScript(
       data.idleTimeoutSeconds,
       data.idleWarningSeconds,
