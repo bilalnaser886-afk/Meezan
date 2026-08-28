@@ -1360,6 +1360,13 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
           price_piastres: data.pricePiastres,
           cost_piastres: data.costPiastres,
           quantity_on_hand: data.quantityOnHand,
+          // ⚠ مواصفات الجهاز بتتكتب مع الصف من أول لحظة.
+          // قبل كده كانت بتتضاف في تعديل تاني بعد الإنشاء —
+          // يعني كان فيه لحظة الجهاز فيها مسجّل بلا مواصفاته،
+          // ولو التعديل التاني فشل بتفضل ناقصة بلا أثر.
+          customs_cleared: data.customsCleared,
+          battery_health: data.batteryHealth,
+          storage_capacity: data.storageCapacity,
           is_active: true,
           created_by_id: data.createdById,
           updated_by_id: data.createdById,
@@ -1609,8 +1616,28 @@ function raiseSaleError(error: { code?: string; message?: string }): never {
     case 'MZ409':
     case 'MZ400':
       throw Errors.validation(message);
+
+    // ══ ⚠ MZ403 هنا **مش** فشل صلاحية، وده مقصود ══
+    //
+    // الدالة بترمي الكود ده في حالتين بس: الخزينة من فرع تاني،
+    // أو منتج في السلة من فرع تاني. الاتنين **غلطة على الكاونتر**
+    // مش محاولة تجاوز.
+    //
+    // والحراسة الحقيقية اتعملت قبل ما نوصل هنا: `createSale`
+    // بتقفل غير صاحب المحل على خزينة فرعه. اللي بيوصل للكود ده
+    // هو صاحب المحل اللي فروعه كلها بتاعته — بيخلط بينهم بس.
+    //
+    // ══ وليه اتغيّر من forbidden ══
+    // `Errors.forbidden` رسالته للمستخدم **ثابتة**: "لا تملك
+    // صلاحية تنفيذ هذا الإجراء." والرسالة الحقيقية — «المنتج
+    // "س" مش تابع لفرعك» — كانت بتروح للوق وتختفي.
+    //
+    // فصاحب المحل كان بيقرا إنه مش مصرّح له يبيع في محله هو،
+    // والسبب الفعلي مكتوب وموجود وما بيوصلش. الرسالة اللي
+    // بتشاور على المكان الغلط أوحش من مفيش رسالة.
     case 'MZ403':
-      throw Errors.forbidden(`sale scope: ${message}`);
+      throw Errors.validation(message);
+
     case 'MZ404':
       throw Errors.notFound('العنصر المطلوب');
     default:
