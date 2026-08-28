@@ -64,6 +64,24 @@ export interface CreateProductRequest {
   quantityOnHand: number;
   /** مطلوب من المالك بس — مدير الفرع مقفول على فرعه */
   branchId?: string | null;
+  /**
+   * ══ مواصفات الجهاز — بتتسجّل مع الإنشاء ══
+   *
+   * ⚠ التلاتة دول كانوا في التعديل بس. المستلم كان بيسجّل الجهاز
+   * الأول، وبعدين يفتحه تاني ويكمّل مواصفاته — خطوتين لفعل واحد.
+   *
+   * والخطوة التانية هي اللي بتتنسي. فبتلاقي أجهزة في المخزن
+   * مالهاش مساحة ولا بطارية، والملصق بيطلع ناقص.
+   *
+   * ⚠ وللأجهزة بس. الإكسسوار مالوش بطارية ولا مساحة، والقيم
+   * بتتصفّر تحت لو النوع إكسسوار — بدل ما نرفض الطلب. الرفض
+   * كان هيكسر أي نموذج بيبعت الحقول فاضية وهو سليم.
+   */
+  customsCleared?: boolean;
+  /** 0–100. null = ما اتقاسش — وهي **غير** الصفر. */
+  batteryHealth?: number | null;
+  /** "256GB" · "8/256" · "1TB" — نص عن قصد، شوف 23_device_specs.sql */
+  storageCapacity?: string | null;
 }
 
 export interface UpdateProductRequest {
@@ -232,6 +250,19 @@ export async function createProduct(
   const source = trimOrNull(input.source, 80, 'اسم المصدر طويل جدًا.');
   const entryDate = readDate(input.entryDate);
 
+  // ─── مواصفات الجهاز ───
+  //
+  // ⚠ الإكسسوار بياخد صفر/فاضي مش رفض. النموذج بيبعت الحقول
+  // موجودة دايمًا، وهي مخفية بس لما النوع إكسسوار — فالرفض كان
+  // هيكسر طلب سليم تمامًا.
+  const isDevice = productType === 'device';
+
+  const customsCleared = isDevice ? Boolean(input.customsCleared) : false;
+  const batteryHealth = isDevice ? readBatteryHealth(input.batteryHealth) : null;
+  const storageCapacity = isDevice
+    ? trimOrNull(input.storageCapacity, 32, 'المساحة أطول من 32 حرفًا.')
+    : null;
+
   const created = await deps.products.create({
     tenantId: actor.tenantId,
     branchId: targetBranchId,
@@ -243,6 +274,9 @@ export async function createProduct(
     pricePiastres: input.pricePiastres,
     costPiastres: input.costPiastres,
     quantityOnHand,
+    customsCleared,
+    batteryHealth,
+    storageCapacity,
     createdById: actor.id,
   });
 
@@ -258,10 +292,33 @@ export async function createProduct(
       hasSerial: serialNumber !== null,
       hasPrice: input.pricePiastres !== null,
       quantityOnHand,
+      customsCleared,
+      batteryHealth,
+      storageCapacity,
     },
   });
 
   return created;
+}
+
+/**
+ * قراءة صحة البطارية.
+ *
+ * ⚠ الفاضي معناه **"ما اتقاسش"** مش صفر. والفرق مش لغوي:
+ * جهاز جديد ما حدش قاس بطاريته، وجهاز بطاريته خربانة قيمته صفر.
+ * لو خلطناهم، أول جهاز يتسجّل بلا قياس هيبان كأن بطاريته تالفة.
+ *
+ * نفس المنطق المكتوب في `23_device_specs.sql` بالحرف، والقيد
+ * في قاعدة البيانات بيحرسه من الناحية التانية.
+ */
+function readBatteryHealth(raw: number | null | undefined): number | null {
+  if (raw === null || raw === undefined || (raw as unknown) === '') return null;
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw Errors.validation('صحة البطارية رقم صحيح من 0 إلى 100.');
+  }
+  return value;
 }
 
 /**
