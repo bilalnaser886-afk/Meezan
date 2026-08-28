@@ -1017,6 +1017,18 @@ function appBar(opts: {
       <button class="menu-item" type="button" data-action="theme">
         الإضاءة<span class="menu-note" id="theme-label"></span>
       </button>
+      <!-- ⚠ الإشعارات هنا مش على اللوحة، وبنفس شكل الإضاءة بالظبط.
+
+           السبب إنهم **نفس نوع الحاجة**: إعداد بيخصّ الجهاز ده
+           وحده، بيتظبط مرة وبعدين بيتنسي. حاجة زي دي مالهاش
+           مكان على شاشة بتتفتح كل وردية.
+
+           ⚠ واتشال معاها سطرين الشرح اللي كانوا في اللوحة.
+           المكان هنا ما بيستحملهمش، والحالة جنب الاسم بتكفي —
+           زي الإضاءة بالظبط. -->
+      <button class="menu-item" type="button" id="ntf-btn">
+        الإشعارات<span class="menu-note" id="ntf-note"></span>
+      </button>
       <button class="menu-item" type="button" data-action="lock">قفل الشاشة</button>
       <button class="menu-item" type="button" data-action="logout" data-danger>تسجيل الخروج</button>
       <div class="menu-stamp">${raw(makerStamp())}</div>
@@ -1138,6 +1150,52 @@ const MENU_JS = `
     try { await fetch('/api/auth/lock', { method: 'POST', credentials: 'same-origin' }); } catch (err) {}
     window.location.href = '/locked';
   });
+
+  // ══════════ الإشعارات ══════════
+  //
+  // ⚠ اتنقل هنا من سكربت اللوحة، والسبب مش تنظيم:
+  // اللوحة شاشة واحدة، والقائمة موجودة في **كل** الصفحات. لما
+  // العنصر بقى في القائمة، منطقه لازم يبقى في القائمة كمان —
+  // وإلا الزرار يظهر في تسع صفحات ويشتغل في واحدة.
+  //
+  // ⚠ والحالة بتتقرا من المتصفح مش من إعداد عندنا. لو المستخدم
+  // رفض الإذن، بنقول له كده صراحةً — بدل ما الزرار يفضل شكله
+  // مفعّل وهو ميّت.
+  //
+  // ⚠ ونص الحالة اتقصّر عن اللوحة القديمة. الجملة الطويلة كانت
+  // بتلف في سطرين جنب اسم العنصر وتكسر القائمة.
+  (function () {
+    var btn  = document.getElementById('ntf-btn');
+    var note = document.getElementById('ntf-note');
+    if (!btn || !note || typeof window.notifyState !== 'function') return;
+
+    // [نص الحالة, هل الزرار يشتغل؟]
+    var TEXT = {
+      UNSUPPORTED: ['غير مدعومة', false],
+      DENIED: ['مرفوضة من المتصفح', false],
+      ASK: ['غير مفعّلة', true],
+      OFF: ['موقوفة', true],
+      ON: ['تعمل', true]
+    };
+
+    function paint() {
+      var st = window.notifyState();
+      note.textContent = TEXT[st][0];
+      btn.disabled = !TEXT[st][1];
+      btn.setAttribute('data-st', st);
+    }
+
+    // ⚠ القايمة بتفضل مفتوحة زي الإضاءة بالظبط — عشان تشوف
+    // الحالة اتغيّرت وإنت شايف الزرار.
+    btn.addEventListener('click', async function () {
+      if (btn.disabled) return;
+      if (btn.getAttribute('data-st') === 'ON') window.notifyDisable();
+      else await window.notifyEnable();
+      paint();
+    });
+
+    paint();
+  })();
 })();
 `;
 
@@ -1743,7 +1801,6 @@ function createUserPanel(data: DashboardData): Html {
 export function dashboardPage(data: DashboardData): Html {
   const canUseTreasury = data.permissions.includes('expense.create');
   const canSell = data.permissions.includes('sales.create');
-  const canManageProducts = data.permissions.includes('inventory.adjust');
   const canViewProducts = data.permissions.includes('inventory.view');
   const isStaff = data.roleKey === 'STAFF';
 
@@ -1772,24 +1829,21 @@ export function dashboardPage(data: DashboardData): Html {
   </section>`;
 
   // ── البلاطات: اللي تقدر تعمله، بكلام مفهوم مش أكواد نظام ──
+  //
+  // ══ ⚠ البيع والمنتجات والخزينة **مش هنا** عن قصد ══
+  // التلاتة دول في الشريط السفلي على الموبايل وفي الكعب على
+  // الكمبيوتر، وكانوا مكررين هنا كمان.
+  //
+  // والتكرار مش مجرد زحمة: لما نفس الوجهة يبقى ليها بابين في
+  // شاشة واحدة، الموظّف بيقعد يفكّر أنهي واحد "الصح" — وده
+  // تردد بيتدفع كل مرة يفتح الشاشة.
+  //
+  // ⚠ ومفيش حاجة ضاعت بالشيل: شروط الشريط السفلي تحت هي **نفس**
+  // الشروط بالحرف (canSell · canViewProducts · canUseTreasury).
+  // اللي كان بيشوف البلاطة بيشوف التبويب.
+  //
+  // فاللوحة دي بقت للوجهات اللي **مالهاش** تبويب وبس.
   const tiles: Html[] = [];
-
-  // البيع أول بلاطة عن قصد: دي الحاجة اللي الموظّف بيفتح النظام
-  // عشانها. اللي بيتعمل خمسين مرة في اليوم بييجي قبل اللي بيتعمل
-  // مرة في الأسبوع.
-  if (canSell) {
-    tiles.push(html`<a class="tile" data-wide href="/pos">
-      <span class="tile-label">شاشة البيع</span>
-      <span class="tile-note">اختر المنتجات وأتمم الفاتورة</span>
-    </a>`);
-  }
-
-  if (canViewProducts) {
-    tiles.push(html`<a class="tile" href="/products">
-      <span class="tile-label">المنتجات</span>
-      <span class="tile-note">${canManageProducts ? 'أسعار وكميات' : 'عرض المخزون'}</span>
-    </a>`);
-  }
 
   // ⚠ التقرير بعد الخزينة عن قصد: الخزينة بتتفتح كل يوم،
   // والتقرير مرة في الأسبوع أو الشهر. الترتيب بيتبع الاستخدام.
@@ -1822,13 +1876,6 @@ export function dashboardPage(data: DashboardData): Html {
     tiles.push(html`<a class="tile" href="/suppliers">
       <span class="tile-label">الموردين</span>
       <span class="tile-note">ديون وسداد</span>
-    </a>`);
-  }
-
-  if (canUseTreasury) {
-    tiles.push(html`<a class="tile" href="/treasury">
-      <span class="tile-label">الخزينة</span>
-      <span class="tile-note">${data.canApproveExpenses ? 'مصروفات وسُلف وأرصدة' : 'تسجيل مصروف أو سُلفة'}</span>
     </a>`);
   }
 
@@ -1879,18 +1926,6 @@ export function dashboardPage(data: DashboardData): Html {
 <main class="shell">
   ${strip}
   ${alertStrip}
-
-  <details class="panel" id="ntf-panel">
-    <summary>الإشعارات</summary>
-    <div class="panel-body">
-      <p class="field-hint" id="ntf-note">جارٍ الفحص…</p>
-      <button class="btn-mini" type="button" id="ntf-btn" hidden></button>
-      <p class="field-hint">
-        تصلك تنبيهات المخزون ورفّ المراجعة أثناء فتح النظام.
-        الإذن يُطلب من المتصفح، ويخصّ هذا الجهاز وحده.
-      </p>
-    </div>
-  </details>
 
   ${tiles.length > 0 ? html`<div class="tiles">${tiles}</div>` : ''}
 
@@ -2195,46 +2230,6 @@ ${MENU_JS}
       }
     });
   }
-
-  // ══════════ زرار الإشعارات ══════════
-  //
-  // ⚠ الحالة بتتقرا من المتصفح مش من إعداد عندنا. لو المستخدم
-  // رفض الإذن، بنقول له كده صراحةً — بدل ما الزرار يفضل شكله
-  // مفعّل وهو ميّت.
-  (function () {
-    var btn  = document.getElementById('ntf-btn');
-    var note = document.getElementById('ntf-note');
-    if (!btn || !note || typeof window.notifyState !== 'function') return;
-
-    var TEXT = {
-      UNSUPPORTED: ['متصفحك لا يدعم الإشعارات.', null],
-      DENIED: ['الإشعارات مرفوضة من إعدادات المتصفح. اسمح بها من إعدادات الموقع.', null],
-      ASK: ['الإشعارات غير مفعّلة على هذا الجهاز.', 'تفعيل الإشعارات'],
-      OFF: ['الإذن ممنوح، لكن الإشعارات موقوفة.', 'تشغيل'],
-      ON: ['الإشعارات تعمل على هذا الجهاز.', 'إيقاف']
-    };
-
-    function paint() {
-      var st = window.notifyState();
-      note.textContent = TEXT[st][0];
-      if (TEXT[st][1]) {
-        btn.hidden = false;
-        btn.textContent = TEXT[st][1];
-        btn.setAttribute('data-st', st);
-      } else {
-        btn.hidden = true;
-      }
-    }
-
-    btn.addEventListener('click', async function () {
-      var st = btn.getAttribute('data-st');
-      if (st === 'ON') window.notifyDisable();
-      else await window.notifyEnable();
-      paint();
-    });
-
-    paint();
-  })();
 
   // ══════════ التنبيهات ══════════
   //
@@ -3134,7 +3129,15 @@ export interface PosPageData {
   canUseTreasury: boolean;
   /** ⚠ مدير الفرع والمالك بس. المندوب بيبيع وما بيرجّعش. */
   canRefund: boolean;
-  treasuries: Array<{ treasuryId: string; name: string; type: string }>;
+  treasuries: Array<{ treasuryId: string; name: string; type: string; branchId: string }>;
+  /**
+   * فروع المحل — لصاحب المحل وحده.
+   *
+   * ⚠ فاضية لغير صاحب المحل، والخانة بتختفي ساعتها. مدير الفرع
+   * والمندوب مقفولين على فرعهم في الخادم أصلاً، فخانة باختيار
+   * واحد عندهم بتبقى أثاث بلا وظيفة.
+   */
+  branches: Array<{ id: string; name: string }>;
   products: Array<{
     id: string;
     name: string;
@@ -3143,6 +3146,7 @@ export interface PosPageData {
     /** null = يطلب النظام السعر يدويًا وقت البيع */
     pricePiastres: number | null;
     quantityOnHand: number;
+    branchId: string;
   }>;
   recentSales: Array<{
     id: string;
@@ -3207,6 +3211,7 @@ export function posPage(data: PosPageData): Html {
           (p) => html`<button class="prod-btn" type="button"
             data-add="${p.id}"
             data-name="${p.name}"
+            data-branch="${p.branchId}"
             data-price="${p.pricePiastres === null ? '' : String(p.pricePiastres)}"
             data-max="${String(p.quantityOnHand)}">
             <span class="prod-btn-name">${p.name}</span>
@@ -3266,17 +3271,45 @@ export function posPage(data: PosPageData): Html {
   <details class="panel" open>
     <summary>إتمام البيع</summary>
     <div class="panel-body">
+      <!-- ══ الفرع — لصاحب المحل وحده ══
+
+           ⚠ الخانة دي بتحلّ عطل حقيقي، مش تحسين شكل.
+
+           صاحب المحل بيشوف منتجات **كل فروعه** في شاشة واحدة،
+           وخزائن كل فروعه. فكان بيحطّ منتج من فرع ويختار خزينة
+           فرع تاني — ودالة قاعدة البيانات بترفض بحق.
+
+           كان فيه ملاحظة مكتوبة تحت الخزينة بتقوله "اختر خزينة
+           نفس الفرع". والملاحظة مش حاجز: مفيش حد بيقرا سطر
+           رمادي وهو ماسك سلة قدّام زبون.
+
+           دلوقتي الفرع بيتقفل من فوق، والشاشة كلها بتضيق عليه —
+           منتجاته وخزائنه. الغلطة بقت **مش ممكنة** بدل ما تكون
+           مكتوب عنها تحذير.
+
+           ⚠ ولسه ده **راحة مش حماية**. الحارس في دالة القاعدة
+           زي ما هو، وما اتلمسش. -->
+      ${data.branches.length > 1
+        ? html`<div class="field">
+            <label class="field-label" for="pos-branch">الفرع</label>
+            <select class="field-input" id="pos-branch">
+              ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+            </select>
+            <p class="field-hint">
+              تظهر لك منتجات هذا الفرع وخزائنه وحدها. تغيير الفرع يفرّغ السلة.
+            </p>
+          </div>`
+        : ''}
+
       <div class="field">
         <label class="field-label" for="pos-treasury">الخزينة</label>
         <select class="field-input" id="pos-treasury" ${hasTreasury ? '' : raw('disabled')}>
           ${data.treasuries.map(
-            (t) => html`<option value="${t.treasuryId}">${t.name}</option>`,
+            (t) => html`<option value="${t.treasuryId}" data-branch="${t.branchId}">${t.name}</option>`,
           )}
         </select>
         <p class="field-hint">
-          تُقرأ وسيلة الدفع من الخزينة نفسها — نقدي، فيزا، إنستاباي.${data.roleKey === 'SUPER_ADMIN'
-            ? ' تظهر لك منتجات كل الفروع، فاختر خزينة الفرع نفسه الذي تنتمي إليه منتجات السلة.'
-            : ''}
+          تُقرأ وسيلة الدفع من الخزينة نفسها — نقدي، فيزا، إنستاباي.
         </p>
       </div>
 
@@ -3654,7 +3687,10 @@ ${TIME_JS}
         price: rawPrice ? parseInt(rawPrice, 10) : null,
         manual: '',
         qty: 0,
-        max: max
+        max: max,
+        // ⚠ محفوظ عشان لو صاحب المحل غيّر الفرع ورجع في كلامه،
+        // نرجّع الخانة لفرع **السلة** مش لأول فرع في القايمة.
+        branchId: btn.getAttribute('data-branch') || ''
       };
     }
     if (cart[id].qty >= cart[id].max) return;
@@ -3723,18 +3759,83 @@ ${TIME_JS}
     render();
   });
 
-  // ── البحث: بيخفي المربّعات مش بيعيد بناءها ──
+  // ── الفرع والبحث: مصفاة واحدة ──
+  //
+  // ⚠ الاتنين بيتحكّموا في نفس الخاصية («hidden»). لو كل واحد
+  // كتبها لوحده، آخر واحد يشتغل بيدهس على التاني — تبحث فيرجع
+  // منتج من فرع تاني، أو تغيّر الفرع فيرجع اللي البحث خبّاه.
+  //
+  // فالقرار بيتاخد مرة واحدة من الاتنين مع بعض.
   var search = document.getElementById('pos-search');
-  if (search) {
-    search.addEventListener('input', function () {
-      var q = search.value.trim();
-      var btns = document.querySelectorAll('[data-add]');
-      for (var i = 0; i < btns.length; i++) {
-        var name = btns[i].getAttribute('data-name') || '';
-        btns[i].hidden = q.length > 0 && name.indexOf(q) === -1;
-      }
-    });
+  var branchEl = document.getElementById('pos-branch');
+  var treasuryEl = document.getElementById('pos-treasury');
+
+  function applyFilters() {
+    var q = search ? search.value.trim() : '';
+    var branch = branchEl ? branchEl.value : '';
+
+    var btns = document.querySelectorAll('[data-add]');
+    for (var i = 0; i < btns.length; i++) {
+      var name = btns[i].getAttribute('data-name') || '';
+      var okName = q.length === 0 || name.indexOf(q) !== -1;
+      var okBranch = !branch || btns[i].getAttribute('data-branch') === branch;
+      btns[i].hidden = !(okName && okBranch);
+    }
   }
+
+  // ⚠ خزائن الفروع التانية بتتشال من القايمة مش بتتخبّى بس.
+  // «hidden» على «<option>» مش مضمون في كل المتصفحات، والخانة
+  // المعطّلة اللي شكلها مختارة بتخلّي الموظّف يبعت خزينة غلط.
+  function syncTreasuries() {
+    if (!treasuryEl || !branchEl) return;
+    var branch = branchEl.value;
+    var opts = treasuryEl.options;
+    var firstVisible = null;
+
+    for (var i = 0; i < opts.length; i++) {
+      var same = opts[i].getAttribute('data-branch') === branch;
+      opts[i].disabled = !same;
+      opts[i].hidden = !same;
+      if (same && firstVisible === null) firstVisible = i;
+    }
+
+    // لو المختار دلوقتي بقى من فرع تاني، ننقل لأول خزينة صالحة
+    if (treasuryEl.selectedIndex < 0 || opts[treasuryEl.selectedIndex].disabled) {
+      treasuryEl.selectedIndex = firstVisible === null ? -1 : firstVisible;
+    }
+  }
+
+  if (search) search.addEventListener('input', applyFilters);
+
+  if (branchEl) {
+    branchEl.addEventListener('change', function () {
+      // ⚠ السلة بتتفضّى مع تغيير الفرع، وده مقصود.
+      //
+      // السلة المخلوطة هي **نفس العطل** اللي الخانة دي اتعملت
+      // عشانه: منتج من فرع وخزينة من فرع تاني، والقاعدة بترفض
+      // بعد ما الزبون يكون واقف مستني.
+      //
+      // ⚠ والتأكيد بيظهر **لو فيه حاجة في السلة بس**. سؤال
+      // "متأكد؟" على سلة فاضية بيعلّم الموظّف يدوس "موافق" من
+      // غير ما يقرا — وساعتها التأكيد اللي بيهمّ بيضيع كمان.
+      if (Object.keys(cart).length > 0) {
+        if (!confirm('تغيير الفرع سيفرّغ السلة. متابعة؟')) {
+          // ⚠ نرجّع الخانة لفرع السلة، مش لأول فرع في القايمة.
+          var current = cart[Object.keys(cart)[0]].branchId;
+          if (current) branchEl.value = current;
+          return;
+        }
+        cart = {};
+        render();
+      }
+      applyFilters();
+      syncTreasuries();
+    });
+
+    syncTreasuries();
+  }
+
+  applyFilters();
 
   // ── إتمام البيع ──
   submitEl.addEventListener('click', async function () {
@@ -4294,6 +4395,17 @@ export interface ProductsPageData {
     isActive: boolean;
     reorderPoint: number;
     customsCleared: boolean;
+    /**
+     * ⚠ الحقلين دول كانوا **ناقصين من النوع** رغم إن الصفحة
+     * بتقرا منهم في أربع أماكن (`23_device_specs.sql` ضاف
+     * الأعمدة، والنوع هنا ما اتحدّثش).
+     *
+     * `tsc` كان بيرنّ عليهم من شهور — بس الفحص مش بيتشغّل من
+     * الموبايل، فالتحذير فضل واقف مكانه.
+     */
+    storageCapacity: string | null;
+    /** 0–100. null = ما اتقاسش — وهي **غير** الصفر. */
+    batteryHealth: number | null;
   }>;
   /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
   transferTargets: Array<{ id: string; name: string }>;
@@ -4471,14 +4583,14 @@ export function productsPage(data: ProductsPageData): Html {
 
                       <div class="field">
                         <label class="field-label" for="customs-${p.id}">
-                          خلوّ الجمارك
+                          ضريبة
                         </label>
                         <select class="field-input" id="customs-${p.id}">
-                          <option value="false" ${p.customsCleared ? '' : 'selected'}>
-                            غير مؤكّد
-                          </option>
                           <option value="true" ${p.customsCleared ? 'selected' : ''}>
-                            مخلّص جمركيًا
+                            خالص
+                          </option>
+                          <option value="false" ${p.customsCleared ? '' : 'selected'}>
+                            ضريبة
                           </option>
                         </select>
                         <p class="field-hint">
@@ -4612,6 +4724,44 @@ export function productsPage(data: ProductsPageData): Html {
               <input class="field-input" id="np-serial" type="text" dir="ltr"
                 autocomplete="off" maxlength="64">
               <p class="field-hint">الكمية تُضبط على قطعة واحدة تلقائيًا.</p>
+            </div>
+
+            <!-- ══ مواصفات الجهاز ══
+                 ⚠ دي كانت في شاشة التعديل بس. المستلم كان بيسجّل
+                 الجهاز، وبعدين يفتحه تاني ويكمّل مواصفاته —
+                 خطوتين لفعل واحد، والتانية هي اللي بتتنسي.
+
+                 دلوقتي بتظهر مع اختيار "جهاز"، فالبيان بيتكتب
+                 كامل مرة واحدة وقت الاستلام.
+
+                 ⚠ وبتفضل موجودة في شاشة التعديل زي ما هي — الإدخال
+                 السريع حاجة والتصحيح بعدين حاجة تانية. -->
+            <div id="np-device-fields" hidden>
+              <div class="field">
+                <label class="field-label" for="np-storage">المساحة</label>
+                <input class="field-input" id="np-storage" type="text"
+                  dir="ltr" maxlength="32" placeholder="256GB">
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="np-battery">صحة البطارية ٪</label>
+                <input class="field-input" id="np-battery" type="number"
+                  min="0" max="100" dir="ltr">
+                <p class="field-hint">فارغة تعني «لم تُقَس» — وهي غير الصفر.</p>
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="np-customs">ضريبة</label>
+                <select class="field-input" id="np-customs">
+                  <option value="true">خالص</option>
+                  <!-- ⚠ ده الافتراضي عن قصد. "خالص" ادّعاء بيتقال
+                       لما حد يتأكد، مش لما حد يسيب الخانة. -->
+                  <option value="false" selected>ضريبة</option>
+                </select>
+                <p class="field-hint">
+                  تسجيل يدوي من المستلم. لا يوجد ربط بأي جهة خارجية.
+                </p>
+              </div>
             </div>
 
             <div class="field" id="np-qty-field">
@@ -4985,6 +5135,7 @@ ${MENU_JS}
   var typeEl = document.getElementById('np-type');
   var serialField = document.getElementById('np-serial-field');
   var qtyField = document.getElementById('np-qty-field');
+  var deviceFields = document.getElementById('np-device-fields');
 
   function syncType() {
     if (!typeEl) return;
@@ -4992,6 +5143,9 @@ ${MENU_JS}
     // الجهاز: سريال ظاهر، وخانة الكمية مختفية لأنها مقفولة على 1
     if (serialField) serialField.hidden = !isDevice;
     if (qtyField) qtyField.hidden = isDevice;
+    // ⚠ ومواصفات الجهاز بتظهر مع النوع مرة واحدة — الإكسسوار
+    // مالوش بطارية ولا مساحة، والخادم بيصفّرهم برضه لو وصلوا.
+    if (deviceFields) deviceFields.hidden = !isDevice;
   }
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
 
@@ -5024,7 +5178,21 @@ ${MENU_JS}
             // الجهاز كميته مقفولة على 1 في الخادم — بنبعت 1 عشان
             // الرقم يبقى واضح في الطلب، والخادم بيفرضها برضه
             quantity: isDevice ? '1' : document.getElementById('np-qty').value,
-            branchId: branch ? branch.value : null
+            branchId: branch ? branch.value : null,
+            // ── مواصفات الجهاز ──
+            // ⚠ بتتبعت للأجهزة بس. للإكسسوار بنبعت القيم الفاضية
+            // صراحةً بدل ما نسيبها بره الطلب — عشان الخادم يقرا
+            // قرار مكتوب مش غياب.
+            customsCleared: isDevice
+              ? document.getElementById('np-customs').value === 'true'
+              : false,
+            // فاضي = "ما اتقاسش"، وهي **غير** الصفر
+            batteryHealth: isDevice && document.getElementById('np-battery').value !== ''
+              ? parseInt(document.getElementById('np-battery').value, 10)
+              : null,
+            storageCapacity: isDevice
+              ? document.getElementById('np-storage').value
+              : null
           })
         });
         var data = await res.json().catch(function () { return null; });
@@ -5407,7 +5575,10 @@ ${MENU_JS}
 
     if (storage) specs.push(storage);
     if (battery) specs.push('بطارية ' + battery + '٪');
-    if (row.getAttribute('data-customs') === 'true') specs.push('مخلّص جمركيًا');
+    // ⚠ على الملصق بنكتب "ضريبة خالص" مش "خالص" لوحدها.
+    // في الشاشة اسم الخانة جنبها فبتتفهم؛ على ورقة صغيرة جنب
+    // "بطارية ٩٠٪" و"256GB"، كلمة "خالص" لوحدها بلا معنى.
+    if (row.getAttribute('data-customs') === 'true') specs.push('ضريبة خالص');
 
     var specHtml = '';
     for (var k = 0; k < specs.length; k++) specHtml += '<span>' + specs[k] + '</span>';
@@ -7250,6 +7421,7 @@ function reportScript(idleTimeout: number, warnAt: number, action: 'LOGOUT' | 'L
 
   return `
 ${shared}
+${MENU_JS}
 (function () {
   var box  = document.getElementById('repmsg');
   var text = document.getElementById('repmsg-text');
@@ -7562,6 +7734,7 @@ function suppliersScript(
 
   return `
 ${shared}
+${MENU_JS}
 (function () {
   var box  = document.getElementById('supmsg');
   var text = document.getElementById('supmsg-text');
@@ -7978,6 +8151,7 @@ function maintenanceScript(
 
   return `
 ${shared}
+${MENU_JS}
 (function () {
   var CAN_MANAGE = ${JSON.stringify(canManage)};
 
