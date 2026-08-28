@@ -1152,6 +1152,33 @@ const LOGIN_SCRIPT = `
   var box = document.getElementById('err');
   var text = document.getElementById('err-text');
 
+  // ══ كود المحل من الرابط ══
+  //
+  // /login?shop=NASER  بيملا خانة كود المحل لوحده.
+  //
+  // ══ ليه؟ ══
+  // موظّف المحل بيكتب نفس الكود كل يوم، وهو حاجة ثابتة مش سرّ.
+  // فالمحل يقدر يحفظ رابط دخول لموظفينه ويخلص من الخانة دي.
+  //
+  // ⚠ والخانة بتفضل **مفتوحة للتعديل**. الرابط بيقترح، ما بيفرضش —
+  // لو الموظّف دخل برابط محل تاني بالغلط، يقدر يصلّحها بإيده بدل
+  // ما يتقفل بره ومحدش عارف ليه.
+  //
+  // ولو الرابط مفيهوش shop، مفيش أي حاجة بتتغيّر.
+  try {
+    var wanted = new URLSearchParams(location.search).get('shop');
+    var tenantField = document.getElementById('tenant');
+    if (wanted && tenantField && !tenantField.value) {
+      // نفس التطبيع اللي في الخادم: الأكواد كلها حروف كبيرة
+      tenantField.value = wanted.trim().toUpperCase();
+      // والمؤشّر بيروح للخانة اللي بعدها، مش لأول خانة مليانة
+      var next = document.getElementById('username');
+      if (next) next.focus();
+    }
+  } catch (err) {
+    // رابط تالف ما يصحّش يمنع الدخول. الخانة تفضل فاضية والموظّف يكتبها.
+  }
+
   function fail(message) {
     text.textContent = message;
     box.hidden = false;
