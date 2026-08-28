@@ -276,6 +276,40 @@ button{font:inherit}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .app-bar .stamp{color:var(--brand-soft)}
 
+/* ⚠ الطبقتين دول **مالهمش أي أثر على الموبايل**.
+   «.who-shop» مخفي، فالعمود بيبقى فيه سطر واحد — يعني نفس
+   الشكل القديم بالحرف. وجودهم هنا عشان الكمبيوتر يقلبهم
+   بسطرين، من غير ما نبني شريط علوي تاني. */
+.who-stack{display:flex;flex-direction:column;gap:2px;min-width:0}
+.who-line{display:flex;align-items:center;gap:9px;min-width:0}
+.who-shop{display:none;font-family:var(--font-display);font-size:var(--fs-5);
+  font-weight:600;line-height:1.25;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ═══ ختم الصانع ═══
+   «ميزان» بخط الشعار نحاسي، و«by Meazan» بخط أحادي بتباعد حروف
+   واسع في الطرف التاني.
+
+   ⚠ الفرق في **الخط** هو اللي بيعمل الهرم، مش فرق الأحجام.
+   الاسم بالخط الكوفي والتوقيع بالأحادي — العين بتفرّق بينهم من
+   غير ما واحد فيهم يكبر على التاني.
+
+   ⚠ وساكن بلا حركة. القاعدة في الملف ده إن الكفة بتتزن مرة
+   واحدة في صفحة الدخول وبس؛ جوّه النظام هي متزنة خلاص. */
+.stamp-by{display:flex;align-items:center;gap:8px;
+  padding-top:11px;border-top:1px solid var(--line-soft)}
+.stamp-by .mark{color:var(--brand);flex:none}
+.stamp-by-word{font-family:var(--font-brand);font-size:var(--fs-3);
+  font-weight:600;color:var(--brand);line-height:1}
+.stamp-by-note{margin-inline-start:auto;font-family:var(--font-mono);
+  font-size:var(--fs-0);letter-spacing:.14em;color:var(--ink-faint);
+  direction:ltr;line-height:1}
+
+/* على الموبايل مكانه قدم قائمة النقط الثلاث */
+.menu-stamp{padding:2px 12px 4px}
+/* وعلى الكمبيوتر بينتقل لقدم الكعب — فمخفي هنا */
+.rail-stamp{display:none}
+
 /* ═══ قائمة النقط الثلاث ═══
    مبنية على <details> — بتشتغل بالكيبورد وبدون أي JavaScript. */
 .menu{position:relative}
@@ -887,6 +921,112 @@ textarea.field-input{height:auto;padding:10px 12px;line-height:1.7;resize:vertic
    ⚠ التطبيقات السريعة بتعرض المحتوى **فورًا**. المحتوى الفوري
    هو الحركة. لو حبيت ترجّعها يومًا ما، ارجع لسجل جيت هب — بس
    اعرف إن ده تأخير مقصود بتدفعه من سرعة الشاشة. */
+
+/* ═══════════════════════════════════════════════════════════
+   توزيعة الكمبيوتر — "الدفتر المفتوح"
+
+   ══ الفكرة ══
+   على الموبايل إنت ماسك الدفتر **مقفول**، بتقلب صفحة صفحة.
+   الشريط السفلي تحت إبهامك، والعمود ضيّق عشان العين تقرا من
+   غير ما الرقبة تلف. ده تصميم صح ومش محتاج يتغيّر.
+
+   على الكمبيوتر إنت بتفرد الدفتر على المكتب. والدفتر العربي
+   كعبه على اليمين — فالشريط السفلي بيقوم من تحت ويقف **كعب
+   على اليمين**، والصفحة بتتفرد على شماله.
+
+   ══ ⚠ والموبايل ما اتلمسش ولا حرف ══
+   كل اللي تحت جوّه «@media» واحدة. لو شيلتها، النظام بيرجع
+   لشكله القديم بالظبط على كل الأجهزة.
+
+   ══ ⚠ ليه 1024 ══
+   تحتها التابلت الأفقي، والكعب بعرض 236 كان هياكل ربع الشاشة
+   ويسيب المحتوى مخنوق. فوقها فيه فضل مساحة حقيقي.
+
+   ══ ⚠ والمقابض هي اللي بتتغيّر مش القواعد ══
+   كل اللي تحت بيعيد ضبط متغيّرات موجودة في «:root» أصلاً. ده
+   اللي خلّى التعديل ده رخيص: التصميم كان مبني على مقابض من
+   الأول، مش على أرقام متناثرة.
+   ═══════════════════════════════════════════════════════════ */
+@media (min-width:1024px){
+  :root{
+    /* 54 مقاس **إصبع**. الماوس بيوصل لنص المسافة دي بدقة،
+       والزراير الطويلة على شاشة كبيرة بتبان فجّة. */
+    --tap:44px;
+    --pad:24px;
+    /* مفيش شريط سفلي نفضّيله مكان — الحشوة بترجع مسافة راحة بس */
+    --shell-bottom:56px;
+    --rail:236px;
+  }
+
+  /* ⚠ الزحزحة على «body» مش على كل عنصر لوحده.
+     كده الشريط العلوي اللاصق والمحتوى بيتزحزحوا مع بعض، ومفيش
+     حاجة بتعدّي تحت الكعب لو صفحة جديدة اتضافت بكرة. */
+  body{padding-inline-start:var(--rail)}
+
+  /* ─── الكعب ───
+     ⚠ الخيط النحاسي مش عنصر جديد. هو **هو نفسه** اللي كان تحت
+     الشريط العلوي، بس واقف بدل ما هو نايم — نفس التفصيلة بعد
+     ربع لفة. */
+  .tabbar{
+    inset-inline:0 auto;top:0;bottom:0;width:var(--rail);
+    flex-direction:column;align-items:stretch;gap:2px;
+    padding:18px 0 var(--pad);
+    background:var(--surface);
+    border-top:none;
+    border-inline-end:1.5px solid var(--brand);
+  }
+  .tabbar a{
+    flex:0 0 auto;display:flex;align-items:center;gap:12px;
+    height:var(--tap);padding:0 var(--pad);
+    text-align:start;font-size:var(--fs-4);
+    border-top:none;margin-top:0;
+    /* العلامة على الحافة **البرّانية**. الجوّانية عليها الخيط
+       النحاسي خلاص، ولو حطّيناها هناك الاتنين هيتخانقوا. */
+    border-inline-start:2.5px solid transparent;
+  }
+  .tabbar a[aria-current="page"]{
+    background:var(--card);border-inline-start-color:var(--brand)}
+  .tabbar-icon{display:inline;margin:0;width:1.2em;text-align:center;
+    font-size:var(--fs-5)}
+
+  /* ختم الصانع في قدم الكعب. «margin-top:auto» بتدفعه لتحت
+     مهما كان عدد الوجهات فوقه. */
+  .rail-stamp{display:block;margin-top:auto;padding:0 var(--pad)}
+  .menu-stamp{display:none}
+
+  /* ─── الشريط العلوي: لهوية المحل وحدها ───
+
+     ⚠ الميزان الصغير بيختفي من هنا وبينزل للكعب. ميزانين في
+     شاشة واحدة بيلغوا بعض.
+
+     والنتيجة إن الشريط بقى **لاسم المحل**، والكعب لهوية النظام.
+     صاحب المحل بيبص فوق يلاقي محله، وبيبص على الكعب يلاقي مين
+     بنى اللي هو ماسكه. */
+  .app-bar{padding-block:9px}
+  .app-bar .brandmark{display:none}
+  .who-shop{display:block}
+  /* ⚠ مربوطة بـ«[data-shop]» عن قصد: الصفحات اللي مالهاش محل
+     (شاشة المنصّة) اسم الموظّف فيها هو السطر الوحيد، فما يصحّش
+     يتصغّر ويبهت وهو لوحده. */
+  .who[data-shop] .who-name{font-size:var(--fs-3);font-weight:500;
+    color:rgba(255,255,255,.72)}
+
+  /* ─── الصفحة ───
+     ⚠ مفيش «margin:0 auto» هنا — الصفحة بتتزنق ناحية الكعب مش
+     بتتوسّط الشاشة. الدفتر المفرود جنبه كعب من ناحية واحدة، مش
+     طاير في النص. */
+  .shell{max-width:1120px;margin-inline:0;padding-top:var(--pad)}
+
+  .tiles{grid-template-columns:repeat(3,1fr);gap:14px}
+  /* ⚠ العريضة بتاخد **عمودين** مش الصف كله، وبترجع عمود بدل
+     ما تتفرد على الطرفين: على عرض 1120 الاسم كان هيقف يمين
+     والوصف شمال، وبينهم صحرا فاضية. */
+  .tile[data-wide]{grid-column:span 2;flex-direction:column;
+    align-items:flex-start;justify-content:center;gap:6px}
+
+  /* الماوس بيمرّ من غير ما يدوس، فالكعب بيرد على المرور */
+  .tabbar a:hover{background:var(--card);color:var(--ink)}
+}
 
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms !important;transition-duration:.01ms !important}
