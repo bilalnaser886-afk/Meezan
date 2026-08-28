@@ -330,6 +330,10 @@ button{font:inherit}
 .menu-item{display:block;width:100%;text-align:start;padding:11px 12px;font-size:var(--fs-5);
   color:var(--ink);background:none;border:none;border-radius:var(--r-sm);cursor:pointer}
 .menu-item[data-danger]{color:var(--debit)}
+/* ⚠ العنصر المعطّل بيفضل **مقروء**، بس بلا مؤشّر ضغط.
+   إخفاؤه كان هيخلّي المستخدم يدوّر على إعداد مش لاقيه؛ والحالة
+   جنبه («غير مدعومة» · «مرفوضة من المتصفح») هي الرد على سؤاله. */
+.menu-item:disabled{cursor:default;opacity:.55}
 
 /* ⚠ اللافتة بتقول الوضع الحالي، فبتتكتب بالنحاسي — لون
    الهوية والحالة، مش لون الإجراء. الأخضر الوظيفي محجوز
