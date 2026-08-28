@@ -909,6 +909,17 @@ interface ProductBody {
   quantity?: string;
   branchId?: string | null;
   isActive?: boolean;
+  /**
+   * ⚠ الأربعة دول كانت **ناقصة من النوع ده**، والواجهة بتبعتهم
+   * من زمان. يعني الخادم كان بيرميهم في صمت ويرد "تم الحفظ" —
+   * والصفحة بتتحدّث وتوري القيمة القديمة.
+   *
+   * أوحش نوع عطل: بيشتغل صح، وبيبان صح، وما بيحفظش.
+   */
+  reorderPoint?: number;
+  customsCleared?: boolean;
+  batteryHealth?: number | null;
+  storageCapacity?: string | null;
 }
 
 /**
@@ -953,6 +964,11 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     costPiastres,
     quantityOnHand: quantity,
     branchId: body.branchId ?? null,
+    // ⚠ مواصفات الجهاز مع الإنشاء. حالة الاستخدام بتصفّرهم
+    // للإكسسوار، فمفيش داعي نفحص النوع هنا كمان.
+    customsCleared: body.customsCleared ?? false,
+    batteryHealth: body.batteryHealth ?? null,
+    storageCapacity: body.storageCapacity ?? null,
   });
 
   return c.json({ ok: true, id: created.id }, 201);
@@ -975,6 +991,10 @@ productRoutes.post(
       source?: string | null;
       serialNumber?: string | null;
       entryDate?: string | null;
+      reorderPoint?: number | null;
+      customsCleared?: boolean;
+      batteryHealth?: number | null;
+      storageCapacity?: string | null;
     } = {};
 
     try {
@@ -992,6 +1012,23 @@ productRoutes.post(
       if (body.source !== undefined) patch.source = body.source;
       if (body.serialNumber !== undefined) patch.serialNumber = body.serialNumber;
       if (body.entryDate !== undefined) patch.entryDate = body.entryDate;
+
+      // ── مواصفات الجهاز والحد الأدنى ──
+      //
+      // ⚠ الأربعة دول كانوا **بيتقروش خالص**. الواجهة بتبعتهم،
+      // والنوع مكانش فيه مكان ليهم، فكانوا بيتبخّروا هنا.
+      //
+      // ⚠ ونفس قاعدة السعر شغّالة عليهم: `undefined` معناها
+      // "ما تلمسش"، والقيمة الفاضية معناها "امسح". من غير
+      // التفريق ده مستحيل ترجّع صحة البطارية فاضية بعد ما
+      // اتكتبت — وفاضي هنا معناه "ما اتقاسش" مش صفر.
+      //
+      // ⚠ والصلاحية على `reorderPoint` بتتفحص في حالة الاستخدام
+      // مش هنا. المسار بيقرا، والحراسة جنب البيانات.
+      if (body.reorderPoint !== undefined) patch.reorderPoint = body.reorderPoint;
+      if (body.customsCleared !== undefined) patch.customsCleared = body.customsCleared;
+      if (body.batteryHealth !== undefined) patch.batteryHealth = body.batteryHealth;
+      if (body.storageCapacity !== undefined) patch.storageCapacity = body.storageCapacity;
     } catch (error) {
       throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
     }
