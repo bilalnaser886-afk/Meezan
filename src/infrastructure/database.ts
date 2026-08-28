@@ -1035,6 +1035,24 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
       const { data: row, error } = await db
         .from('treasury_movements')
         .insert({
+          // ⚠⚠ `tenant_id` كان **ناقص** هنا، والعمود `not null`
+          // بلا قيمة افتراضية — يعني **كل** حركة خزينة كانت
+          // بترفض قبل ما تتكتب، والرد بيطلع 500.
+          //
+          // ══ إزاي فات علينا شهور؟ ══
+          // العقد في `ports.ts` بيطلب `tenantId`، وحالة الاستخدام
+          // بتبعته فعلاً. فالأنواع كلها سليمة والبناء بيعدّي —
+          // الحقل بيوصل للمستودع وبيتساب على الأرض.
+          //
+          // ⚠ ودي نفس عيلة الفخ ١٩: **الدالة اللي بتاخد المحل
+          // ولا بتستخدمه**. التوقيع بيقول إنها محروسة، فمحدش
+          // بيراجعها.
+          //
+          // ══ وليه البيع كان شغّال؟ ══
+          // البيع بيمر على دالة ذرية جوّه القاعدة بتحطّ المحل
+          // بنفسها. تسجيل الحركة اليدوي بيكتب في الجدول مباشرةً
+          // من هنا. مسارين مختلفين، وواحد بس هو اللي نسي.
+          tenant_id: data.tenantId,
           treasury_id: data.treasuryId,
           branch_id: data.branchId,
           direction: data.direction,
@@ -1057,6 +1075,18 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         // قاعدة البيانات رفضت السجل (سُلفة بلا موظّف مثلاً)
         if (error?.code === '23514') {
           throw Errors.validation('بيانات الحركة ناقصة أو غير متسقة.');
+        }
+        // ⚠ 23502 = عمود إلزامي وصل فاضي.
+        //
+        // الرسالة دي اتضافت عشان الغلطة اللي فوق. من غيرها،
+        // العطل بيطلع "حدث خطأ غير متوقّع" — وقعدنا ندوّر ساعات
+        // في الصلاحيات والقيود وأسباب الصرف، والسبب كان عمود
+        // ناسي اسمه مكتوب في رسالة بوستجرس من أول ثانية.
+        //
+        // الرسالة للمستخدم تفضل عامة (مفيش أسماء أعمدة تتسرّب)،
+        // لكن التفصيلة بتروح للوق.
+        if (error?.code === '23502') {
+          throw Errors.internal(`movement insert — missing column: ${error.message}`);
         }
         throw Errors.internal(`movement insert: ${error?.message}`);
       }
