@@ -362,7 +362,7 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const idleRule = idleRuleFor(user.roleKey);
 
-  const [products, balances, recent, branchLabel] = await Promise.all([
+  const [products, balances, recent, branchLabel, posBranches] = await Promise.all([
     listSellableProducts(container.products, user),
     listBalances(container.treasury, user),
     // ⚠ الخطأ ما يصحّش يتبلع في صمت. لو الاستعلام فشل، القائمة
@@ -373,6 +373,11 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       return [];
     }),
     branchLabelFor(container, user),
+    // ⚠ لصاحب المحل وحده. غيره مقفول على فرعه أصلاً، فقائمة
+    // فروع عنده بتبقى خانة باختيار واحد — أثاث بلا وظيفة.
+    user.roleKey === 'SUPER_ADMIN'
+      ? container.branches.listActive(user.tenantId).catch(() => [])
+      : Promise.resolve([]),
   ]);
 
   return c.html(
@@ -390,9 +395,20 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       // ⚠ الخزائن اللي مالهاش فرع (مستوى الشركة) مستبعدة: البيع
       // لازم يتسجّل على فرع، والدالة في قاعدة البيانات بترفضها.
       // إخفاؤها هنا بيمنع الموظّف يختار حاجة هتترفض بعد الضغط.
+      //
+      // ⚠ و`branchId` بيتمرّر دلوقتي عشان الشاشة تفلتر بيه.
+      // الفلتر ده **راحة مش حماية** — الحارس الحقيقي في دالة
+      // القاعدة، وهو اللي بيرفض خزينة فرع مع منتج فرع تاني.
       treasuries: balances
         .filter((b) => b.isActive && b.branchId !== null)
-        .map((b) => ({ treasuryId: b.treasuryId, name: b.name, type: b.type })),
+        .map((b) => ({
+          treasuryId: b.treasuryId,
+          name: b.name,
+          type: b.type,
+          branchId: b.branchId as string,
+        })),
+      // ⚠ فاضية لغير صاحب المحل — والشاشة بتخفي الخانة ساعتها.
+      branches: posBranches.map((b: { id: string; name: string }) => ({ id: b.id, name: b.name })),
       products: products.map((p) => ({
         id: p.id,
         name: p.name,
@@ -400,6 +416,7 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         serialNumber: p.serialNumber,
         pricePiastres: p.pricePiastres,
         quantityOnHand: p.quantityOnHand,
+        branchId: p.branchId,
       })),
       recentSales: recent.map((s) => ({
         id: s.id,
