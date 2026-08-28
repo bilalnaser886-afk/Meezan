@@ -766,6 +766,16 @@ export interface CreateProductInput {
   pricePiastres: number | null;
   costPiastres: number;
   quantityOnHand: number;
+  /**
+   * ⚠ التلاتة دول **للأجهزة بس**، وإلزاميين في العقد ده عن قصد.
+   *
+   * لو خلّيناهم اختياريين، أي مستودع جديد يقدر يسيبهم من غير ما
+   * حاجة تزعّق — والجهاز بيتسجّل ناقص مواصفاته وما حدش بيلاحظ.
+   * حالة الاستخدام بتصفّرهم للإكسسوار قبل ما يوصلوا هنا.
+   */
+  customsCleared: boolean;
+  batteryHealth: number | null;
+  storageCapacity: string | null;
   createdById: string;
 }
 
