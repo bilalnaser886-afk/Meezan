@@ -48,8 +48,10 @@ import type {
   ProductListOptions,
   ProductRecord,
   CategoryRepository,
+  ColorRepository,
   DeviceModel,
   ModelRepository,
+  ProductColor,
   ProductRepository,
   ProductType,
   RateLimiter,
@@ -1252,7 +1254,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
-  'customs_cleared, battery_health, storage_capacity, category_id, model_id, is_active';
+  'customs_cleared, battery_health, storage_capacity, category_id, model_id, color_id, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -1262,6 +1264,7 @@ interface RawProduct {
   id: string;
   category_id?: string | null;
   model_id?: string | null;
+  color_id?: string | null;
   tenant_id: string;
   branch_id: string;
   name: string;
@@ -1306,6 +1309,7 @@ function toProduct(raw: RawProduct): ProductRecord {
     // فاضي = غير مصنّف، والشاشة بتعرضه في درج "غير مصنّف"
     categoryId: raw.category_id ?? null,
     modelId: raw.model_id ?? null,
+    colorId: raw.color_id ?? null,
     isActive: raw.is_active,
   };
 
@@ -1540,6 +1544,98 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
   };
 }
 
+export function createColorRepository(db: SupabaseClient): ColorRepository {
+  const map = (r: Record<string, unknown>): ProductColor => ({
+    id: String(r.id),
+    name: String(r.name),
+    hex: (r.hex as string | null) ?? null,
+    sortOrder: Number(r.sort_order ?? 0),
+    isSystem: Boolean(r.is_system),
+    productCount: Number(r.product_count ?? 0),
+  });
+
+  return {
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_product_colors', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`colors list: ${error.message}`);
+      return ((data ?? []) as Array<Record<string, unknown>>).map(map);
+    },
+
+    async findById(id, tenantId) {
+      // ⚠ المحل جزء من الاستعلام مش فلتر بعده
+      const { data, error } = await db
+        .from('product_colors')
+        .select('id, name, hex, sort_order, is_system')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`color findById: ${error.message}`);
+      if (!data) return null;
+      // ⚠ العدّ صفر — الدالة دي للحراسة مش للعرض
+      return map(data as Record<string, unknown>);
+    },
+
+    async create(input) {
+      const { data, error } = await db
+        .from('product_colors')
+        .insert({
+          tenant_id: input.tenantId,
+          name: input.name,
+          hex: input.hex,
+          sort_order: 99,
+          is_system: false,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('اللون ده مسجّل بالفعل.');
+        throw Errors.internal(`color create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
+    async update(id, tenantId, patch) {
+      const row: Record<string, unknown> = {};
+      if (patch.name !== undefined) row.name = patch.name;
+      if (patch.hex !== undefined) row.hex = patch.hex;
+      if (Object.keys(row).length === 0) return;
+
+      const { error } = await db
+        .from('product_colors')
+        .update(row)
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('اللون ده مسجّل بالفعل.');
+        throw Errors.internal(`color update: ${error.message}`);
+      }
+    },
+
+    async softDelete(id, tenantId, actorId, at) {
+      const { error } = await db
+        .from('product_colors')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة المنتجات',
+        })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`color delete: ${error.message}`);
+    },
+  };
+}
+
 export function createProductRepository(db: SupabaseClient): ProductRepository {
   return {
     async list(scope, options: ProductListOptions) {
@@ -1599,6 +1695,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
           storage_capacity: data.storageCapacity,
           category_id: data.categoryId,
           model_id: data.modelId,
+          color_id: data.colorId,
           is_active: true,
           created_by_id: data.createdById,
           updated_by_id: data.createdById,
@@ -1649,6 +1746,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       // من غير التفريق ده مستحيل ترجّع منتج بلا درج بعد ما اتحطّ فيه.
       if (data.categoryId !== undefined) patch.category_id = data.categoryId;
       if (data.modelId !== undefined) patch.model_id = data.modelId;
+      if (data.colorId !== undefined) patch.color_id = data.colorId;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
