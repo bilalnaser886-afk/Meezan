@@ -679,6 +679,19 @@ export interface ExpenseReasonRepository {
   /** أسباب الفرع + أسباب المحل العامة (branch_id = null) */
   listForBranch(tenantId: string, branchId: string | null): Promise<ExpenseReason[]>;
   findById(id: string): Promise<ExpenseReason | null>;
+  /**
+   * سبب جديد — **على مستوى المحل** دايمًا (`branch_id` فاضي).
+   *
+   * ⚠ مفيش أسباب خاصة بفرع من الشاشة، وده مقصود. الفهرس الفريد
+   * على (المحل · الفرع · الاسم)، فسبب فرعي اسمه "إيجار" جنب سبب
+   * عام اسمه "إيجار" **مسموح** في القاعدة — والمدير هيلاقي
+   * "إيجار" مرتين في قايمته ومش عارف الفرق.
+   *
+   * ⚠ و`is_advance` و`is_inventory` بيفضلوا false دايمًا:
+   * الاتنين بيغيّروا معاملة الحركة في قائمة الدخل، ومش قرار
+   * يتاخد من خانة نص في شاشة الخزينة.
+   */
+  create(input: { tenantId: string; name: string }): Promise<{ id: string }>;
 }
 
 // ═══════════════════ المنتجات ═══════════════════
