@@ -40,6 +40,7 @@ import {
   createAuditLogger,
   createBranchRepository,
   createCategoryRepository,
+  createModelRepository,
   createCustomerRepository,
   createDb,
   createExpenseReasonRepository,
@@ -153,6 +154,7 @@ export function buildContainer(env: Env): Container {
     products: {
       products: createProductRepository(db),
       categories: createCategoryRepository(db),
+      models: createModelRepository(db),
       branches: branchRepo,
       users: userRepo,
       clock: systemClock,
