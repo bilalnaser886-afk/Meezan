@@ -46,17 +46,21 @@ import {
 } from '../application/use-cases/treasury';
 import {
   createCategory,
+  createColor,
   createModel,
   createProduct,
   deleteCategory,
+  deleteColor,
   deleteModel,
   getPriceHistory,
   listCategories,
+  listColors,
   listModels,
   listProducts,
   listSellableProducts,
   renameCategory,
   restockProduct,
+  updateColor,
   updateModel,
   updateProduct,
 } from '../application/use-cases/products';
@@ -995,6 +999,55 @@ productRoutes.delete(
   },
 );
 
+// ═══════════════════ ألوان المنتجات ═══════════════════
+//
+// ⚠ قبل `/:id` زي الأدراج والموديلات.
+
+productRoutes.get(
+  '/colors',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listColors(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+productRoutes.post(
+  '/colors',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; hex?: string | null }>(c);
+    const container = buildContainer(c.env);
+    const created = await createColor(container.products, c.get('user'), {
+      name: String(body.name ?? ''),
+      hex: body.hex ?? null,
+    });
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
+productRoutes.patch(
+  '/colors/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; hex?: string | null }>(c);
+    const container = buildContainer(c.env);
+    await updateColor(container.products, c.get('user'), c.req.param('id'), body);
+    return c.json({ ok: true });
+  },
+);
+
+productRoutes.delete(
+  '/colors/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    await deleteColor(container.products, c.get('user'), c.req.param('id'));
+    return c.json({ ok: true });
+  },
+);
+
 /** قائمة شاشة الكاشير: المفعّل واللي فيه كمية بس */
 productRoutes.get(
   '/sellable',
@@ -1030,6 +1083,7 @@ interface ProductBody {
   storageCapacity?: string | null;
   categoryId?: string | null;
   modelId?: string | null;
+  colorId?: string | null;
 }
 
 /**
@@ -1081,6 +1135,7 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     storageCapacity: body.storageCapacity ?? null,
     categoryId: body.categoryId ?? null,
     modelId: body.modelId ?? null,
+    colorId: body.colorId ?? null,
   });
 
   return c.json({ ok: true, id: created.id }, 201);
@@ -1109,6 +1164,7 @@ productRoutes.post(
       storageCapacity?: string | null;
       categoryId?: string | null;
       modelId?: string | null;
+      colorId?: string | null;
     } = {};
 
     try {
@@ -1145,6 +1201,7 @@ productRoutes.post(
       if (body.storageCapacity !== undefined) patch.storageCapacity = body.storageCapacity;
       if (body.categoryId !== undefined) patch.categoryId = body.categoryId;
       if (body.modelId !== undefined) patch.modelId = body.modelId;
+      if (body.colorId !== undefined) patch.colorId = body.colorId;
     } catch (error) {
       throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
     }
