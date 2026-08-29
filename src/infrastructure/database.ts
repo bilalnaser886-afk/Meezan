@@ -48,6 +48,8 @@ import type {
   ProductListOptions,
   ProductRecord,
   CategoryRepository,
+  DeviceModel,
+  ModelRepository,
   ProductRepository,
   ProductType,
   RateLimiter,
@@ -1250,7 +1252,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
-  'customs_cleared, battery_health, storage_capacity, category_id, is_active';
+  'customs_cleared, battery_health, storage_capacity, category_id, model_id, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -1259,6 +1261,7 @@ function productColumns(includeCost: boolean): string {
 interface RawProduct {
   id: string;
   category_id?: string | null;
+  model_id?: string | null;
   tenant_id: string;
   branch_id: string;
   name: string;
@@ -1302,6 +1305,7 @@ function toProduct(raw: RawProduct): ProductRecord {
     storageCapacity: raw.storage_capacity ? String(raw.storage_capacity) : null,
     // فاضي = غير مصنّف، والشاشة بتعرضه في درج "غير مصنّف"
     categoryId: raw.category_id ?? null,
+    modelId: raw.model_id ?? null,
     isActive: raw.is_active,
   };
 
@@ -1430,6 +1434,112 @@ export function createCategoryRepository(db: SupabaseClient): CategoryRepository
   };
 }
 
+export function createModelRepository(db: SupabaseClient): ModelRepository {
+  const map = (r: Record<string, unknown>): DeviceModel => ({
+    id: String(r.id),
+    name: String(r.name),
+    brand: (r.brand as string | null) ?? null,
+    sortOrder: Number(r.sort_order ?? 0),
+    deviceCount: Number(r.device_count ?? 0),
+    accessoryCount: Number(r.accessory_count ?? 0),
+  });
+
+  return {
+    /**
+     * السجل + العدّين في نداء واحد.
+     *
+     * ⚠ عمودين عدّ منفصلين مش مجموع واحد: "كام جهاز ١٢ برو ماكس
+     * عندي" و"كام صنف إكسسوار ليه" سؤالين مختلفين. الرقم المجمّع
+     * كان هيقول "٧" ومش هتعرف سبع أجهزة ولا سبع جرابات.
+     */
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_device_models', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`models list: ${error.message}`);
+      return ((data ?? []) as Array<Record<string, unknown>>).map(map);
+    },
+
+    async findById(id, tenantId) {
+      // ⚠ المحل جزء من الاستعلام مش فلتر بعده
+      const { data, error } = await db
+        .from('device_models')
+        .select('id, name, brand, sort_order')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`model findById: ${error.message}`);
+      if (!data) return null;
+      // ⚠ العدّ صفر هنا — الدالة دي للحراسة مش للعرض
+      return map(data as Record<string, unknown>);
+    },
+
+    async create(input) {
+      const { data, error } = await db
+        .from('device_models')
+        .insert({
+          tenant_id: input.tenantId,
+          name: input.name,
+          brand: input.brand,
+          sort_order: 99,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // 23505 = تعارض تفرّد، والفهرس على (المحل · الاسم)
+        if (error.code === '23505') throw Errors.validation('الموديل ده مسجّل بالفعل.');
+        throw Errors.internal(`model create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
+    async update(id, tenantId, patch) {
+      const row: Record<string, unknown> = {};
+      if (patch.name !== undefined) row.name = patch.name;
+      if (patch.brand !== undefined) row.brand = patch.brand;
+      if (Object.keys(row).length === 0) return;
+
+      const { error } = await db
+        .from('device_models')
+        .update(row)
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('الموديل ده مسجّل بالفعل.');
+        throw Errors.internal(`model update: ${error.message}`);
+      }
+    },
+
+    /**
+     * حذف ناعم.
+     *
+     * ⚠ الصف بيفضل عشان المنتجات القديمة اللي بتشاور عليه ما
+     * تكسرش. والمنتج بيبان "بلا موديل" لأن الموديل مش بيترجع
+     * في القايمة — من غير ما نلمس صف المنتج.
+     */
+    async softDelete(id, tenantId, actorId, at) {
+      const { error } = await db
+        .from('device_models')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة المنتجات',
+        })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`model delete: ${error.message}`);
+    },
+  };
+}
+
 export function createProductRepository(db: SupabaseClient): ProductRepository {
   return {
     async list(scope, options: ProductListOptions) {
@@ -1488,6 +1598,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
           battery_health: data.batteryHealth,
           storage_capacity: data.storageCapacity,
           category_id: data.categoryId,
+          model_id: data.modelId,
           is_active: true,
           created_by_id: data.createdById,
           updated_by_id: data.createdById,
@@ -1537,6 +1648,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       // ⚠ `undefined` = ما تلمسش الدرج. `null` = شيله (غير مصنّف).
       // من غير التفريق ده مستحيل ترجّع منتج بلا درج بعد ما اتحطّ فيه.
       if (data.categoryId !== undefined) patch.category_id = data.categoryId;
+      if (data.modelId !== undefined) patch.model_id = data.modelId;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
