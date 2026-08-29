@@ -36,9 +36,11 @@ import type {
   BranchRepository,
   CategoryRepository,
   Clock,
+  ColorRepository,
   DeviceModel,
   ModelRepository,
   ProductCategory,
+  ProductColor,
   ListScope,
   PriceChange,
   ProductRecord,
@@ -53,6 +55,8 @@ export interface ProductDeps {
   categories: CategoryRepository;
   /** سجل موديلات الموبايل — البُعد التاني جنب الدرج */
   models: ModelRepository;
+  /** سجل الألوان — البُعد التالت */
+  colors: ColorRepository;
   branches: BranchRepository;
   /** لتحويل معرّفات من غيّر السعر لأسماء */
   users: UserRepository;
@@ -94,6 +98,8 @@ export interface CreateProductRequest {
   categoryId?: string | null;
   /** موديل الموبايل — للنوعين. فاضي = غير محدّد. */
   modelId?: string | null;
+  /** لون المنتج — للنوعين. فاضي = غير محدّد. */
+  colorId?: string | null;
 }
 
 export interface UpdateProductRequest {
@@ -115,6 +121,8 @@ export interface UpdateProductRequest {
   categoryId?: string | null;
   /** `null` = شيل الموديل */
   modelId?: string | null;
+  /** `null` = شيل اللون */
+  colorId?: string | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -600,6 +608,156 @@ async function resolveModel(
   return modelId;
 }
 
+// ═══════════════════ الألوان ═══════════════════
+
+/**
+ * سجل الألوان.
+ *
+ * ⚠ بيتزرع مع فتح المحل بعشر ألوان شائعة، على عكس الموديلات
+ * اللي بتبدأ فاضية. الموديلات بتقدم؛ الأسود أسود من عشرين سنة.
+ */
+export async function listColors(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<ProductColor[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+  return deps.colors.list(actor.tenantId, branchId);
+}
+
+function readColorName(raw: unknown): string {
+  const name = String(raw ?? '').trim();
+  if (name.length < 2 || name.length > 30) {
+    throw Errors.validation('اسم اللون من حرفين إلى 30 حرفًا.');
+  }
+  return name;
+}
+
+/**
+ * قراءة كود اللون.
+ *
+ * ⚠ بنرفض الصيغة الغلط بدل ما نتجاهلها. الكود الغلط بيدّي نقطة
+ * سودا في الشاشة والمستخدم يفتكر إنه اختار أسود.
+ */
+function readHex(raw: unknown): string | null {
+  const hex = String(raw ?? '').trim();
+  if (!hex) return null;
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) {
+    throw Errors.validation('كود اللون لازم يكون بصيغة #RRGGBB.');
+  }
+  return hex.toUpperCase();
+}
+
+export async function createColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  input: { name: string; hex?: string | null },
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const name = readColorName(input.name);
+  const hex = readHex(input.hex);
+  const created = await deps.colors.create({ tenantId: actor.tenantId, name, hex });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'color.create',
+    entity: 'ProductColor',
+    entityId: created.id,
+    metadata: { name, hex, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+export async function updateColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  colorId: string,
+  input: { name?: unknown; hex?: unknown },
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.colors.findById(colorId, actor.tenantId);
+  if (!existing) throw Errors.notFound('اللون');
+
+  const patch: { name?: string; hex?: string | null } = {};
+  if (input.name !== undefined) patch.name = readColorName(input.name);
+  if (input.hex !== undefined) patch.hex = readHex(input.hex);
+  if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
+
+  await deps.colors.update(colorId, actor.tenantId, patch);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'color.update',
+    entity: 'ProductColor',
+    entityId: colorId,
+    metadata: { from: { name: existing.name, hex: existing.hex }, to: patch },
+  });
+}
+
+/**
+ * حذف لون.
+ *
+ * ⚠ نفس حارسَي الأدراج: المزروع محصّن، والفاضي بس.
+ */
+export async function deleteColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  colorId: string,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.colors.findById(colorId, actor.tenantId);
+  if (!existing) throw Errors.notFound('اللون');
+
+  if (existing.isSystem) {
+    throw Errors.validation('الألوان الأساسية لا تُحذف. يمكنك إعادة تسميتها.');
+  }
+
+  // ⚠ العدّ على كل الفروع — لون عليه منتج في فرع تاني مش فاضي
+  const all = await deps.colors.list(actor.tenantId, null);
+  const row = all.find((c) => c.id === colorId);
+  if (row && row.productCount > 0) {
+    throw Errors.validation(`اللون مرتبط بـ${row.productCount} منتج.`);
+  }
+
+  await deps.colors.softDelete(colorId, actor.tenantId, actor.id, deps.clock.now());
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'color.delete',
+    entity: 'ProductColor',
+    entityId: colorId,
+    metadata: { name: existing.name },
+  });
+}
+
+/** ⚠ للنوعين زي الموديل. الجراب الأحمر غير الأزرق. */
+async function resolveColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  raw: unknown,
+): Promise<string | null> {
+  const colorId = String(raw ?? '').trim();
+  if (!colorId) return null;
+  const color = await deps.colors.findById(colorId, actor.tenantId);
+  if (!color) throw Errors.validation('اللون المختار غير موجود.');
+  return colorId;
+}
+
 // ═══════════════════ المنتجات ═══════════════════
 
 // ─────────── الكتابة ───────────
@@ -677,6 +835,7 @@ export async function createProduct(
 
   const categoryId = await resolveCategory(deps, actor, input.categoryId, productType);
   const modelId = await resolveModel(deps, actor, input.modelId);
+  const colorId = await resolveColor(deps, actor, input.colorId);
 
   const created = await deps.products.create({
     tenantId: actor.tenantId,
@@ -694,6 +853,7 @@ export async function createProduct(
     storageCapacity,
     categoryId,
     modelId,
+    colorId,
     createdById: actor.id,
   });
 
@@ -714,6 +874,7 @@ export async function createProduct(
       storageCapacity,
       categoryId,
       modelId,
+      colorId,
     },
   });
 
@@ -795,6 +956,7 @@ export async function updateProduct(
     storageCapacity?: string | null;
     categoryId?: string | null;
     modelId?: string | null;
+    colorId?: string | null;
     updatedById: string;
   } = { updatedById: actor.id };
 
@@ -808,6 +970,9 @@ export async function updateProduct(
   }
   if (input.modelId !== undefined) {
     patch.modelId = await resolveModel(deps, actor, input.modelId);
+  }
+  if (input.colorId !== undefined) {
+    patch.colorId = await resolveColor(deps, actor, input.colorId);
   }
 
   let changedPrice = false;
