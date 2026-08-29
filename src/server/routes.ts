@@ -45,10 +45,14 @@ import {
   updateTreasury,
 } from '../application/use-cases/treasury';
 import {
+  createCategory,
   createProduct,
+  deleteCategory,
   getPriceHistory,
+  listCategories,
   listProducts,
   listSellableProducts,
+  renameCategory,
   restockProduct,
   updateProduct,
 } from '../application/use-cases/products';
@@ -887,6 +891,57 @@ productRoutes.get(
   },
 );
 
+// ═══════════════════ أدراج المنتجات ═══════════════════
+//
+// ⚠ المسارات دي تحت `/api/products/categories`، وترتيبها قبل
+// `/:id` **مقصود**: هونو بيطابق أول مسار مناسب، فلو حطّيناها
+// بعده كان `/categories` هيتقرا كمعرّف منتج اسمه "categories".
+
+productRoutes.get(
+  '/categories',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listCategories(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+productRoutes.post(
+  '/categories',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ parentId?: string | null; name?: string }>(c);
+    const container = buildContainer(c.env);
+    const created = await createCategory(container.products, c.get('user'), {
+      parentId: body.parentId ?? null,
+      name: String(body.name ?? ''),
+    });
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
+productRoutes.patch(
+  '/categories/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string }>(c);
+    const container = buildContainer(c.env);
+    await renameCategory(container.products, c.get('user'), c.req.param('id'), body.name);
+    return c.json({ ok: true });
+  },
+);
+
+productRoutes.delete(
+  '/categories/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    await deleteCategory(container.products, c.get('user'), c.req.param('id'));
+    return c.json({ ok: true });
+  },
+);
+
 /** قائمة شاشة الكاشير: المفعّل واللي فيه كمية بس */
 productRoutes.get(
   '/sellable',
@@ -920,6 +975,7 @@ interface ProductBody {
   customsCleared?: boolean;
   batteryHealth?: number | null;
   storageCapacity?: string | null;
+  categoryId?: string | null;
 }
 
 /**
@@ -969,6 +1025,7 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     customsCleared: body.customsCleared ?? false,
     batteryHealth: body.batteryHealth ?? null,
     storageCapacity: body.storageCapacity ?? null,
+    categoryId: body.categoryId ?? null,
   });
 
   return c.json({ ok: true, id: created.id }, 201);
@@ -995,6 +1052,7 @@ productRoutes.post(
       customsCleared?: boolean;
       batteryHealth?: number | null;
       storageCapacity?: string | null;
+      categoryId?: string | null;
     } = {};
 
     try {
@@ -1029,6 +1087,7 @@ productRoutes.post(
       if (body.customsCleared !== undefined) patch.customsCleared = body.customsCleared;
       if (body.batteryHealth !== undefined) patch.batteryHealth = body.batteryHealth;
       if (body.storageCapacity !== undefined) patch.storageCapacity = body.storageCapacity;
+      if (body.categoryId !== undefined) patch.categoryId = body.categoryId;
     } catch (error) {
       throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
     }
