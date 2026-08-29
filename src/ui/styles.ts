@@ -337,13 +337,26 @@ button{font:inherit}
    ⚠ والمختار بيتعلّم **بالخلفية والحدّ** مش باللون وحده —
    نفس قاعدة النظام: الفرق اللي بيتشاف بلون واحد بيضيع على
    شاشة مغسولة بالشمس قدّام كاونتر. */
-.drawers{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
-/* ⚠ العنوان جنب الشرايط مش فوقها: صفّين لبُعدين، والعين لازم
-   تعرف أي صفّ بتبصّ عليه من غير ما تعدّ. */
-.drawers-row{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+/* ⚠ سطر واحد بيتزحلق، مش لفّ على سطور.
+
+   بقى عندنا **خمس صفوف** فلترة. لو كل واحد لفّ، الصفوف كانت
+   هتاخد نص الشاشة على الموبايل والمخزون يختفي تحت.
+
+   السطر الواحد بيدّي ارتفاع ثابت متوقّع، و"الكل" بيفضل أول
+   شريط دايمًا — فالرجوع نقرة واحدة من غير زحلقة. */
+.drawers{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:14px;
+  overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.drawers::-webkit-scrollbar{display:none}
+.drawer{flex:none}
+/* ⚠ العنوان جنب الشرايط مش فوقها: خمس صفوف، والعين لازم تعرف
+   أي صفّ بتبصّ عليه من غير ما تعدّ. */
+.drawers-row{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
 .drawers-row .drawers{margin-bottom:0;flex:1;min-width:0}
-.drawers-label{flex:none;font-size:var(--fs-2);color:var(--ink-faint);
-  padding-top:8px}
+.drawers-label{flex:none;width:3.6em;font-size:var(--fs-2);
+  color:var(--ink-faint);padding-top:8px;text-align:start}
+/* النقطة الملوّنة — الشكل أسرع من الاسم في القراءة */
+.dot{width:10px;height:10px;border-radius:50%;flex:none;
+  border:1px solid rgba(0,0,0,.18)}
 .drawer{display:inline-flex;align-items:center;gap:6px;
   min-height:36px;padding:0 12px;
   border:1px solid var(--line);border-radius:999px;
