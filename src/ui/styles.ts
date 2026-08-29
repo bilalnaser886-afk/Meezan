@@ -337,23 +337,33 @@ button{font:inherit}
    ⚠ والمختار بيتعلّم **بالخلفية والحدّ** مش باللون وحده —
    نفس قاعدة النظام: الفرق اللي بيتشاف بلون واحد بيضيع على
    شاشة مغسولة بالشمس قدّام كاونتر. */
+/* ═══ شريط الأدوات ═══
+   ⚠ الأزرار دي بتفتح صفوف الشرايط. المسافة اللي بتاخدها ثابتة
+   مهما كبر عدد الأدراج، على عكس الصفوف المفتوحة اللي كانت
+   بتكبر مع المخزون. */
+.tools{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.tool{min-height:38px;padding:0 14px;
+  border:1px solid var(--line);border-radius:999px;
+  background:transparent;color:var(--ink-soft);
+  font-family:inherit;font-size:var(--fs-3);font-weight:500;cursor:pointer}
+.tool:hover{border-color:var(--brand-soft)}
+/* ⚠ العلامة معناها "الفلتر ده شغّال" مش "الصفّ مفتوح".
+   الفلتر الشغّال ومخفي بيخلّي المستخدم يفتكر إن نص المخزون
+   اتمسح — فالزرار بيفضل معلّم حتى لو صفّه مقفول. */
+.tool[data-on]{background:var(--brand);border-color:var(--brand);
+  color:#fff;font-weight:600}
+#filter-tools{padding-inline-start:12px;
+  border-inline-start:2px solid var(--line-soft)}
+.row-wrap{margin-bottom:10px}
+
 /* ⚠ سطر واحد بيتزحلق، مش لفّ على سطور.
 
-   بقى عندنا **خمس صفوف** فلترة. لو كل واحد لفّ، الصفوف كانت
-   هتاخد نص الشاشة على الموبايل والمخزون يختفي تحت.
-
-   السطر الواحد بيدّي ارتفاع ثابت متوقّع، و"الكل" بيفضل أول
-   شريط دايمًا — فالرجوع نقرة واحدة من غير زحلقة. */
-.drawers{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:14px;
+   ارتفاع ثابت متوقّع، و"الكل" أول شريط دايمًا — فالرجوع نقرة
+   واحدة من غير زحلقة. */
+.drawers{display:flex;flex-wrap:nowrap;gap:6px;margin-bottom:0;
   overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .drawers::-webkit-scrollbar{display:none}
 .drawer{flex:none}
-/* ⚠ العنوان جنب الشرايط مش فوقها: خمس صفوف، والعين لازم تعرف
-   أي صفّ بتبصّ عليه من غير ما تعدّ. */
-.drawers-row{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
-.drawers-row .drawers{margin-bottom:0;flex:1;min-width:0}
-.drawers-label{flex:none;width:3.6em;font-size:var(--fs-2);
-  color:var(--ink-faint);padding-top:8px;text-align:start}
 /* النقطة الملوّنة — الشكل أسرع من الاسم في القراءة */
 .dot{width:10px;height:10px;border-radius:50%;flex:none;
   border:1px solid rgba(0,0,0,.18)}
