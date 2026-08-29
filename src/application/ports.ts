@@ -738,6 +738,14 @@ export interface ProductRecord {
   /** مرتجع مستنّي المراجعة — مش متاح للبيع */
   quarantinedQuantity: number;
   /**
+   * درج المنتج. `null` = غير مصنّف.
+   *
+   * ⚠ الاسم مش هنا — الشاشة عندها شجرة الأدراج كاملة وبتوصّل
+   * بالمعرّف. لو رجّعنا الاسم مع كل منتج، أول ما حد يسمّي درج
+   * من جديد يبقى عندنا اسمين لنفس الدرج في نفس الشاشة.
+   */
+  categoryId: string | null;
+  /**
    * خلوّ الجمارك — تسجيل يدوي من المستلم.
    * ⚠ false معناها **"مش متأكد"** مش "مش مخلّص". غياب المعلومة
    * مش نفي.
@@ -776,6 +784,14 @@ export interface CreateProductInput {
   customsCleared: boolean;
   batteryHealth: number | null;
   storageCapacity: string | null;
+  /**
+   * درج المنتج. `null` = غير مصنّف.
+   *
+   * ⚠ فاضي مسموح عن قصد: المنتجات اللي كانت موجودة قبل الأدراج
+   * مالهاش درج، وتخمين مكانها أوحش من تركه فاضي — الفاضي بيبان
+   * في الشاشة وبتتصرّف، والتخمين الغلط بيتصدّق.
+   */
+  categoryId: string | null;
   createdById: string;
 }
 
@@ -792,6 +808,8 @@ export interface UpdateProductInput {
   customsCleared?: boolean;
   batteryHealth?: number | null;
   storageCapacity?: string | null;
+  /** `null` = شيل الدرج (رجّعه غير مصنّف) */
+  categoryId?: string | null;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
@@ -823,6 +841,43 @@ export interface ProductListOptions {
   includeCost: boolean;
   /** المنتجات المفعّلة بس — لشاشة الكاشير */
   activeOnly?: boolean;
+}
+
+/**
+ * درج منتجات.
+ *
+ * ══ شجرة على مستويين ══
+ *   `parentId` فاضي  →  قسم رئيسي   (إكسسوار · مكملات)
+ *   `parentId` موجود →  درج جوّه قسم (جرابات · شواحن)
+ *
+ * ⚠ `productCount` **محسوب مش مخزّن** — بيتعدّ في نفس استعلام
+ * القراءة. نفس مبدأ رصيد الخزينة والتنبيهات: الرقم المخزّن
+ * بيختلف عن مصدره يوم ما، وساعتها الدرج بيقول حاجة والمخزون
+ * بيقول حاجة تانية.
+ */
+export interface ProductCategory {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sortOrder: number;
+  /** مزروع مع فتح المحل — مقفول ضد الحذف مش ضد التسمية */
+  isSystem: boolean;
+  productCount: number;
+}
+
+export interface CategoryRepository {
+  /** الشجرة كلها + عدد منتجات كل درج. `branchId` فاضي = كل الفروع. */
+  list(tenantId: string, branchId: string | null): Promise<ProductCategory[]>;
+  create(input: {
+    tenantId: string;
+    parentId: string | null;
+    name: string;
+  }): Promise<{ id: string }>;
+  rename(id: string, tenantId: string, name: string): Promise<void>;
+  /** حذف ناعم. الحارس (مزروع؟ فيه منتجات؟) في حالة الاستخدام. */
+  softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
+  /** للحراسة قبل التعديل والحذف */
+  findById(id: string, tenantId: string): Promise<ProductCategory | null>;
 }
 
 export interface ProductRepository {
