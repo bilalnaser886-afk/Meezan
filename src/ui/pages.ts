@@ -4463,6 +4463,23 @@ export interface ProductsPageData {
     isSystem: boolean;
     productCount: number;
   }>;
+  /**
+   * سجل موديلات الموبايل — البُعد التاني جنب الدرج.
+   *
+   * الدرج بيقول **إيه الصنف**، والموديل بيقول **لأنهي جهاز**.
+   * والفلترين بيتجمعوا: "جرابات" + "١٢ برو ماكس".
+   *
+   * ⚠ `deviceCount` بالكمية مش بعدد الصفوف — الجهاز صفّه بيفضل
+   * موجود بعد ما يتباع وكميته بتبقى صفر.
+   */
+  models: Array<{
+    id: string;
+    name: string;
+    brand: string | null;
+    sortOrder: number;
+    deviceCount: number;
+    accessoryCount: number;
+  }>;
   /** للمالك بس — لاختيار الفرع عند الإضافة */
   branches: Array<{ id: string; name: string }>;
   products: Array<{
@@ -4491,6 +4508,8 @@ export interface ProductsPageData {
     batteryHealth: number | null;
     /** درج المنتج. null = غير مصنّف. */
     categoryId: string | null;
+    /** موديل الجهاز. null = غير محدّد. */
+    modelId: string | null;
   }>;
   /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
   transferTargets: Array<{ id: string; name: string }>;
@@ -4540,6 +4559,7 @@ export function productsPage(data: ProductsPageData): Html {
             data-battery="${p.batteryHealth === null ? '' : String(p.batteryHealth)}"
             data-customs="${p.customsCleared ? 'true' : 'false'}"
             data-cat="${p.categoryId ?? '__none__'}"
+            data-model="${p.modelId ?? '__none__'}"
             data-entry="${formatDate(p.entryDate)}">
             <div class="prod-row-main">
               <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">
@@ -4843,6 +4863,27 @@ export function productsPage(data: ProductsPageData): Html {
               </p>
             </div>
 
+            <!-- ══ الموديل ══
+                 ⚠ ظاهر **للنوعين**، على عكس الدرج.
+
+                 الجهاز موديله هو. والإكسسوار موديله الجهاز اللي
+                 بيركب عليه — جراب ١٢ برو ماكس ما ينفعش على ١٣،
+                 والزبون بيسأل بالموديل مش بالصنف. -->
+            <div class="field">
+              <label class="field-label" for="np-model">الموديل</label>
+              <select class="field-input" id="np-model">
+                <option value="">— بدون موديل —</option>
+                ${data.models.map(
+                  (m) => html`<option value="${m.id}">
+                    ${m.brand ? `${m.brand} — ${m.name}` : m.name}
+                  </option>`,
+                )}
+              </select>
+              <p class="field-hint">
+                موديل جديد؟ أضِفه من شرائط الموديلات فوق قائمة المخزون.
+              </p>
+            </div>
+
             <!-- ══ مواصفات الجهاز ══
 
                  ⚠ دي كانت في شاشة التعديل بس. المستلم كان بيسجّل
@@ -4969,38 +5010,66 @@ export function productsPage(data: ProductsPageData): Html {
   <details class="panel" open>
     <summary>المخزون (${String(data.products.length)})</summary>
     <div class="panel-body">
-      <!-- ══ شرائط الأدراج ══
+      <!-- ══ شرائط الأدراج والموديلات ══
 
-           ⚠ دي **فلتر مش شجرة**. الشريط بيخفي صفوف مش بيفتح
-           شاشة تانية — فالبحث والأدراج بيشتغلوا مع بعض، والرجوع
-           نقرة واحدة على "الكل".
+           ⚠ **صفّين لبُعدين مستقلين**، والفلاتر بتتجمع:
+             الدرج   → إيه الصنف  (جراب · شاحن)
+             الموديل → لأنهي جهاز (١٢ برو ماكس)
 
-           الشجرة اللي بتفتح شاشة كانت هتخبّي المخزون ورا نقرتين،
-           والموظّف اللي بيدوّر على صنف بيبقى عارف اسمه أصلاً.
+           "جرابات" + "١٢ برو ماكس" = جرابات الـ١٢ برو ماكس.
+           وصفّ واحد مدمج كان هيحتاج ضرب الاتنين في بعض — تلات
+           أدراج × عشر موديلات = تلاتين شريط.
+
+           ⚠ ودي **فلاتر مش شجرة**. بتخفي صفوف مش بتفتح شاشة،
+           فالبحث والاتنين بيشتغلوا مع بعض والرجوع نقرة واحدة.
 
            ⚠ والعدّ جاي من قاعدة البيانات مش من عدّ الصفوف
-           المعروضة: القايمة محدودة بـ500 صف، فالعدّ المحلي كان
-           هيكذب أول ما المخزون يكبر. -->
-      <div class="drawers" id="drawers">
-        <button class="drawer" type="button" data-drawer="" data-on>الكل</button>
-        ${data.categories
-          .filter((c) => c.parentId === null)
-          .map(
-            (section) => html`${data.categories
-              .filter((d) => d.parentId === section.id)
-              .map(
-                (d) => html`<button class="drawer" type="button" data-drawer="${d.id}">
-                  ${d.name}
-                  <span class="drawer-n">${String(d.productCount)}</span>
-                </button>`,
-              )}`,
+           المعروضة: القايمة محدودة بـ500 صف. -->
+      <div class="drawers-row">
+        <span class="drawers-label">الدرج</span>
+        <div class="drawers" id="drawers">
+          <button class="drawer" type="button" data-drawer="" data-on>الكل</button>
+          ${data.categories
+            .filter((c) => c.parentId === null)
+            .map(
+              (section) => html`${data.categories
+                .filter((d) => d.parentId === section.id)
+                .map(
+                  (d) => html`<button class="drawer" type="button" data-drawer="${d.id}">
+                    ${d.name}
+                    <span class="drawer-n">${String(d.productCount)}</span>
+                  </button>`,
+                )}`,
+            )}
+          <button class="drawer" type="button" data-drawer="__none__">
+            غير مصنّف
+          </button>
+          ${data.canEdit
+            ? html`<button class="drawer" type="button" id="drawer-add" data-add-drawer>+</button>`
+            : ''}
+        </div>
+      </div>
+
+      <div class="drawers-row">
+        <span class="drawers-label">الموديل</span>
+        <div class="drawers" id="models">
+          <button class="drawer" type="button" data-model="" data-on>الكل</button>
+          ${data.models.map(
+            (m) => html`<button class="drawer" type="button" data-model="${m.id}">
+              ${m.name}
+              <!-- ⚠ الرقمين منفصلين: أجهزة · إكسسوار.
+                   رقم مجمّع كان هيقول "٧" ومش هتعرف سبع أجهزة
+                   ولا سبع جرابات. -->
+              <span class="drawer-n">${String(m.deviceCount)}·${String(m.accessoryCount)}</span>
+            </button>`,
           )}
-        <button class="drawer" type="button" data-drawer="__none__">
-          غير مصنّف
-        </button>
-        ${data.canEdit
-          ? html`<button class="drawer" type="button" id="drawer-add" data-add-drawer>+</button>`
-          : ''}
+          <button class="drawer" type="button" data-model="__none__">
+            بلا موديل
+          </button>
+          ${data.canEdit
+            ? html`<button class="drawer" type="button" id="model-add" data-add-model>+</button>`
+            : ''}
+        </div>
       </div>
 
       <label class="field-label" for="prod-search">بحث</label>
@@ -5353,7 +5422,10 @@ ${MENU_JS}
             // بس البعت الصريح بيخلّي الطلب يقول قرار مش غياب.
             categoryId: isDevice
               ? null
-              : (document.getElementById('np-category').value || null)
+              : (document.getElementById('np-category').value || null),
+            // ⚠ للنوعين — الجهاز موديله هو، والإكسسوار موديل
+            // الجهاز اللي بيركب عليه.
+            modelId: document.getElementById('np-model').value || null
           })
         });
         var data = await res.json().catch(function () { return null; });
@@ -5667,8 +5739,9 @@ ${MENU_JS}
   // آخر واحد يشتغل بيدهس على التاني: تبحث فيرجع صنف من درج تاني،
   // أو تغيّر الدرج فيرجع اللي البحث خبّاه.
   //
-  // فاضي = الكل. «__none__» = غير مصنّف.
+  // فاضي = الكل. «__none__» = غير مصنّف / بلا موديل.
   var activeDrawer = '';
+  var activeModel = '';
 
   function runSearch() {
     var q = searchEl ? searchEl.value.trim().toLowerCase() : '';
@@ -5681,7 +5754,12 @@ ${MENU_JS}
       var okText = !q || hay.indexOf(q) !== -1;
       var okDrawer = !activeDrawer
         || (row.getAttribute('data-cat') || '__none__') === activeDrawer;
-      var match = okText && okDrawer;
+      // ⚠ البُعد التاني. الفلترين بيتجمعوا بـ"و" مش بـ"أو":
+      // "جرابات" + "١٢ برو ماكس" = جرابات الـ١٢ برو ماكس، مش
+      // كل الجرابات وكل حاجة للـ١٢ برو ماكس.
+      var okModel = !activeModel
+        || (row.getAttribute('data-model') || '__none__') === activeModel;
+      var match = okText && okDrawer && okModel;
       row.hidden = !match;
 
       // لوحة التعديل بتتخفي مع صفها
@@ -5696,7 +5774,8 @@ ${MENU_JS}
     // بيخفي نص المخزون من غير ما يقول كام فاضل بيخلّي الموظّف
     // يفتكر إن باقي البضاعة اتمسحت.
     if (searchNote) {
-      searchNote.textContent = (q || activeDrawer) ? shown + ' نتيجة' : DEFAULT_NOTE;
+      searchNote.textContent =
+        (q || activeDrawer || activeModel) ? shown + ' نتيجة' : DEFAULT_NOTE;
     }
   }
 
@@ -5776,6 +5855,55 @@ ${MENU_JS}
       chip.setAttribute('data-on', '');
 
       activeDrawer = chip.getAttribute('data-drawer') || '';
+      runSearch();
+    });
+  }
+
+  // ══════════ شرائط الموديلات ══════════
+  var modelsEl = document.getElementById('models');
+  if (modelsEl) {
+    modelsEl.addEventListener('click', async function (e) {
+      var chip = e.target.closest ? e.target.closest('.drawer') : null;
+      if (!chip) return;
+
+      // ─── موديل جديد ───
+      if (chip.hasAttribute('data-add-model')) {
+        var name = prompt('اسم الموديل؟ مثال: ١٢ برو ماكس');
+        if (name === null) return;
+        name = name.trim();
+        if (!name) return;
+
+        // ⚠ الماركة اختيارية وعمود مستقل. لو كتبناها جوّه الاسم،
+        // ما نقدرش نجمّع "كل الآيفون" بعدين من غير ما نقصّ النص.
+        var brand = prompt('الماركة؟ (اختياري — آيفون · سامسونج)');
+        if (brand === null) brand = '';
+
+        try {
+          var res = await fetch('/api/products/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ name: name, brand: brand.trim() || null })
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            say((data.error && data.error.message) || 'تعذّر إضافة الموديل.', false);
+            return;
+          }
+          // تحديث كامل: الموديل لازم يظهر في قايمة الإضافة كمان
+          window.location.reload();
+        } catch (err) {
+          say('تعذّر الاتصال بالخادم.', false);
+        }
+        return;
+      }
+
+      // ─── اختيار موديل ───
+      var all = modelsEl.querySelectorAll('.drawer');
+      for (var j = 0; j < all.length; j++) all[j].removeAttribute('data-on');
+      chip.setAttribute('data-on', '');
+
+      activeModel = chip.getAttribute('data-model') || '';
       runSearch();
     });
   }
