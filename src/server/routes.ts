@@ -34,6 +34,7 @@ import {
 } from '../application/use-cases/users';
 import { createBranch, listBranches } from '../application/use-cases/branches';
 import {
+  createExpenseReason,
   createTreasury,
   getFinancialSummary,
   getSalaryStatement,
@@ -648,6 +649,23 @@ interface MovementBody {
   note?: string | null;
   adjustmentDirection?: string;
 }
+
+/**
+ * سبب صرف جديد.
+ *
+ * ⚠ `expense.approve` مش `expense.create` — السبب بند في قائمة
+ * الدخل مش بيان على الحركة. شوف التعليق في حالة الاستخدام.
+ */
+treasuryRoutes.post(
+  '/expense-reasons',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_APPROVE] }),
+  async (c) => {
+    const body = await readJson<{ name?: string }>(c);
+    const container = buildContainer(c.env);
+    const created = await createExpenseReason(container.treasury, c.get('user'), body.name);
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
 
 treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }), async (c) => {
   const body = await readJson<MovementBody>(c);
