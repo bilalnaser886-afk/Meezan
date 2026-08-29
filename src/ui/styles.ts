@@ -338,6 +338,12 @@ button{font:inherit}
    نفس قاعدة النظام: الفرق اللي بيتشاف بلون واحد بيضيع على
    شاشة مغسولة بالشمس قدّام كاونتر. */
 .drawers{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+/* ⚠ العنوان جنب الشرايط مش فوقها: صفّين لبُعدين، والعين لازم
+   تعرف أي صفّ بتبصّ عليه من غير ما تعدّ. */
+.drawers-row{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.drawers-row .drawers{margin-bottom:0;flex:1;min-width:0}
+.drawers-label{flex:none;font-size:var(--fs-2);color:var(--ink-faint);
+  padding-top:8px}
 .drawer{display:inline-flex;align-items:center;gap:6px;
   min-height:36px;padding:0 12px;
   border:1px solid var(--line);border-radius:999px;
