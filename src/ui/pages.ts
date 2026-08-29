@@ -2659,10 +2659,43 @@ export function treasuryPage(data: TreasuryPageData): Html {
     <div class="alert-box" id="mvmsg" role="alert" hidden><span id="mvmsg-text"></span></div>
 
     <form id="mvf" novalidate>
+      <!-- ══ الفرع — لصاحب المحل وحده ══
+
+           ⚠ نفس عطل شاشة البيع بالظبط، ونفس الحلّ.
+
+           صاحب المحل بيشوف خزائن **كل فروعه** في قايمة واحدة،
+           وكلها اسمها "نقدي" بعد توحيد التسمية. فبيسجّل مصروف
+           فرع على خزينة فرع تاني — والحركة بتعدي عادي، لأن
+           صاحب المحل من حقه فعلاً يصرف من أي خزينة.
+
+           ⚠ وده اللي بيخلّي العطل ده **أوحش** من بتاع البيع:
+           هناك القاعدة بترفض وتزعّق. هنا مفيش حاجة بترفض —
+           الرقم بيتحطّ في الفرع الغلط ويفضل صح شكلاً، ولحد ما
+           تقفل يومية الفرعين وتلاقي رقم مش مفهوم.
+
+           الفلتر بيقفل الغلطة قبل ما تحصل. -->
+      ${data.branches.length > 1
+        ? html`<div class="field">
+            <label class="field-label" for="mv-branch">الفرع</label>
+            <select class="field-input" id="mv-branch">
+              ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
+            </select>
+            <p class="field-hint">تظهر لك خزائن هذا الفرع وحدها.</p>
+          </div>`
+        : ''}
+
       <div class="field">
         <label class="field-label" for="mv-treasury">الخزينة</label>
         <select class="field-input" id="mv-treasury" required>
-          ${data.balances.map((b) => html`<option value="${b.treasuryId}">${b.name}</option>`)}
+          ${data.balances.map((b) => {
+            // ⚠ الفرع بيتقرا من `summary.rows` مش من `balances`.
+            // الاتنين بيوصفوا نفس الخزائن، بس الملخّص وحده اللي
+            // شايل الفرع — فمفيش داعي نغيّر `app.ts` عشان حقل
+            // موجود أصلاً في الصفحة.
+            const branchId =
+              data.summary.rows.find((r) => r.treasuryId === b.treasuryId)?.branchId ?? '';
+            return html`<option value="${b.treasuryId}" data-branch="${branchId}">${b.name}</option>`;
+          })}
         </select>
       </div>
 
@@ -2856,6 +2889,38 @@ ${MENU_JS}
   }
   typeEl.addEventListener('change', syncFields);
   syncFields();
+
+  // ── الفرع يضيّق قايمة الخزائن ──
+  //
+  // ⚠ الخزائن بتتشال من القايمة مش بتتخبّى بس. «hidden» على
+  // «option» مش مضمون في كل المتصفحات، وخزينة شكلها مختارة وهي
+  // من فرع تاني بتخلّي الحركة تتسجّل في المكان الغلط.
+  (function () {
+    var branchEl = document.getElementById('mv-branch');
+    var treasuryEl = document.getElementById('mv-treasury');
+    if (!branchEl || !treasuryEl) return;
+
+    function sync() {
+      var branch = branchEl.value;
+      var opts = treasuryEl.options;
+      var first = null;
+
+      for (var i = 0; i < opts.length; i++) {
+        var same = opts[i].getAttribute('data-branch') === branch;
+        opts[i].disabled = !same;
+        opts[i].hidden = !same;
+        if (same && first === null) first = i;
+      }
+
+      // لو المختار بقى من فرع تاني، ننقل لأول خزينة صالحة
+      if (treasuryEl.selectedIndex < 0 || opts[treasuryEl.selectedIndex].disabled) {
+        treasuryEl.selectedIndex = first === null ? -1 : first;
+      }
+    }
+
+    branchEl.addEventListener('change', sync);
+    sync();
+  })();
 
   // ── تسجيل حركة ──
   document.getElementById('mvf').addEventListener('submit', async function (e) {
@@ -4380,6 +4445,24 @@ export interface ProductsPageData {
   canSetReorder: boolean;
   canSell: boolean;
   canUseTreasury: boolean;
+  /**
+   * أدراج المنتجات — شجرة على مستويين.
+   *
+   * `parentId` فاضي = قسم رئيسي (إكسسوار · مكملات)
+   * `parentId` موجود = درج جوّاه (جرابات · شواحن)
+   *
+   * ⚠ والعدّ محسوب في القاعدة مش هنا. لو الشاشة عدّت بنفسها،
+   * كانت هتعدّ **المعروض** — والقايمة محدودة بـ500 صف، فالرقم
+   * هيكذب أول ما المخزون يكبر.
+   */
+  categories: Array<{
+    id: string;
+    parentId: string | null;
+    name: string;
+    sortOrder: number;
+    isSystem: boolean;
+    productCount: number;
+  }>;
   /** للمالك بس — لاختيار الفرع عند الإضافة */
   branches: Array<{ id: string; name: string }>;
   products: Array<{
@@ -4406,6 +4489,8 @@ export interface ProductsPageData {
     storageCapacity: string | null;
     /** 0–100. null = ما اتقاسش — وهي **غير** الصفر. */
     batteryHealth: number | null;
+    /** درج المنتج. null = غير مصنّف. */
+    categoryId: string | null;
   }>;
   /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
   transferTargets: Array<{ id: string; name: string }>;
@@ -4454,6 +4539,7 @@ export function productsPage(data: ProductsPageData): Html {
             data-storage="${p.storageCapacity ?? ''}"
             data-battery="${p.batteryHealth === null ? '' : String(p.batteryHealth)}"
             data-customs="${p.customsCleared ? 'true' : 'false'}"
+            data-cat="${p.categoryId ?? '__none__'}"
             data-entry="${formatDate(p.entryDate)}">
             <div class="prod-row-main">
               <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">
@@ -4726,7 +4812,39 @@ export function productsPage(data: ProductsPageData): Html {
               <p class="field-hint">الكمية تُضبط على قطعة واحدة تلقائيًا.</p>
             </div>
 
+            <!-- ══ درج الإكسسوار ══
+                 ⚠ قايمة واحدة بمجموعات، مش قايمتين متسلسلتين
+                 (قسم ← درج). القسم مش اختيار — هو عنوان بيوضّح
+                 مكان الدرج. وقايمتين على شاشة موبايل معناها
+                 نقرتين وانتظار بينهم بلا فايدة.
+
+                 ⚠ ومخفية للأجهزة: الجهاز هيتجمّع بموديله في
+                 مرحلة تانية، والدرج ده للإكسسوار والمكملات. -->
+            <div class="field" id="np-cat-field" hidden>
+              <label class="field-label" for="np-category">الدرج</label>
+              <select class="field-input" id="np-category">
+                <option value="">— بدون درج —</option>
+                ${data.categories
+                  .filter((c) => c.parentId === null)
+                  .map(
+                    (section) => html`<optgroup label="${section.name}">
+                      ${data.categories
+                        .filter((d) => d.parentId === section.id)
+                        .map(
+                          (d) => html`<option value="${d.id}" data-parent="${section.id}">
+                            ${d.name}
+                          </option>`,
+                        )}
+                    </optgroup>`,
+                  )}
+              </select>
+              <p class="field-hint">
+                محتاج درج جديد؟ أضِفه من شرائط الأدراج فوق قائمة المخزون.
+              </p>
+            </div>
+
             <!-- ══ مواصفات الجهاز ══
+
                  ⚠ دي كانت في شاشة التعديل بس. المستلم كان بيسجّل
                  الجهاز، وبعدين يفتحه تاني ويكمّل مواصفاته —
                  خطوتين لفعل واحد، والتانية هي اللي بتتنسي.
@@ -4851,6 +4969,40 @@ export function productsPage(data: ProductsPageData): Html {
   <details class="panel" open>
     <summary>المخزون (${String(data.products.length)})</summary>
     <div class="panel-body">
+      <!-- ══ شرائط الأدراج ══
+
+           ⚠ دي **فلتر مش شجرة**. الشريط بيخفي صفوف مش بيفتح
+           شاشة تانية — فالبحث والأدراج بيشتغلوا مع بعض، والرجوع
+           نقرة واحدة على "الكل".
+
+           الشجرة اللي بتفتح شاشة كانت هتخبّي المخزون ورا نقرتين،
+           والموظّف اللي بيدوّر على صنف بيبقى عارف اسمه أصلاً.
+
+           ⚠ والعدّ جاي من قاعدة البيانات مش من عدّ الصفوف
+           المعروضة: القايمة محدودة بـ500 صف، فالعدّ المحلي كان
+           هيكذب أول ما المخزون يكبر. -->
+      <div class="drawers" id="drawers">
+        <button class="drawer" type="button" data-drawer="" data-on>الكل</button>
+        ${data.categories
+          .filter((c) => c.parentId === null)
+          .map(
+            (section) => html`${data.categories
+              .filter((d) => d.parentId === section.id)
+              .map(
+                (d) => html`<button class="drawer" type="button" data-drawer="${d.id}">
+                  ${d.name}
+                  <span class="drawer-n">${String(d.productCount)}</span>
+                </button>`,
+              )}`,
+          )}
+        <button class="drawer" type="button" data-drawer="__none__">
+          غير مصنّف
+        </button>
+        ${data.canEdit
+          ? html`<button class="drawer" type="button" id="drawer-add" data-add-drawer>+</button>`
+          : ''}
+      </div>
+
       <label class="field-label" for="prod-search">بحث</label>
       <input class="field-input" id="prod-search" type="search"
         placeholder="اسم أو سريال" autocomplete="off" spellcheck="false">
@@ -5136,6 +5288,7 @@ ${MENU_JS}
   var serialField = document.getElementById('np-serial-field');
   var qtyField = document.getElementById('np-qty-field');
   var deviceFields = document.getElementById('np-device-fields');
+  var catField = document.getElementById('np-cat-field');
 
   function syncType() {
     if (!typeEl) return;
@@ -5146,6 +5299,9 @@ ${MENU_JS}
     // ⚠ ومواصفات الجهاز بتظهر مع النوع مرة واحدة — الإكسسوار
     // مالوش بطارية ولا مساحة، والخادم بيصفّرهم برضه لو وصلوا.
     if (deviceFields) deviceFields.hidden = !isDevice;
+    // ⚠ والدرج بالعكس: للإكسسوار والمكملات مش للأجهزة.
+    // الجهاز هيتجمّع بموديله في مرحلة تانية.
+    if (catField) catField.hidden = isDevice;
   }
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
 
@@ -5192,7 +5348,12 @@ ${MENU_JS}
               : null,
             storageCapacity: isDevice
               ? document.getElementById('np-storage').value
-              : null
+              : null,
+            // ⚠ الجهاز بياخد null صراحةً. الخادم بيصفّره برضه،
+            // بس البعت الصريح بيخلّي الطلب يقول قرار مش غياب.
+            categoryId: isDevice
+              ? null
+              : (document.getElementById('np-category').value || null)
           })
         });
         var data = await res.json().catch(function () { return null; });
@@ -5499,16 +5660,28 @@ ${MENU_JS}
   var searchNote = document.getElementById('prod-search-note');
   var DEFAULT_NOTE = 'امسح بالكاميرا، أو بالماسح الموصول بالكمبيوتر، أو اكتب جزءًا من الاسم.';
 
+  // ══════════ الدرج المختار ══════════
+  //
+  // ⚠ الأدراج والبحث بيتحكّموا في نفس الخاصية («hidden»)، فالقرار
+  // بيتاخد مرة واحدة من الاتنين مع بعض. لو كل واحد كتبها لوحده،
+  // آخر واحد يشتغل بيدهس على التاني: تبحث فيرجع صنف من درج تاني،
+  // أو تغيّر الدرج فيرجع اللي البحث خبّاه.
+  //
+  // فاضي = الكل. «__none__» = غير مصنّف.
+  var activeDrawer = '';
+
   function runSearch() {
-    if (!searchEl) return;
-    var q = searchEl.value.trim().toLowerCase();
+    var q = searchEl ? searchEl.value.trim().toLowerCase() : '';
     var rows = document.querySelectorAll('.prod-row[data-searchable]');
     var shown = 0;
 
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
       var hay = (row.getAttribute('data-searchable') || '').toLowerCase();
-      var match = !q || hay.indexOf(q) !== -1;
+      var okText = !q || hay.indexOf(q) !== -1;
+      var okDrawer = !activeDrawer
+        || (row.getAttribute('data-cat') || '__none__') === activeDrawer;
+      var match = okText && okDrawer;
       row.hidden = !match;
 
       // لوحة التعديل بتتخفي مع صفها
@@ -5519,7 +5692,82 @@ ${MENU_JS}
       if (match) shown++;
     }
 
-    if (searchNote) searchNote.textContent = q ? shown + ' نتيجة' : DEFAULT_NOTE;
+    // ⚠ العدّ بيظهر مع أي فلتر مش مع البحث وحده. الدرج اللي
+    // بيخفي نص المخزون من غير ما يقول كام فاضل بيخلّي الموظّف
+    // يفتكر إن باقي البضاعة اتمسحت.
+    if (searchNote) {
+      searchNote.textContent = (q || activeDrawer) ? shown + ' نتيجة' : DEFAULT_NOTE;
+    }
+  }
+
+  // ══════════ شرائط الأدراج ══════════
+  var drawersEl = document.getElementById('drawers');
+  if (drawersEl) {
+    drawersEl.addEventListener('click', async function (e) {
+      var chip = e.target.closest ? e.target.closest('.drawer') : null;
+      if (!chip) return;
+
+      // ─── زرار الإضافة ───
+      if (chip.hasAttribute('data-add-drawer')) {
+        // ⚠ القسم بيتاخد من قايمة الإضافة نفسها بدل ما نبني
+        // نافذة تانية: الأقسام هي مجموعات «optgroup» في «np-category»،
+        // فمصدر الأسماء واحد. لو بنيناها مرتين، هيختلفوا يوم ما.
+        var groups = document.querySelectorAll('#np-category optgroup');
+        if (!groups.length) { say('لا توجد أقسام.', false); return; }
+
+        var labels = [];
+        for (var g = 0; g < groups.length; g++) {
+          labels.push((g + 1) + ') ' + groups[g].getAttribute('label'));
+        }
+
+        var pick = prompt('في أي قسم؟\n' + labels.join('\n'), '1');
+        if (pick === null) return;
+        var idx = parseInt(pick, 10) - 1;
+        if (!(idx >= 0 && idx < groups.length)) { say('اختيار غير صحيح.', false); return; }
+
+        var name = prompt('اسم الدرج الجديد؟');
+        if (name === null) return;
+        name = name.trim();
+        if (!name) return;
+
+        // ⚠ معرّف القسم بيتقرا من أول خيار جوّاه، لأن «optgroup»
+        // نفسه مالوش قيمة. ولو القسم فاضي مفيش منّه معرّف —
+        // وده السبب إن البذرة بتحطّ أدراج جوّه كل قسم.
+        var firstOpt = groups[idx].querySelector('option');
+        if (!firstOpt) { say('القسم فاضي — أضف درجه الأول من قاعدة البيانات.', false); return; }
+
+        var parentId = firstOpt.getAttribute('data-parent');
+
+        try {
+          var res = await fetch('/api/products/categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ parentId: parentId, name: name })
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            say((data.error && data.error.message) || 'تعذّر إضافة الدرج.', false);
+            return;
+          }
+          // ⚠ تحديث كامل مش إضافة شريط بإيدنا: الدرج الجديد لازم
+          // يظهر في **قايمة الإضافة** كمان، والعدّ بيتحسب في
+          // القاعدة. البناء اليدوي كان هيسيب القايمتين مختلفتين.
+          window.location.reload();
+        } catch (err) {
+          say('تعذّر الاتصال بالخادم.', false);
+        }
+        return;
+      }
+
+      // ─── اختيار درج ───
+      var all = drawersEl.querySelectorAll('.drawer');
+      for (var j = 0; j < all.length; j++) all[j].removeAttribute('data-on');
+      chip.setAttribute('data-on', '');
+
+      activeDrawer = chip.getAttribute('data-drawer') || '';
+      runSearch();
+    });
   }
 
   if (searchEl) {
