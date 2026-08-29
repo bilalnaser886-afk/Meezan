@@ -43,7 +43,7 @@ import {
   listMovements,
   listTransfers,
 } from './application/use-cases/treasury';
-import { listProducts, listSellableProducts } from './application/use-cases/products';
+import { listCategories, listProducts, listSellableProducts } from './application/use-cases/products';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
 import { listTenants } from './application/use-cases/platform';
@@ -460,7 +460,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
   const idleRule = idleRuleFor(user.roleKey);
   const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
 
-  const [products, branches, allBranches, branchLabel] = await Promise.all([
+  const [products, branches, allBranches, branchLabel, categories] = await Promise.all([
     listProducts(container.products, user),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
@@ -474,6 +474,10 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
     branchLabelFor(container, user),
+    // ⚠ الأدراج بتتجاب لكل من يشوف المخزون، مش للمعدّل بس.
+    // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
+    // شايفين أدراج مش بيشوف نفس المحل.
+    listCategories(container.products, user).catch(() => []),
   ]);
 
   // ورش الصيانة — لقائمة "تحويل للصيانة" في كارت المنتج
@@ -497,6 +501,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canSetReorder: user.permissions.includes(PERMISSIONS.INVENTORY_REORDER_POINT),
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      categories,
       branches,
       // ⚠ فروع التحويل غير قائمة الإضافة: هنا بنستبعد فرع
       // المستخدم نفسه — تحويل لفرعك مالوش معنى، والقاعدة
