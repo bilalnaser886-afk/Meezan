@@ -172,6 +172,46 @@ for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
   }
 }
 
-console.log((bad || scope || ticks || helpers)
-  ? '\n🔴 ' + (bad + scope + ticks + helpers) + ' مشكلة'
+// ── معرّفات مستخدمة في السكربت ومش موجودة في أي قالب ──
+//
+// ⚠ الفحص ده اتضاف بعد عطل حقيقي: غيّرت `id` في القالب من
+// `storage-row` لـ`row-storage` ونسيت النداء في السكربت.
+//
+// النتيجة كانت أوحش من خطأ: الزرار بيفتح صفّ **فاضي**. مفيش
+// استثناء، ومفيش رسالة، والفاحص النحوي أعمى تمامًا — الكتابة
+// سليمة والاسم بس مش موجود.
+let ids = 0;
+{
+  const declared = new Set(
+    [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
+  );
+  // المعرّفات اللي بتتبني وقت التشغيل بـ innerHTML مش في المصدر
+  const runtimeBuilt = new Set(
+    [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
+  );
+
+  for (const m of src.matchAll(/^function \w*Script\(/gm)) {
+    const st = src.indexOf('return `', m.index);
+    if (st < 0) continue;
+    const to = src.indexOf('\n`;', st);
+    if (to < 0) continue;
+    const body = src.slice(st + 8, to);
+
+    const used = new Set(
+      // ⚠ المعرّف **الكامل** بس — القوس بيقفل بعد النص مباشرةً.
+      // بدون ده، `getElementById('edit-' + id)` بتتقرا كمعرّف
+      // اسمه "edit-" وبتطلّع إيجابية كاذبة. وقعت فيها أول مرة
+      // كتبت الفحص ده: ٥٣ إيجابية كاذبة دفعة واحدة.
+      [...body.matchAll(/getElementById\(\s*'([A-Za-z][\w-]*)'\s*\)/g)].map((x) => x[1]),
+    );
+    for (const id of used) {
+      if (declared.has(id) || runtimeBuilt.has(id)) continue;
+      ids++;
+      console.log('FAIL معرّف غير موجود في أي قالب — ' + id);
+    }
+  }
+}
+
+console.log((bad || scope || ticks || helpers || ids)
+  ? '\n🔴 ' + (bad + scope + ticks + helpers + ids) + ' مشكلة'
   : '\n✅ كل السكربتات سليمة نحويًا ونطاقيًا');
