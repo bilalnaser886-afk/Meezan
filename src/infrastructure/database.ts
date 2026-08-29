@@ -47,6 +47,7 @@ import type {
   PriceChangeRecord,
   ProductListOptions,
   ProductRecord,
+  CategoryRepository,
   ProductRepository,
   ProductType,
   RateLimiter,
@@ -1249,7 +1250,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
-  'customs_cleared, battery_health, storage_capacity, is_active';
+  'customs_cleared, battery_health, storage_capacity, category_id, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -1257,6 +1258,7 @@ function productColumns(includeCost: boolean): string {
 
 interface RawProduct {
   id: string;
+  category_id?: string | null;
   tenant_id: string;
   branch_id: string;
   name: string;
@@ -1298,6 +1300,8 @@ function toProduct(raw: RawProduct): ProductRecord {
     batteryHealth: raw.battery_health === null || raw.battery_health === undefined
       ? null : Number(raw.battery_health),
     storageCapacity: raw.storage_capacity ? String(raw.storage_capacity) : null,
+    // فاضي = غير مصنّف، والشاشة بتعرضه في درج "غير مصنّف"
+    categoryId: raw.category_id ?? null,
     isActive: raw.is_active,
   };
 
@@ -1308,6 +1312,122 @@ function toProduct(raw: RawProduct): ProductRecord {
   }
 
   return record;
+}
+
+export function createCategoryRepository(db: SupabaseClient): CategoryRepository {
+  return {
+    /**
+     * الشجرة + عدد منتجات كل درج في **نداء واحد**.
+     *
+     * ⚠ الدالة في القاعدة هي اللي بتعدّ. لو عدّينا هنا، كانت
+     * هتبقى رحلة شبكة لكل درج — سبع أدراج دلوقتي وتلاتين بعد سنة.
+     */
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_product_categories', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`categories list: ${error.message}`);
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        id: String(r.id),
+        parentId: (r.parent_id as string | null) ?? null,
+        name: String(r.name),
+        sortOrder: Number(r.sort_order ?? 0),
+        isSystem: Boolean(r.is_system),
+        productCount: Number(r.product_count ?? 0),
+      }));
+    },
+
+    async findById(id, tenantId) {
+      // ⚠ المحل جزء من الاستعلام مش فلتر بعده. من غير كده أي حد
+      // يعرف معرّف درج يقراه من محل تاني.
+      const { data, error } = await db
+        .from('product_categories')
+        .select('id, parent_id, name, sort_order, is_system')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`category findById: ${error.message}`);
+      if (!data) return null;
+
+      const raw = data as Record<string, unknown>;
+      return {
+        id: String(raw.id),
+        parentId: (raw.parent_id as string | null) ?? null,
+        name: String(raw.name),
+        sortOrder: Number(raw.sort_order ?? 0),
+        isSystem: Boolean(raw.is_system),
+        // ⚠ صفر مش العدد الحقيقي — الدالة دي للحراسة مش للعرض.
+        // العدّ الحقيقي بييجي من `list` وحدها.
+        productCount: 0,
+      };
+    },
+
+    async create(input) {
+      const { data, error } = await db
+        .from('product_categories')
+        .insert({
+          tenant_id: input.tenantId,
+          parent_id: input.parentId,
+          name: input.name,
+          // الجديد بيتحطّ في الآخر. الترتيب بإيد المستخدم بعدين.
+          sort_order: 99,
+          is_system: false,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // 23505 = تعارض تفرّد. والفهرس على (المحل · الأب · الاسم).
+        if (error.code === '23505') {
+          throw Errors.validation('فيه درج بنفس الاسم في نفس القسم.');
+        }
+        throw Errors.internal(`category create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
+    async rename(id, tenantId, name) {
+      const { error } = await db
+        .from('product_categories')
+        .update({ name })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') {
+          throw Errors.validation('فيه درج بنفس الاسم في نفس القسم.');
+        }
+        throw Errors.internal(`category rename: ${error.message}`);
+      }
+    },
+
+    /**
+     * حذف ناعم.
+     *
+     * ⚠ السجل بيفضل في القاعدة عشان أي منتج قديم لسه بيشاور
+     * عليه ما يكسرش. والمنتج بيبان "غير مصنّف" لأن الدرج مش
+     * بيترجع في القايمة — من غير ما نلمس صف المنتج أصلاً.
+     */
+    async softDelete(id, tenantId, actorId, at) {
+      const { error } = await db
+        .from('product_categories')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة المنتجات',
+        })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`category delete: ${error.message}`);
+    },
+  };
 }
 
 export function createProductRepository(db: SupabaseClient): ProductRepository {
@@ -1367,6 +1487,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
           customs_cleared: data.customsCleared,
           battery_health: data.batteryHealth,
           storage_capacity: data.storageCapacity,
+          category_id: data.categoryId,
           is_active: true,
           created_by_id: data.createdById,
           updated_by_id: data.createdById,
@@ -1413,6 +1534,9 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       if (data.customsCleared !== undefined) patch.customs_cleared = data.customsCleared;
       if (data.batteryHealth !== undefined) patch.battery_health = data.batteryHealth;
       if (data.storageCapacity !== undefined) patch.storage_capacity = data.storageCapacity;
+      // ⚠ `undefined` = ما تلمسش الدرج. `null` = شيله (غير مصنّف).
+      // من غير التفريق ده مستحيل ترجّع منتج بلا درج بعد ما اتحطّ فيه.
+      if (data.categoryId !== undefined) patch.category_id = data.categoryId;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
