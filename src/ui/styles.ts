@@ -329,6 +329,29 @@ button{font:inherit}
   font-size:var(--fs-2);direction:ltr}
 .menu-item{display:block;width:100%;text-align:start;padding:11px 12px;font-size:var(--fs-5);
   color:var(--ink);background:none;border:none;border-radius:var(--r-sm);cursor:pointer}
+/* ═══ شرائط الأدراج ═══
+   ⚠ شرايط أفقية بتلفّ، مش قايمة رأسية. سبع أدراج في قايمة
+   بتاخد نص الشاشة قبل ما المخزون يبدأ؛ نفس السبعة في شرايط
+   بياخدوا سطرين.
+
+   ⚠ والمختار بيتعلّم **بالخلفية والحدّ** مش باللون وحده —
+   نفس قاعدة النظام: الفرق اللي بيتشاف بلون واحد بيضيع على
+   شاشة مغسولة بالشمس قدّام كاونتر. */
+.drawers{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.drawer{display:inline-flex;align-items:center;gap:6px;
+  min-height:36px;padding:0 12px;
+  border:1px solid var(--line);border-radius:999px;
+  background:transparent;color:var(--ink-soft);
+  font-family:inherit;font-size:var(--fs-3);cursor:pointer}
+.drawer:hover{border-color:var(--brand-soft)}
+.drawer[data-on]{background:var(--brand);border-color:var(--brand);
+  color:#fff;font-weight:600}
+/* العدّ بخط أحادي عشان الأرقام تتحاذى ومتخبطش عرض الشريط */
+.drawer-n{font-family:var(--font-mono);font-size:var(--fs-1);
+  opacity:.75}
+.drawer[data-add-drawer]{font-size:var(--fs-5);line-height:1;
+  padding:0 14px;color:var(--brand)}
+
 .menu-item[data-danger]{color:var(--debit)}
 /* ⚠ العنصر المعطّل بيفضل **مقروء**، بس بلا مؤشّر ضغط.
    إخفاؤه كان هيخلّي المستخدم يدوّر على إعداد مش لاقيه؛ والحالة
