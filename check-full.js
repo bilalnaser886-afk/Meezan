@@ -55,6 +55,12 @@ for (const n of names) {
 }
 
 // ── backtick داخل تعليقات القوالب ──
+//
+// ⚠ الفحص ده كان بيغطّي **السكربتات بس**، وفات عليه backtick
+// في تعليق HTML جوّه قالب صفحة — وده كسر البناء كله.
+//
+// دلوقتي بيفحص أي تعليق `<!-- ... -->` في الملف كمان، لأن
+// قوالب الصفحات هي كمان `html` templates بتقفل على backtick.
 let ticks = 0;
 {
   const ranges = [];
@@ -77,9 +83,20 @@ let ticks = 0;
       const isComment = t.startsWith('*') || t.startsWith('//') || t.startsWith('/*');
       if (isComment && t.includes('`')) {
         ticks++;
-        console.log('FAIL backtick في تعليق — السطر ' + (base + i));
+        console.log('FAIL backtick في تعليق سكربت — السطر ' + (base + i));
       }
     }
+  }
+
+  // ⚠ وتعليقات HTML في أي مكان في الملف.
+  // قوالب الصفحات مالهاش حدود سهلة التحديد زي السكربتات، فبنفحص
+  // كل تعليق `<!-- -->` — والتعليق ده ما بيتكتبش غير جوّه قالب.
+  const htmlComments = src.matchAll(/<!--[\s\S]*?-->/g);
+  for (const m of htmlComments) {
+    if (!m[0].includes('`')) continue;
+    ticks++;
+    const line = src.slice(0, m.index).split('\n').length;
+    console.log('FAIL backtick في تعليق HTML — السطر ' + line);
   }
 }
 
@@ -132,6 +149,15 @@ for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
   const defined = new Set([
     ...[...body.matchAll(/function (\w+)\s*\(/g)].map(x => x[1]),
     ...[...body.matchAll(/var (\w+)\s*=/g)].map(x => x[1]),
+    // ⚠ ومعاملات الدوال كمان.
+    //
+    // من غير السطرين دول، أي دالة بتاخد دالة تانية كمعامل
+    // (`function wireRow(el, attr, onPick)`) بتطلّع إيجابية
+    // كاذبة على `onPick`. والإيجابية الكاذبة أخطر من إنها
+    // مزعجة: بتخلّي الواحد يبطّل يقرا نتيجة الفاحص.
+    ...[...body.matchAll(/function\s*\w*\s*\(([^)]*)\)/g)]
+      .flatMap(x => x[1].split(',').map(a => a.trim()))
+      .filter(Boolean),
   ]);
 
   const called = [...body.matchAll(/(^|[^.\w$])([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)]
