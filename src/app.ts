@@ -43,7 +43,7 @@ import {
   listMovements,
   listTransfers,
 } from './application/use-cases/treasury';
-import { listCategories, listModels, listProducts, listSellableProducts } from './application/use-cases/products';
+import { listCategories, listColors, listModels, listProducts, listSellableProducts } from './application/use-cases/products';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
 import { listTenants } from './application/use-cases/platform';
@@ -460,7 +460,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
   const idleRule = idleRuleFor(user.roleKey);
   const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
 
-  const [products, branches, allBranches, branchLabel, categories, models] = await Promise.all([
+  const [products, branches, allBranches, branchLabel, categories, models, colors] = await Promise.all([
     listProducts(container.products, user),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
@@ -482,6 +482,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     // الشاشة بتفلتر بيه، واللي شايف قايمة بلا فلتر مش بيشوف
     // نفس المحل.
     listModels(container.products, user).catch(() => []),
+    listColors(container.products, user).catch(() => []),
   ]);
 
   // ورش الصيانة — لقائمة "تحويل للصيانة" في كارت المنتج
@@ -507,6 +508,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       categories,
       models,
+      colors,
       branches,
       // ⚠ فروع التحويل غير قائمة الإضافة: هنا بنستبعد فرع
       // المستخدم نفسه — تحويل لفرعك مالوش معنى، والقاعدة
