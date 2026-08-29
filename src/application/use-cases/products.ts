@@ -36,6 +36,8 @@ import type {
   BranchRepository,
   CategoryRepository,
   Clock,
+  DeviceModel,
+  ModelRepository,
   ProductCategory,
   ListScope,
   PriceChange,
@@ -49,6 +51,8 @@ export interface ProductDeps {
   products: ProductRepository;
   /** أدراج المنتجات — التنظيم فوق النوع مش بدلاً منه */
   categories: CategoryRepository;
+  /** سجل موديلات الموبايل — البُعد التاني جنب الدرج */
+  models: ModelRepository;
   branches: BranchRepository;
   /** لتحويل معرّفات من غيّر السعر لأسماء */
   users: UserRepository;
@@ -88,6 +92,8 @@ export interface CreateProductRequest {
   storageCapacity?: string | null;
   /** درج الإكسسوار. فاضي = غير مصنّف. الجهاز بيتجاهله. */
   categoryId?: string | null;
+  /** موديل الموبايل — للنوعين. فاضي = غير محدّد. */
+  modelId?: string | null;
 }
 
 export interface UpdateProductRequest {
@@ -107,6 +113,8 @@ export interface UpdateProductRequest {
   storageCapacity?: string | null;
   /** نقل المنتج لدرج تاني. `null` = شيله من الدرج. */
   categoryId?: string | null;
+  /** `null` = شيل الموديل */
+  modelId?: string | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -421,6 +429,177 @@ async function resolveCategory(
   return categoryId;
 }
 
+// ═══════════════════ موديلات الموبايل ═══════════════════
+
+/**
+ * سجل الموديلات.
+ *
+ * ══ البُعدين ══
+ *   الدرج   → إيه الصنف  (جراب · شاحن · إسكرين)
+ *   الموديل → لأنهي جهاز (١٢ برو ماكس)
+ *
+ * ⚠ والموديل للنوعين. الجهاز موديله هو، والإكسسوار موديله
+ * الجهاز اللي بيركب عليه.
+ */
+export async function listModels(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<DeviceModel[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+
+  // fail-closed. والفرع بيأثّر على **العدّ** بس — السجل للمحل كله.
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+  return deps.models.list(actor.tenantId, branchId);
+}
+
+const MODEL_NAME_MAX = 60;
+
+function readModelName(raw: unknown): string {
+  const name = String(raw ?? '').trim();
+  if (name.length < 2 || name.length > MODEL_NAME_MAX) {
+    throw Errors.validation(`اسم الموديل من حرفين إلى ${MODEL_NAME_MAX} حرفًا.`);
+  }
+  return name;
+}
+
+function readBrand(raw: unknown): string | null {
+  const brand = String(raw ?? '').trim();
+  if (!brand) return null;
+  if (brand.length > 40) throw Errors.validation('اسم الماركة أطول من 40 حرفًا.');
+  return brand;
+}
+
+/**
+ * موديل جديد.
+ *
+ * ⚠ `inventory.adjust` — نفس صلاحية إضافة المنتج.
+ * اللي بيستلم جهاز موديله جديد هو اللي لازم يسجّله؛ وتقييد ده
+ * في المالك معناه إن الموظّف هيسيب الموديل فاضي ويكمّل شغله،
+ * والسجل يفضل فاضي للأبد.
+ */
+export async function createModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  input: { name: string; brand?: string | null },
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const name = readModelName(input.name);
+  const brand = readBrand(input.brand);
+
+  const created = await deps.models.create({ tenantId: actor.tenantId, name, brand });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'model.create',
+    entity: 'DeviceModel',
+    entityId: created.id,
+    metadata: { name, brand, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+export async function updateModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  modelId: string,
+  input: { name?: unknown; brand?: unknown },
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.models.findById(modelId, actor.tenantId);
+  // موديل محل تاني = غير موجود بالنسبة لك
+  if (!existing) throw Errors.notFound('الموديل');
+
+  const patch: { name?: string; brand?: string | null } = {};
+  if (input.name !== undefined) patch.name = readModelName(input.name);
+  if (input.brand !== undefined) patch.brand = readBrand(input.brand);
+  if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
+
+  await deps.models.update(modelId, actor.tenantId, patch);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'model.update',
+    entity: 'DeviceModel',
+    entityId: modelId,
+    // ⚠ القديم والجديد. "اتغيّر" من غير "من إيه" مش سجل.
+    metadata: {
+      from: { name: existing.name, brand: existing.brand },
+      to: patch,
+    },
+  });
+}
+
+/**
+ * حذف موديل.
+ *
+ * ⚠ الفاضي بس — ومفيش استثناء "مزروع" هنا زي الأدراج، لأن
+ * السجل بيبدأ فاضي أصلاً وكل موديل فيه المستخدم كتبه بإيده.
+ */
+export async function deleteModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  modelId: string,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.models.findById(modelId, actor.tenantId);
+  if (!existing) throw Errors.notFound('الموديل');
+
+  // ⚠ العدّ على **كل الفروع** مش فرع الحاذف: موديل عليه جهاز في
+  // فرع تاني مش فاضي، حتى لو فرع الحاذف مالوش فيه حاجة.
+  const all = await deps.models.list(actor.tenantId, null);
+  const row = all.find((m) => m.id === modelId);
+
+  if (row && (row.deviceCount > 0 || row.accessoryCount > 0)) {
+    throw Errors.validation(
+      `الموديل مرتبط بـ${row.deviceCount} جهاز و${row.accessoryCount} صنف إكسسوار.`,
+    );
+  }
+
+  await deps.models.softDelete(modelId, actor.tenantId, actor.id, deps.clock.now());
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'model.delete',
+    entity: 'DeviceModel',
+    entityId: modelId,
+    metadata: { name: existing.name, brand: existing.brand },
+  });
+}
+
+/**
+ * قراءة الموديل من طلب المنتج.
+ *
+ * ⚠ للنوعين — على عكس الدرج اللي للإكسسوار وحده.
+ * وفاضي مسموح: منتجاتك القديمة مالهاش موديل.
+ */
+async function resolveModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  raw: unknown,
+): Promise<string | null> {
+  const modelId = String(raw ?? '').trim();
+  if (!modelId) return null;
+
+  const model = await deps.models.findById(modelId, actor.tenantId);
+  if (!model) throw Errors.validation('الموديل المختار غير موجود.');
+  return modelId;
+}
+
 // ═══════════════════ المنتجات ═══════════════════
 
 // ─────────── الكتابة ───────────
@@ -497,6 +676,7 @@ export async function createProduct(
     : null;
 
   const categoryId = await resolveCategory(deps, actor, input.categoryId, productType);
+  const modelId = await resolveModel(deps, actor, input.modelId);
 
   const created = await deps.products.create({
     tenantId: actor.tenantId,
@@ -513,6 +693,7 @@ export async function createProduct(
     batteryHealth,
     storageCapacity,
     categoryId,
+    modelId,
     createdById: actor.id,
   });
 
@@ -532,6 +713,7 @@ export async function createProduct(
       batteryHealth,
       storageCapacity,
       categoryId,
+      modelId,
     },
   });
 
@@ -612,6 +794,7 @@ export async function updateProduct(
     batteryHealth?: number | null;
     storageCapacity?: string | null;
     categoryId?: string | null;
+    modelId?: string | null;
     updatedById: string;
   } = { updatedById: actor.id };
 
@@ -622,6 +805,9 @@ export async function updateProduct(
     patch.categoryId = await resolveCategory(
       deps, actor, input.categoryId, existing.productType,
     );
+  }
+  if (input.modelId !== undefined) {
+    patch.modelId = await resolveModel(deps, actor, input.modelId);
   }
 
   let changedPrice = false;
