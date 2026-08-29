@@ -46,14 +46,18 @@ import {
 } from '../application/use-cases/treasury';
 import {
   createCategory,
+  createModel,
   createProduct,
   deleteCategory,
+  deleteModel,
   getPriceHistory,
   listCategories,
+  listModels,
   listProducts,
   listSellableProducts,
   renameCategory,
   restockProduct,
+  updateModel,
   updateProduct,
 } from '../application/use-cases/products';
 import {
@@ -942,6 +946,55 @@ productRoutes.delete(
   },
 );
 
+// ═══════════════════ موديلات الموبايل ═══════════════════
+//
+// ⚠ قبل `/:id` زي الأدراج بالظبط — هونو بيطابق أول مسار مناسب.
+
+productRoutes.get(
+  '/models',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listModels(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+productRoutes.post(
+  '/models',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; brand?: string | null }>(c);
+    const container = buildContainer(c.env);
+    const created = await createModel(container.products, c.get('user'), {
+      name: String(body.name ?? ''),
+      brand: body.brand ?? null,
+    });
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
+productRoutes.patch(
+  '/models/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; brand?: string | null }>(c);
+    const container = buildContainer(c.env);
+    await updateModel(container.products, c.get('user'), c.req.param('id'), body);
+    return c.json({ ok: true });
+  },
+);
+
+productRoutes.delete(
+  '/models/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    await deleteModel(container.products, c.get('user'), c.req.param('id'));
+    return c.json({ ok: true });
+  },
+);
+
 /** قائمة شاشة الكاشير: المفعّل واللي فيه كمية بس */
 productRoutes.get(
   '/sellable',
@@ -976,6 +1029,7 @@ interface ProductBody {
   batteryHealth?: number | null;
   storageCapacity?: string | null;
   categoryId?: string | null;
+  modelId?: string | null;
 }
 
 /**
@@ -1026,6 +1080,7 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     batteryHealth: body.batteryHealth ?? null,
     storageCapacity: body.storageCapacity ?? null,
     categoryId: body.categoryId ?? null,
+    modelId: body.modelId ?? null,
   });
 
   return c.json({ ok: true, id: created.id }, 201);
@@ -1053,6 +1108,7 @@ productRoutes.post(
       batteryHealth?: number | null;
       storageCapacity?: string | null;
       categoryId?: string | null;
+      modelId?: string | null;
     } = {};
 
     try {
@@ -1088,6 +1144,7 @@ productRoutes.post(
       if (body.batteryHealth !== undefined) patch.batteryHealth = body.batteryHealth;
       if (body.storageCapacity !== undefined) patch.storageCapacity = body.storageCapacity;
       if (body.categoryId !== undefined) patch.categoryId = body.categoryId;
+      if (body.modelId !== undefined) patch.modelId = body.modelId;
     } catch (error) {
       throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
     }
