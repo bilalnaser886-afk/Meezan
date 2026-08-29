@@ -1219,6 +1219,29 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
       return (data ?? []).map(map);
     },
 
+    async create(input) {
+      const { data, error } = await db
+        .from('expense_reasons')
+        .insert({
+          tenant_id: input.tenantId,
+          name: input.name,
+          // ⚠ عام على المحل، ومصروف عادي. شوف التعليق على العقد.
+          branch_id: null,
+          is_advance: false,
+          is_inventory: false,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // 23505 = تعارض تفرّد على (المحل · الفرع · الاسم)
+        if (error.code === '23505') throw Errors.validation('السبب ده موجود بالفعل.');
+        throw Errors.internal(`expense reason create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
     async findById(id) {
       const { data, error } = await db
         .from('expense_reasons')
