@@ -39,6 +39,7 @@ import {
   createAnnouncementRepository,
   createAuditLogger,
   createBranchRepository,
+  createCategoryRepository,
   createCustomerRepository,
   createDb,
   createExpenseReasonRepository,
@@ -144,8 +145,14 @@ export function buildContainer(env: Env): Container {
       clock: systemClock,
       audit,
     },
+    // ⚠ الأدراج مستودع منفصل عن المنتجات عن قصد.
+    //
+    // المنتج بيتقرا ويتكتب في كل شاشة تقريبًا؛ والأدراج بتتقرا
+    // في شاشة المنتجات وبس. دمجهم كان هيخلّي أي شاشة بتلمس
+    // المنتجات تشيل معاها كود تنظيم مالهاش دعوة بيه.
     products: {
       products: createProductRepository(db),
+      categories: createCategoryRepository(db),
       branches: branchRepo,
       users: userRepo,
       clock: systemClock,
