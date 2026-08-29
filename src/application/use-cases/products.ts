@@ -34,7 +34,9 @@ import type {
   AuditLogger,
   AuthenticatedUser,
   BranchRepository,
+  CategoryRepository,
   Clock,
+  ProductCategory,
   ListScope,
   PriceChange,
   ProductRecord,
@@ -45,6 +47,8 @@ import type {
 
 export interface ProductDeps {
   products: ProductRepository;
+  /** أدراج المنتجات — التنظيم فوق النوع مش بدلاً منه */
+  categories: CategoryRepository;
   branches: BranchRepository;
   /** لتحويل معرّفات من غيّر السعر لأسماء */
   users: UserRepository;
@@ -82,6 +86,8 @@ export interface CreateProductRequest {
   batteryHealth?: number | null;
   /** "256GB" · "8/256" · "1TB" — نص عن قصد، شوف 23_device_specs.sql */
   storageCapacity?: string | null;
+  /** درج الإكسسوار. فاضي = غير مصنّف. الجهاز بيتجاهله. */
+  categoryId?: string | null;
 }
 
 export interface UpdateProductRequest {
@@ -99,6 +105,8 @@ export interface UpdateProductRequest {
   batteryHealth?: number | null;
   /** "256GB" · "8/256" · "1TB" */
   storageCapacity?: string | null;
+  /** نقل المنتج لدرج تاني. `null` = شيله من الدرج. */
+  categoryId?: string | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -190,6 +198,231 @@ export async function listSellableProducts(
   return all.filter((p) => p.quantityOnHand > 0);
 }
 
+// ═══════════════════ الأدراج ═══════════════════
+
+/**
+ * أدراج المنتجات.
+ *
+ * ══ إيه اللي بتحلّه ══
+ * كل حاجة مش جهاز كانت في كومة واحدة: جرابات وشواحن وسماعات
+ * وإسكرينات. عشرة أصناف دلوقتي، وتلتمية بعد سنة.
+ *
+ * ══ ⚠ و"مكملات" **درج** مش نوع منتج ══
+ * `product_type` هو اللي بيحكم قواعد المخزون (الجهاز قطعة
+ * بسريال · الإكسسوار صنف بكمية)، والقواعد دي متحطّة في قيود
+ * قاعدة البيانات. والشاحن بيتصرّف زي الجراب بالحرف.
+ *
+ * لو عملناه نوع تالت، كان لازم يتزوّد في القيود والفهارس
+ * و`fn_alerts` وعشر أماكن في الكود — والمكان اللي بينُسى بيسكت
+ * وبيشتغل غلط.
+ */
+
+/**
+ * قراءة الأدراج.
+ *
+ * ⚠ `inventory.view` مش `inventory.adjust`. الأدراج تنظيم عرض،
+ * وأي حد بيشوف المخزون لازم يشوف تقسيمته — وإلا هيبصّ على قايمة
+ * مسطّحة والباقي بيشوفوا أدراج.
+ */
+export async function listCategories(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<ProductCategory[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+
+  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف المحل كله.
+  // ⚠ والفرع بيأثّر على **العدّ** بس — الأدراج نفسها للمحل كله.
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+
+  return deps.categories.list(actor.tenantId, branchId);
+}
+
+const CATEGORY_NAME_MAX = 40;
+
+function readCategoryName(raw: unknown): string {
+  const name = String(raw ?? '').trim();
+  if (name.length < 2 || name.length > CATEGORY_NAME_MAX) {
+    throw Errors.validation(`اسم الدرج من حرفين إلى ${CATEGORY_NAME_MAX} حرفًا.`);
+  }
+  return name;
+}
+
+/**
+ * درج جديد.
+ *
+ * ⚠ `inventory.adjust` — نفس صلاحية إضافة المنتج نفسه.
+ * اللي بيستلم البضاعة هو اللي بيلاقي صنف جديد مالوش درج، وتقييد
+ * ده في المالك معناه إنه هيحطّه في درج غلط لحد ما المالك يفضى.
+ */
+export async function createCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  input: { parentId?: string | null; name: string },
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const name = readCategoryName(input.name);
+  const parentId = String(input.parentId ?? '').trim() || null;
+
+  if (parentId) {
+    // ⚠ الأب لازم يكون في نفس المحل، ولازم يكون **قسم رئيسي**.
+    const parent = await deps.categories.findById(parentId, actor.tenantId);
+    if (!parent) throw Errors.validation('القسم المختار غير موجود.');
+
+    // ══ ⚠ مستويين وبس، وده مقصود ══
+    // لو سمحنا بعمق مفتوح، هتلاقي درج جوّه درج جوّه درج بعد شهر،
+    // والموظّف بيدوّر على الجراب في أربع نقرات. والأهم: موديلات
+    // الموبايل جايّة كـ**سجل** مش كأدراج، فالمستوى التالت محجوز
+    // ليها أصلاً.
+    if (parent.parentId !== null) {
+      throw Errors.validation('لا يمكن إنشاء درج داخل درج. اختر قسمًا رئيسيًا.');
+    }
+  }
+
+  const created = await deps.categories.create({
+    tenantId: actor.tenantId,
+    parentId,
+    name,
+  });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'category.create',
+    entity: 'ProductCategory',
+    entityId: created.id,
+    metadata: { name, parentId, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+/**
+ * إعادة تسمية درج.
+ *
+ * ⚠ المزروع **بيتسمّى عادي**. القفل على الحذف بس — تقدر تسمّي
+ * "مكملات" باسم تاني يناسب محلّك، وما تقدرش تمسحها وتسيب
+ * منتجاتها بلا مكان.
+ */
+export async function renameCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  categoryId: string,
+  rawName: unknown,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.categories.findById(categoryId, actor.tenantId);
+  // درج محل تاني = غير موجود بالنسبة لك
+  if (!existing) throw Errors.notFound('الدرج');
+
+  const name = readCategoryName(rawName);
+  await deps.categories.rename(categoryId, actor.tenantId, name);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'category.rename',
+    entity: 'ProductCategory',
+    entityId: categoryId,
+    // ⚠ القديم والجديد مع بعض. "اتغيّر" من غير "من إيه" مش سجل.
+    metadata: { from: existing.name, to: name },
+  });
+}
+
+/**
+ * حذف درج.
+ *
+ * ══ ⚠ تلات حواجز، كل واحد ليه سبب ══
+ */
+export async function deleteCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  categoryId: string,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  // 1) المحل
+  const existing = await deps.categories.findById(categoryId, actor.tenantId);
+  if (!existing) throw Errors.notFound('الدرج');
+
+  // 2) المزروع محصّن.
+  //    القسم الرئيسي لو اتمسح، كل أدراجه ومنتجاتها تبقى بلا مكان
+  //    ومفيش طريق رجوع من الشاشة. ده باب مسدود مش مخاطرة.
+  if (existing.isSystem) {
+    throw Errors.validation('الأدراج الأساسية لا تُحذف. يمكنك إعادة تسميتها.');
+  }
+
+  // 3) والفاضي بس.
+  //    ⚠ العدّ بيتقرا من نفس الدالة اللي بتعرض الشاشة، عشان
+  //    الرقم اللي المستخدم شايفه هو الرقم اللي بنحكم بيه.
+  //    والفرع فاضي هنا عن قصد: درج فيه منتج في **أي** فرع مش
+  //    فاضي، حتى لو فرع الحاذف مالوش فيه حاجة.
+  const tree = await deps.categories.list(actor.tenantId, null);
+  const row = tree.find((c) => c.id === categoryId);
+
+  if (row && row.productCount > 0) {
+    throw Errors.validation(
+      `الدرج فيه ${row.productCount} منتج. انقلهم أولًا أو غيّر اسم الدرج.`,
+    );
+  }
+  // وأي درج جوّاه كمان
+  if (tree.some((c) => c.parentId === categoryId)) {
+    throw Errors.validation('القسم فيه أدراج. احذفها أولًا.');
+  }
+
+  await deps.categories.softDelete(categoryId, actor.tenantId, actor.id, deps.clock.now());
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'category.delete',
+    entity: 'ProductCategory',
+    entityId: categoryId,
+    metadata: { name: existing.name, parentId: existing.parentId },
+  });
+}
+
+/**
+ * قراءة الدرج من طلب المنتج.
+ *
+ * ⚠ الجهاز بياخد `null` دايمًا. الأدراج للإكسسوار والمكملات —
+ * والأجهزة هتتجمّع بموديلها في مرحلة تانية، مش هنا.
+ *
+ * ⚠ والدرج لازم يكون **درج** مش قسم رئيسي: "إكسسوار" مكان
+ * تجميع، والمنتج بيتحطّ في "جرابات". لو سمحنا بالقسم، هتلاقي
+ * نص المنتجات في الجذر ونصها في الأدراج.
+ */
+async function resolveCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  raw: unknown,
+  productType: ProductType,
+): Promise<string | null> {
+  if (productType === 'device') return null;
+
+  const categoryId = String(raw ?? '').trim();
+  if (!categoryId) return null; // غير مصنّف — مسموح
+
+  const category = await deps.categories.findById(categoryId, actor.tenantId);
+  if (!category) throw Errors.validation('الدرج المختار غير موجود.');
+  if (category.parentId === null) {
+    throw Errors.validation('اختر درجًا داخل القسم، لا القسم نفسه.');
+  }
+
+  return categoryId;
+}
+
+// ═══════════════════ المنتجات ═══════════════════
+
 // ─────────── الكتابة ───────────
 
 /**
@@ -263,6 +496,8 @@ export async function createProduct(
     ? trimOrNull(input.storageCapacity, 32, 'المساحة أطول من 32 حرفًا.')
     : null;
 
+  const categoryId = await resolveCategory(deps, actor, input.categoryId, productType);
+
   const created = await deps.products.create({
     tenantId: actor.tenantId,
     branchId: targetBranchId,
@@ -277,6 +512,7 @@ export async function createProduct(
     customsCleared,
     batteryHealth,
     storageCapacity,
+    categoryId,
     createdById: actor.id,
   });
 
@@ -295,6 +531,7 @@ export async function createProduct(
       customsCleared,
       batteryHealth,
       storageCapacity,
+      categoryId,
     },
   });
 
@@ -374,8 +611,18 @@ export async function updateProduct(
     customsCleared?: boolean;
     batteryHealth?: number | null;
     storageCapacity?: string | null;
+    categoryId?: string | null;
     updatedById: string;
   } = { updatedById: actor.id };
+
+  // ⚠ الدرج بيتفحص بنوع المنتج **الموجود** مش المرسل: النوع
+  // ما بيتغيّرش بعد الإنشاء (الجهاز بسريال والإكسسوار بكمية،
+  // والتحويل بينهم بيكسر المخزون).
+  if (input.categoryId !== undefined) {
+    patch.categoryId = await resolveCategory(
+      deps, actor, input.categoryId, existing.productType,
+    );
+  }
 
   let changedPrice = false;
 
