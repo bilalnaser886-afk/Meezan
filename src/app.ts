@@ -43,7 +43,7 @@ import {
   listMovements,
   listTransfers,
 } from './application/use-cases/treasury';
-import { listCategories, listProducts, listSellableProducts } from './application/use-cases/products';
+import { listCategories, listModels, listProducts, listSellableProducts } from './application/use-cases/products';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
 import { listTenants } from './application/use-cases/platform';
@@ -460,7 +460,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
   const idleRule = idleRuleFor(user.roleKey);
   const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
 
-  const [products, branches, allBranches, branchLabel, categories] = await Promise.all([
+  const [products, branches, allBranches, branchLabel, categories, models] = await Promise.all([
     listProducts(container.products, user),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
@@ -478,6 +478,10 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
     // شايفين أدراج مش بيشوف نفس المحل.
     listCategories(container.products, user).catch(() => []),
+    // ⚠ نفس السبب: سجل الموديلات بيتجاب لكل من يشوف المخزون.
+    // الشاشة بتفلتر بيه، واللي شايف قايمة بلا فلتر مش بيشوف
+    // نفس المحل.
+    listModels(container.products, user).catch(() => []),
   ]);
 
   // ورش الصيانة — لقائمة "تحويل للصيانة" في كارت المنتج
@@ -502,6 +506,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       categories,
+      models,
       branches,
       // ⚠ فروع التحويل غير قائمة الإضافة: هنا بنستبعد فرع
       // المستخدم نفسه — تحويل لفرعك مالوش معنى، والقاعدة
