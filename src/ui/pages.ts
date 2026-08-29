@@ -2727,6 +2727,19 @@ export function treasuryPage(data: TreasuryPageData): Html {
             .filter((r) => !r.isInventory)
             .map((r) => html`<option value="${r.id}">${r.name}</option>`)}
         </select>
+        <!-- ⚠ الزرار لمن يقدر يعتمد المصروفات بس.
+
+             سبب الصرف مش بيان على الحركة — هو بند في قائمة
+             الدخل، وتفصيل المصروفات بيتجمّع بيه.
+
+             لو كل موظّف زوّد بند، هتلاقي "نثرية" و"نثريات"
+             و"فطار" و"فطار الصبح" — والتقرير يبقى عشرين سطر
+             بجنيهات وصاحب المحل يبطّل يقراه. -->
+        ${data.canApprove
+          ? html`<button class="btn-mini" type="button" id="reason-add">
+              + سبب جديد
+            </button>`
+          : ''}
       </div>
 
       <div class="field" id="mv-user-field" hidden>
@@ -2889,6 +2902,54 @@ ${MENU_JS}
   }
   typeEl.addEventListener('change', syncFields);
   syncFields();
+
+  // ── سبب صرف جديد ──
+  //
+  // ⚠ الزرار موجود في الشاشة لمن يقدر يعتمد بس، والخادم بيفحص
+  // تاني. إخفاء الزرار مش حماية — أي حد يقدر ينادي المسار من
+  // المتصفح على طول.
+  (function () {
+    var addBtn = document.getElementById('reason-add');
+    var reasonEl = document.getElementById('mv-reason');
+    if (!addBtn || !reasonEl) return;
+
+    addBtn.addEventListener('click', async function () {
+      var name = prompt('اسم سبب الصرف الجديد؟');
+      if (name === null) return;
+      name = name.trim();
+      if (!name) return;
+
+      addBtn.disabled = true;
+      try {
+        var res = await fetch('/api/treasury/expense-reasons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ name: name })
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) {
+          say((data.error && data.error.message) || 'تعذّر إضافة السبب.', false);
+          return;
+        }
+
+        // ⚠ بنضيف الخيار ونختاره على طول بدل تحديث الصفحة.
+        //
+        // المستخدم واقف في نص تسجيل حركة: المبلغ مكتوب والخزينة
+        // متختارة. التحديث كان هيمسح شغله عشان يضيف سبب.
+        var opt = document.createElement('option');
+        opt.value = data.id;
+        opt.textContent = name;
+        reasonEl.appendChild(opt);
+        reasonEl.value = data.id;
+        say('اتضاف السبب.', true);
+      } catch (err) {
+        say('تعذّر الاتصال بالخادم.', false);
+      } finally {
+        addBtn.disabled = false;
+      }
+    });
+  })();
 
   // ── الفرع يضيّق قايمة الخزائن ──
   //
@@ -6194,10 +6255,14 @@ ${MENU_JS}
       storage: !!activeStorage,
       customs: !!activeCustoms
     };
+    // ⚠ وزرار الفلتر نفسه بيتعلّم لو أي أداة تحته شغّالة.
+    // من غير كده، المستخدم مش هيعرف إن فيه حاجة تتلغي —
+    // والزرار اللي بيلغي لازم يقول إن فيه حاجة تُلغى.
+    on.flt = on.color || on.model || on.storage || on.customs;
+
     var all = document.querySelectorAll('.tool');
     for (var i = 0; i < all.length; i++) {
       var key = all[i].getAttribute('data-tool') || all[i].getAttribute('data-sub');
-      if (key === 'flt') continue;
       if (on[key]) all[i].setAttribute('data-on', '');
       else all[i].removeAttribute('data-on');
     }
@@ -6210,12 +6275,34 @@ ${MENU_JS}
       var key = btn.getAttribute('data-tool');
 
       if (key === 'flt') {
-        if (filterTools) filterTools.hidden = !filterTools.hidden;
-        // قفل شرايط الفلتر مع قفل أدواته
-        if (filterTools && filterTools.hidden
-            && ['color', 'model', 'storage', 'customs'].indexOf(openRow) !== -1) {
+        if (!filterTools) return;
+        var closing = !filterTools.hidden;
+        filterTools.hidden = closing;
+
+        // ══ ⚠ القفل بيلغي الفلاتر، مش بيخبّيها ══
+        //
+        // الفلتر اللي بيتخبّى وهو شغّال بيسيب المستخدم قدّام
+        // شاشة فاضية بلا سبب ظاهر — "٠ نتيجة" ومفيش حاجة
+        // مكتوبة توضّح ليه.
+        //
+        // فقفل الفلتر بقى هو زرار الإلغاء نفسه. مخرج واحد
+        // معروف بدل ما المستخدم يفتح كل أداة ويرجّعها "الكل"
+        // واحدة واحدة.
+        //
+        // ⚠ والدرج **ما بيتلغيش** معاهم. هو مش تحت الفلتر —
+        // له زراره وضغطة تانية عليه بترجّع الكل.
+        if (closing) {
+          activeColor = ''; activeModel = '';
+          activeStorage = ''; activeCustoms = '';
+          clearRow('colors', 'data-color');
+          clearRow('models', 'data-model');
+          clearRow('storages', 'data-storage');
+          clearRow('customs', 'data-customs');
           showRow('');
+          paintTools();
+          runSearch();
         }
+
         syncFilterTools();
         return;
       }
