@@ -746,6 +746,17 @@ export interface ProductRecord {
    */
   categoryId: string | null;
   /**
+   * موديل الجهاز. `null` = غير محدّد.
+   *
+   * ⚠ للنوعين مع بعض، ومعناه بيتغيّر:
+   *   الجهاز    → موديله هو
+   *   الإكسسوار → الجهاز اللي بيركب عليه
+   *
+   * ودمجهم في عمود واحد هو اللي بيخلّي "وريني كل حاجة ليها
+   * علاقة بالـ١٢ برو ماكس" سؤال ممكن.
+   */
+  modelId: string | null;
+  /**
    * خلوّ الجمارك — تسجيل يدوي من المستلم.
    * ⚠ false معناها **"مش متأكد"** مش "مش مخلّص". غياب المعلومة
    * مش نفي.
@@ -792,6 +803,7 @@ export interface CreateProductInput {
    * في الشاشة وبتتصرّف، والتخمين الغلط بيتصدّق.
    */
   categoryId: string | null;
+  modelId: string | null;
   createdById: string;
 }
 
@@ -810,6 +822,8 @@ export interface UpdateProductInput {
   storageCapacity?: string | null;
   /** `null` = شيل الدرج (رجّعه غير مصنّف) */
   categoryId?: string | null;
+  /** `null` = شيل الموديل */
+  modelId?: string | null;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
@@ -878,6 +892,37 @@ export interface CategoryRepository {
   softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
   /** للحراسة قبل التعديل والحذف */
   findById(id: string, tenantId: string): Promise<ProductCategory | null>;
+}
+
+/**
+ * موديل موبايل.
+ *
+ * ══ ⚠ سجل مش نص حرّ ══
+ * "١٢ برو ماكس" و"12 promax" و"١٢ بروماكس" لازم يكونوا حاجة
+ * واحدة. لو النص حرّ، الجراب بيتسجّل تحت اسم والجهاز تحت اسم
+ * تاني ومحدش بيلاقي حد.
+ *
+ * ⚠ ونفس غلطة `products.source` اللي اتصلّحت بسجل موردين في
+ * ملف ٢٢. ده نفس العلاج.
+ */
+export interface DeviceModel {
+  id: string;
+  name: string;
+  /** ⚠ عمود مستقل عن الاسم عشان "كل الآيفون" تبقى سؤال ممكن */
+  brand: string | null;
+  sortOrder: number;
+  /** أجهزة متاحة للبيع — **بالكمية** مش بعدد الصفوف */
+  deviceCount: number;
+  /** أصناف إكسسوار مرتبطة بالموديل */
+  accessoryCount: number;
+}
+
+export interface ModelRepository {
+  list(tenantId: string, branchId: string | null): Promise<DeviceModel[]>;
+  create(input: { tenantId: string; name: string; brand: string | null }): Promise<{ id: string }>;
+  update(id: string, tenantId: string, patch: { name?: string; brand?: string | null }): Promise<void>;
+  softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
+  findById(id: string, tenantId: string): Promise<DeviceModel | null>;
 }
 
 export interface ProductRepository {
