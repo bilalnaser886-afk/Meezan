@@ -756,6 +756,8 @@ export interface ProductRecord {
    * علاقة بالـ١٢ برو ماكس" سؤال ممكن.
    */
   modelId: string | null;
+  /** لون المنتج. `null` = غير محدّد. للنوعين. */
+  colorId: string | null;
   /**
    * خلوّ الجمارك — تسجيل يدوي من المستلم.
    * ⚠ false معناها **"مش متأكد"** مش "مش مخلّص". غياب المعلومة
@@ -804,6 +806,7 @@ export interface CreateProductInput {
    */
   categoryId: string | null;
   modelId: string | null;
+  colorId: string | null;
   createdById: string;
 }
 
@@ -824,6 +827,8 @@ export interface UpdateProductInput {
   categoryId?: string | null;
   /** `null` = شيل الموديل */
   modelId?: string | null;
+  /** `null` = شيل اللون */
+  colorId?: string | null;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
@@ -923,6 +928,33 @@ export interface ModelRepository {
   update(id: string, tenantId: string, patch: { name?: string; brand?: string | null }): Promise<void>;
   softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
   findById(id: string, tenantId: string): Promise<DeviceModel | null>;
+}
+
+/**
+ * لون منتج.
+ *
+ * ⚠ سجل مش نص حرّ — نفس سبب الموديل: أنا بجمّع بيه، و"أسود"
+ * و"اسود" و"black" لازم يكونوا حاجة واحدة.
+ *
+ * ⚠ وبيتزرع مع فتح المحل، على عكس الموديلات. الموديلات بتقدم
+ * (موديل ٢٠٢٧ مش في أي قايمة النهاردة)، والألوان ما بتقدمش.
+ */
+export interface ProductColor {
+  id: string;
+  name: string;
+  /** كود اللون للنقطة الملوّنة. فاضي = يتعرض بالاسم بس. */
+  hex: string | null;
+  sortOrder: number;
+  isSystem: boolean;
+  productCount: number;
+}
+
+export interface ColorRepository {
+  list(tenantId: string, branchId: string | null): Promise<ProductColor[]>;
+  create(input: { tenantId: string; name: string; hex: string | null }): Promise<{ id: string }>;
+  update(id: string, tenantId: string, patch: { name?: string; hex?: string | null }): Promise<void>;
+  softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
+  findById(id: string, tenantId: string): Promise<ProductColor | null>;
 }
 
 export interface ProductRepository {
