@@ -4577,6 +4577,7 @@ export function productsPage(data: ProductsPageData): Html {
             data-cat="${p.categoryId ?? '__none__'}"
             data-model="${p.modelId ?? '__none__'}"
             data-color="${p.colorId ?? '__none__'}"
+            data-type="${p.productType}"
             data-storage="${p.storageCapacity ?? '__none__'}"
             data-entry="${formatDate(p.entryDate)}">
             <div class="prod-row-main">
@@ -5041,23 +5042,57 @@ export function productsPage(data: ProductsPageData): Html {
   <details class="panel" open>
     <summary>المخزون (${String(data.products.length)})</summary>
     <div class="panel-body">
-      <!-- ══ شرائط الأدراج والموديلات ══
+      <!-- ══ شريط الأدوات ══
 
-           ⚠ **صفّين لبُعدين مستقلين**، والفلاتر بتتجمع:
-             الدرج   → إيه الصنف  (جراب · شاحن)
-             الموديل → لأنهي جهاز (١٢ برو ماكس)
+           ⚠ اتغيّر من **خمس صفوف مفتوحة** لأدوات بتتفتح عند
+           الطلب. الخمس صفوف كانت بتاخد نص الشاشة والمخزون
+           يختفي تحت.
 
-           "جرابات" + "١٢ برو ماكس" = جرابات الـ١٢ برو ماكس.
-           وصفّ واحد مدمج كان هيحتاج ضرب الاتنين في بعض — تلات
-           أدراج × عشر موديلات = تلاتين شريط.
+           ══ درجين لا واحد ══
+           الإكسسوار بيتنظّم بالصنف (جراب · شاحن)، والأجهزة
+           بتتنظّم بالموديل. دول تصنيفين مختلفين لنوعين مختلفين،
+           فحشرهم في درج واحد كان بيخلّي نص الشرايط بلا معنى
+           لنص المخزون.
 
-           ⚠ ودي **فلاتر مش شجرة**. بتخفي صفوف مش بتفتح شاشة،
-           فالبحث والاتنين بيشتغلوا مع بعض والرجوع نقرة واحدة.
+           ⚠ والدرج **بيفلتر النوع كمان** مش بيفتح شرايط وبس.
+           لو فتحت درج الأجهزة وفضلت شايف الإكسسوار، الدرج بيبقى
+           اسم على قايمة مش درج.
 
-           ⚠ والعدّ جاي من قاعدة البيانات مش من عدّ الصفوف
-           المعروضة: القايمة محدودة بـ500 صف. -->
-      <div class="drawers-row">
-        <span class="drawers-label">الدرج</span>
+           ⚠ والزرار بيتعلّم بـ«data-on» وهو **مقفول** كمان،
+           لأن الفلتر شغّال ومخفي بيخلّي المستخدم يفتكر إن نص
+           المخزون اتمسح. -->
+      <div class="tools">
+        <button class="tool" type="button" data-tool="cat">
+          درج الإكسسوار والمكملات
+        </button>
+        <button class="tool" type="button" data-tool="dev">
+          درج الأجهزة
+        </button>
+        <button class="tool" type="button" data-tool="flt">فلتر</button>
+      </div>
+
+      <!-- ⚠ أدوات الفلتر بتتغيّر بالدرج المفتوح:
+             الإكسسوار → اللون · الموديل
+             الأجهزة   → اللون · المساحة · الضريبة
+           والمساحة والضريبة مالهمش معنى على جراب. -->
+      <div class="tools" id="filter-tools" hidden>
+        <button class="tool" type="button" data-sub="color">اللون</button>
+        <button class="tool" type="button" data-sub="model" data-for="accessory">
+          الموديل
+        </button>
+        <button class="tool" type="button" data-sub="storage" data-for="device">
+          المساحة
+        </button>
+        <button class="tool" type="button" data-sub="customs" data-for="device">
+          الضريبة
+        </button>
+      </div>
+
+      <!-- ⚠ الشرايط في مكان واحد وبتتبدّل، مش نسخة في كل قايمة.
+           نسختين من نفس الشريط معناهم إن العلامة على الاتنين
+           ممكن تختلف — والمستخدم يشوف "أسود" مختار في مكان
+           و"الكل" في مكان تاني. -->
+      <div class="row-wrap" id="row-cat" hidden>
         <div class="drawers" id="drawers">
           <button class="drawer" type="button" data-drawer="" data-on>الكل</button>
           ${data.categories
@@ -5072,46 +5107,37 @@ export function productsPage(data: ProductsPageData): Html {
                   </button>`,
                 )}`,
             )}
-          <button class="drawer" type="button" data-drawer="__none__">
-            غير مصنّف
-          </button>
+          <button class="drawer" type="button" data-drawer="__none__">غير مصنّف</button>
           ${data.canEdit
-            ? html`<button class="drawer" type="button" id="drawer-add" data-add-drawer>+</button>`
+            ? html`<button class="drawer" type="button" data-add-drawer>+</button>`
             : ''}
         </div>
       </div>
 
-      <div class="drawers-row">
-        <span class="drawers-label">الموديل</span>
+      <div class="row-wrap" id="row-model" hidden>
         <div class="drawers" id="models">
           <button class="drawer" type="button" data-model="" data-on>الكل</button>
           ${data.models.map(
             (m) => html`<button class="drawer" type="button" data-model="${m.id}">
               ${m.name}
-              <!-- ⚠ الرقمين منفصلين: أجهزة · إكسسوار.
-                   رقم مجمّع كان هيقول "٧" ومش هتعرف سبع أجهزة
-                   ولا سبع جرابات. -->
+              <!-- ⚠ رقمين منفصلين: أجهزة · إكسسوار. رقم مجمّع
+                   كان هيقول "٧" ومش هتعرف سبع أجهزة ولا سبع جرابات. -->
               <span class="drawer-n">${String(m.deviceCount)}·${String(m.accessoryCount)}</span>
             </button>`,
           )}
-          <button class="drawer" type="button" data-model="__none__">
-            بلا موديل
-          </button>
+          <button class="drawer" type="button" data-model="__none__">بلا موديل</button>
           ${data.canEdit
-            ? html`<button class="drawer" type="button" id="model-add" data-add-model>+</button>`
+            ? html`<button class="drawer" type="button" data-add-model>+</button>`
             : ''}
         </div>
       </div>
 
-      <div class="drawers-row">
-        <span class="drawers-label">اللون</span>
+      <div class="row-wrap" id="row-color" hidden>
         <div class="drawers" id="colors">
           <button class="drawer" type="button" data-color="" data-on>الكل</button>
           ${data.colors.map(
             (c) => html`<button class="drawer" type="button" data-color="${c.id}">
-              ${c.hex
-                ? html`<span class="dot" style="background:${c.hex}"></span>`
-                : ''}
+              ${c.hex ? html`<span class="dot" style="background:${c.hex}"></span>` : ''}
               ${c.name}
               <span class="drawer-n">${String(c.productCount)}</span>
             </button>`,
@@ -5125,29 +5151,24 @@ export function productsPage(data: ProductsPageData): Html {
 
       <!-- ══ المساحة والضريبة — مشتقّة مش مسجّلة ══
 
-           ⚠ التنين دول **مالهمش سجل**، وده مقصود.
+           ⚠ التنين دول مالهمش سجل، وده قرار مكتوب.
 
-           «storage_capacity» و«customs_cleared» أعمدة على المنتج
-           من ملفَي ٢١ و٢٣. فالشرايط بتتبني من الصفوف الموجودة
-           في الشاشة، مش من جدول.
+           storage_capacity و customs_cleared أعمدة على المنتج من
+           ملفَي ٢١ و٢٣. فالشرايط بتتبني من الصفوف الموجودة.
 
            والفرق: الدرج واللون والموديل **بتتختار** وقت الإضافة،
-           فمحتاجة سجل يمنع التكرار. المساحة والضريبة بتتكتب
-           على المنتج خلاص، والشريط بيعرض اللي موجود فعلاً.
+           فمحتاجة سجل يمنع التكرار. المساحة بتتكتب على المنتج
+           خلاص، والشريط بيعرض اللي موجود فعلاً.
 
-           ⚠ ومفيش عدّ عليهم عن قصد. القايمة محدودة بـ500 صف،
-           والعدّ من الصفوف المعروضة كان هيكذب أول ما المخزون
-           يعدّي الحد — والرقم اللي بيكذب أوحش من مفيش رقم. -->
-      <div class="drawers-row" id="storage-row" hidden>
-        <span class="drawers-label">المساحة</span>
+           ⚠ ومفيش عدّ عليهم عن قصد: القايمة محدودة بـ500 صف،
+           والعدّ من المعروض كان هيكذب أول ما المخزون يعدّي الحد. -->
+      <div class="row-wrap" id="row-storage" hidden>
         <div class="drawers" id="storages"></div>
       </div>
 
-      <div class="drawers-row" id="customs-row" hidden>
-        <span class="drawers-label">الضريبة</span>
+      <div class="row-wrap" id="row-customs" hidden>
         <div class="drawers" id="customs"></div>
       </div>
-
       <label class="field-label" for="prod-search">بحث</label>
       <input class="field-input" id="prod-search" type="search"
         placeholder="اسم أو سريال" autocomplete="off" spellcheck="false">
@@ -5820,6 +5841,8 @@ ${MENU_JS}
   var activeDrawer = '';
   var activeModel = '';
   var activeColor = '';
+  // '' = الكل · 'accessory' = درج الإكسسوار · 'device' = درج الأجهزة
+  var activeMode = '';
   var activeStorage = '';
   var activeCustoms = '';
 
@@ -5845,11 +5868,16 @@ ${MENU_JS}
         || (row.getAttribute('data-storage') || '__none__') === activeStorage;
       var okCustoms = !activeCustoms
         || (row.getAttribute('data-customs') || 'false') === activeCustoms;
+      // ⚠ الدرج بيفلتر النوع كمان مش بيفتح شرايط وبس. من غير
+      // ده، "درج الأجهزة" بيفضل شايف الإكسسوار — يبقى اسم على
+      // قايمة مش درج.
+      var okMode = !activeMode || row.getAttribute('data-type') === activeMode;
 
       // ⚠ الخمسة كلهم بـ"و". كل شريط بيضيّق اللي قبله، فـ
       // "جرابات" + "١٢ برو ماكس" + "أسود" = الجراب الأسود
       // للـ١٢ برو ماكس بالظبط.
-      var match = okText && okDrawer && okModel && okColor && okStorage && okCustoms;
+      var match = okText && okMode && okDrawer && okModel
+        && okColor && okStorage && okCustoms;
       row.hidden = !match;
 
       // لوحة التعديل بتتخفي مع صفها
@@ -5864,7 +5892,7 @@ ${MENU_JS}
     // بيخفي نص المخزون من غير ما يقول كام فاضل بيخلّي الموظّف
     // يفتكر إن باقي البضاعة اتمسحت.
     if (searchNote) {
-      var anyFilter = q || activeDrawer || activeModel
+      var anyFilter = q || activeMode || activeDrawer || activeModel
         || activeColor || activeStorage || activeCustoms;
       searchNote.textContent = anyFilter ? shown + ' نتيجة' : DEFAULT_NOTE;
     }
@@ -5994,7 +6022,9 @@ ${MENU_JS}
       if (!v || v === '__none__') continue;
       if (seen.indexOf(v) === -1) seen.push(v);
     }
-    if (!seen.length) return;   // يفضل مخفي
+    // ⚠ الصفّ الفاضي بيتعلّم عشان «showRow» ما تفتحهوش.
+    // زرار بيفتح صفّ فاضي بيخلّي المستخدم يفتكر إن فيه عطل.
+    if (!seen.length) { row.setAttribute('data-empty', '1'); return; }
 
     seen.sort();
     var html = '<button class="drawer" type="button" ' + chipAttr + '="" data-on>الكل</button>';
@@ -6004,7 +6034,8 @@ ${MENU_JS}
         + seen[k] + '">' + text + '</button>';
     }
     list.innerHTML = html;
-    row.hidden = false;
+    // ⚠ بيفضل مخفي — الزرار هو اللي بيفتحه، مش البناء.
+    row.removeAttribute('data-empty');
   }
 
   // ══════════ شرائط الموديلات ══════════
@@ -6052,6 +6083,7 @@ ${MENU_JS}
       chip.setAttribute('data-on', '');
 
       activeModel = chip.getAttribute('data-model') || '';
+      paintTools();
       runSearch();
     });
   }
@@ -6101,7 +6133,139 @@ ${MENU_JS}
       chip.setAttribute('data-on', '');
 
       activeColor = chip.getAttribute('data-color') || '';
+      paintTools();
       runSearch();
+    });
+  }
+
+  /**
+   * ══════════ شريط الأدوات ══════════
+   *
+   * ⚠ صفّ شرايط واحد ظاهر في المرة. الخمسة المفتوحين كانوا
+   * بياخدوا نص الشاشة.
+   *
+   * ══ والعلامة على الزرار مش على الشريط وحده ══
+   * الفلتر الشغّال ومخفي بيخلّي المستخدم يفتكر إن نص المخزون
+   * اتمسح. فالزرار بيفضل معلّم طول ما فلتره شغّال، حتى لو
+   * صفّه مقفول.
+   */
+  var toolsEl = document.querySelector('.tools');
+  var filterTools = document.getElementById('filter-tools');
+  var openRow = '';
+
+  var ROWS = {
+    cat: 'row-cat', dev: 'row-model',
+    color: 'row-color', model: 'row-model',
+    storage: 'row-storage', customs: 'row-customs'
+  };
+
+  function showRow(key) {
+    for (var k in ROWS) {
+      var el = document.getElementById(ROWS[k]);
+      if (el) el.hidden = true;
+    }
+    // ⚠ المساحة والضريبة صفوفهم بتفضل مخفية لو مبنيتش أصلاً
+    // (يعني مفيش منتج ليه مساحة). الشريط الفاضي أوحش من غيابه.
+    if (!key) { openRow = ''; return; }
+    var target = document.getElementById(ROWS[key]);
+    if (!target) { openRow = ''; return; }
+    if (target.getAttribute('data-empty') === '1') { openRow = ''; return; }
+    target.hidden = false;
+    openRow = key;
+  }
+
+  /** أي أدوات فلتر تبان — حسب الدرج المفتوح */
+  function syncFilterTools() {
+    if (!filterTools) return;
+    var subs = filterTools.querySelectorAll('[data-sub]');
+    for (var i = 0; i < subs.length; i++) {
+      var only = subs[i].getAttribute('data-for');
+      subs[i].hidden = !!only && !!activeMode && only !== activeMode;
+    }
+  }
+
+  /** العلامات: الوضع الشغّال + كل فلتر ليه قيمة */
+  function paintTools() {
+    var on = {
+      cat: activeMode === 'accessory',
+      dev: activeMode === 'device',
+      color: !!activeColor,
+      model: !!activeModel,
+      storage: !!activeStorage,
+      customs: !!activeCustoms
+    };
+    var all = document.querySelectorAll('.tool');
+    for (var i = 0; i < all.length; i++) {
+      var key = all[i].getAttribute('data-tool') || all[i].getAttribute('data-sub');
+      if (key === 'flt') continue;
+      if (on[key]) all[i].setAttribute('data-on', '');
+      else all[i].removeAttribute('data-on');
+    }
+  }
+
+  if (toolsEl) {
+    toolsEl.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-tool]') : null;
+      if (!btn) return;
+      var key = btn.getAttribute('data-tool');
+
+      if (key === 'flt') {
+        if (filterTools) filterTools.hidden = !filterTools.hidden;
+        // قفل شرايط الفلتر مع قفل أدواته
+        if (filterTools && filterTools.hidden
+            && ['color', 'model', 'storage', 'customs'].indexOf(openRow) !== -1) {
+          showRow('');
+        }
+        syncFilterTools();
+        return;
+      }
+
+      // ─── الدرجين ───
+      var mode = key === 'cat' ? 'accessory' : 'device';
+
+      if (activeMode === mode) {
+        // ضغطة تانية = رجوع للكل
+        activeMode = '';
+        showRow('');
+      } else {
+        activeMode = mode;
+        showRow(key);
+        // ⚠ فلاتر النوع التاني بتتصفّى مع تغيير الدرج.
+        // "مساحة 256" شغّالة وإنت في درج الجرابات بتخلّي الشاشة
+        // فاضية بلا سبب ظاهر.
+        if (mode === 'accessory') {
+          activeStorage = ''; activeCustoms = '';
+          clearRow('storages', 'data-storage');
+          clearRow('customs', 'data-customs');
+        } else {
+          activeDrawer = '';
+          clearRow('drawers', 'data-drawer');
+        }
+      }
+
+      syncFilterTools();
+      paintTools();
+      runSearch();
+    });
+  }
+
+  /** رجّع صفّ لـ"الكل" */
+  function clearRow(id, attr) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var chips = el.querySelectorAll('.drawer');
+    for (var i = 0; i < chips.length; i++) {
+      if (chips[i].getAttribute(attr) === '') chips[i].setAttribute('data-on', '');
+      else chips[i].removeAttribute('data-on');
+    }
+  }
+
+  if (filterTools) {
+    filterTools.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-sub]') : null;
+      if (!btn) return;
+      var key = btn.getAttribute('data-sub');
+      showRow(openRow === key ? '' : key);
     });
   }
 
@@ -6109,14 +6273,14 @@ ${MENU_JS}
   //
   // ⚠ بيتبنوا من الصفوف قبل ما نربطهم — الشرايط لسه مش موجودة
   // في الصفحة وقت التحميل.
-  buildDerived('storage-row', 'storages', 'data-storage', 'data-storage', null);
-  buildDerived('customs-row', 'customs', 'data-customs', 'data-customs',
+  buildDerived('row-storage', 'storages', 'data-storage', 'data-storage', null);
+  buildDerived('row-customs', 'customs', 'data-customs', 'data-customs',
     function (v) { return v === 'true' ? 'خالص' : 'ضريبة'; });
 
   wireRow(document.getElementById('storages'), 'data-storage',
-    function (v) { activeStorage = v; });
+    function (v) { activeStorage = v; paintTools(); });
   wireRow(document.getElementById('customs'), 'data-customs',
-    function (v) { activeCustoms = v; });
+    function (v) { activeCustoms = v; paintTools(); });
 
   // ⚠ الضريبة قيمتها على الصف "false" للي مش خالص، مش فاضية.
   // فشريط "الكل" قيمته فاضية والفلتر بيتخطّى — وده صح.
