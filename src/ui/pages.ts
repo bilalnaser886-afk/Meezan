@@ -4480,6 +4480,20 @@ export interface ProductsPageData {
     deviceCount: number;
     accessoryCount: number;
   }>;
+  /**
+   * سجل الألوان — البُعد التالت.
+   *
+   * ⚠ `hex` للنقطة الملوّنة. الموظّف بيدوّر على الجهاز اللي شافه،
+   * والشكل أسرع من الاسم في القراءة.
+   */
+  colors: Array<{
+    id: string;
+    name: string;
+    hex: string | null;
+    sortOrder: number;
+    isSystem: boolean;
+    productCount: number;
+  }>;
   /** للمالك بس — لاختيار الفرع عند الإضافة */
   branches: Array<{ id: string; name: string }>;
   products: Array<{
@@ -4510,6 +4524,8 @@ export interface ProductsPageData {
     categoryId: string | null;
     /** موديل الجهاز. null = غير محدّد. */
     modelId: string | null;
+    /** لون المنتج. null = غير محدّد. */
+    colorId: string | null;
   }>;
   /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
   transferTargets: Array<{ id: string; name: string }>;
@@ -4560,6 +4576,8 @@ export function productsPage(data: ProductsPageData): Html {
             data-customs="${p.customsCleared ? 'true' : 'false'}"
             data-cat="${p.categoryId ?? '__none__'}"
             data-model="${p.modelId ?? '__none__'}"
+            data-color="${p.colorId ?? '__none__'}"
+            data-storage="${p.storageCapacity ?? '__none__'}"
             data-entry="${formatDate(p.entryDate)}">
             <div class="prod-row-main">
               <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">
@@ -4884,6 +4902,19 @@ export function productsPage(data: ProductsPageData): Html {
               </p>
             </div>
 
+            <!-- ══ اللون ══
+                 ⚠ للنوعين. الجراب الأحمر غير الأزرق، ودي أشيع
+                 حاجة الزبون بيسأل عنها على الكاونتر. -->
+            <div class="field">
+              <label class="field-label" for="np-color">اللون</label>
+              <select class="field-input" id="np-color">
+                <option value="">— بدون لون —</option>
+                ${data.colors.map(
+                  (c) => html`<option value="${c.id}">${c.name}</option>`,
+                )}
+              </select>
+            </div>
+
             <!-- ══ مواصفات الجهاز ══
 
                  ⚠ دي كانت في شاشة التعديل بس. المستلم كان بيسجّل
@@ -5070,6 +5101,51 @@ export function productsPage(data: ProductsPageData): Html {
             ? html`<button class="drawer" type="button" id="model-add" data-add-model>+</button>`
             : ''}
         </div>
+      </div>
+
+      <div class="drawers-row">
+        <span class="drawers-label">اللون</span>
+        <div class="drawers" id="colors">
+          <button class="drawer" type="button" data-color="" data-on>الكل</button>
+          ${data.colors.map(
+            (c) => html`<button class="drawer" type="button" data-color="${c.id}">
+              ${c.hex
+                ? html`<span class="dot" style="background:${c.hex}"></span>`
+                : ''}
+              ${c.name}
+              <span class="drawer-n">${String(c.productCount)}</span>
+            </button>`,
+          )}
+          <button class="drawer" type="button" data-color="__none__">بلا لون</button>
+          ${data.canEdit
+            ? html`<button class="drawer" type="button" data-add-color>+</button>`
+            : ''}
+        </div>
+      </div>
+
+      <!-- ══ المساحة والضريبة — مشتقّة مش مسجّلة ══
+
+           ⚠ التنين دول **مالهمش سجل**، وده مقصود.
+
+           «storage_capacity» و«customs_cleared» أعمدة على المنتج
+           من ملفَي ٢١ و٢٣. فالشرايط بتتبني من الصفوف الموجودة
+           في الشاشة، مش من جدول.
+
+           والفرق: الدرج واللون والموديل **بتتختار** وقت الإضافة،
+           فمحتاجة سجل يمنع التكرار. المساحة والضريبة بتتكتب
+           على المنتج خلاص، والشريط بيعرض اللي موجود فعلاً.
+
+           ⚠ ومفيش عدّ عليهم عن قصد. القايمة محدودة بـ500 صف،
+           والعدّ من الصفوف المعروضة كان هيكذب أول ما المخزون
+           يعدّي الحد — والرقم اللي بيكذب أوحش من مفيش رقم. -->
+      <div class="drawers-row" id="storage-row" hidden>
+        <span class="drawers-label">المساحة</span>
+        <div class="drawers" id="storages"></div>
+      </div>
+
+      <div class="drawers-row" id="customs-row" hidden>
+        <span class="drawers-label">الضريبة</span>
+        <div class="drawers" id="customs"></div>
       </div>
 
       <label class="field-label" for="prod-search">بحث</label>
@@ -5425,7 +5501,8 @@ ${MENU_JS}
               : (document.getElementById('np-category').value || null),
             // ⚠ للنوعين — الجهاز موديله هو، والإكسسوار موديل
             // الجهاز اللي بيركب عليه.
-            modelId: document.getElementById('np-model').value || null
+            modelId: document.getElementById('np-model').value || null,
+            colorId: document.getElementById('np-color').value || null
           })
         });
         var data = await res.json().catch(function () { return null; });
@@ -5742,6 +5819,9 @@ ${MENU_JS}
   // فاضي = الكل. «__none__» = غير مصنّف / بلا موديل.
   var activeDrawer = '';
   var activeModel = '';
+  var activeColor = '';
+  var activeStorage = '';
+  var activeCustoms = '';
 
   function runSearch() {
     var q = searchEl ? searchEl.value.trim().toLowerCase() : '';
@@ -5759,7 +5839,17 @@ ${MENU_JS}
       // كل الجرابات وكل حاجة للـ١٢ برو ماكس.
       var okModel = !activeModel
         || (row.getAttribute('data-model') || '__none__') === activeModel;
-      var match = okText && okDrawer && okModel;
+      var okColor = !activeColor
+        || (row.getAttribute('data-color') || '__none__') === activeColor;
+      var okStorage = !activeStorage
+        || (row.getAttribute('data-storage') || '__none__') === activeStorage;
+      var okCustoms = !activeCustoms
+        || (row.getAttribute('data-customs') || 'false') === activeCustoms;
+
+      // ⚠ الخمسة كلهم بـ"و". كل شريط بيضيّق اللي قبله، فـ
+      // "جرابات" + "١٢ برو ماكس" + "أسود" = الجراب الأسود
+      // للـ١٢ برو ماكس بالظبط.
+      var match = okText && okDrawer && okModel && okColor && okStorage && okCustoms;
       row.hidden = !match;
 
       // لوحة التعديل بتتخفي مع صفها
@@ -5774,8 +5864,9 @@ ${MENU_JS}
     // بيخفي نص المخزون من غير ما يقول كام فاضل بيخلّي الموظّف
     // يفتكر إن باقي البضاعة اتمسحت.
     if (searchNote) {
-      searchNote.textContent =
-        (q || activeDrawer || activeModel) ? shown + ' نتيجة' : DEFAULT_NOTE;
+      var anyFilter = q || activeDrawer || activeModel
+        || activeColor || activeStorage || activeCustoms;
+      searchNote.textContent = anyFilter ? shown + ' نتيجة' : DEFAULT_NOTE;
     }
   }
 
@@ -5859,6 +5950,63 @@ ${MENU_JS}
     });
   }
 
+  /**
+   * ══════════ مصنع صفوف الشرايط ══════════
+   *
+   * ⚠ خمس صفوف بنفس السلوك بالحرف: امسح العلامة من الكل، حطّها
+   * على المضغوط، غيّر المتغيّر، أعِد الفلترة.
+   *
+   * كتابته خمس مرات معناه إن أي تصليح مستقبلي لازم يتعمل خمس
+   * مرات — واللي بينُسى بيفضل شغّال بالغلط.
+   */
+  function wireRow(el, attr, onPick) {
+    if (!el) return;
+    el.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.drawer') : null;
+      if (!chip || !chip.hasAttribute(attr)) return;
+
+      var all = el.querySelectorAll('.drawer');
+      for (var i = 0; i < all.length; i++) all[i].removeAttribute('data-on');
+      chip.setAttribute('data-on', '');
+
+      onPick(chip.getAttribute(attr) || '');
+      runSearch();
+    });
+  }
+
+  /**
+   * ══════════ الصفوف المشتقّة ══════════
+   *
+   * ⚠ المساحة والضريبة مالهمش سجل — بيتبنوا من الصفوف نفسها.
+   *
+   * والصفّ بيتخفي لو مفيش قيم، عشان المحل اللي ما بيسجّلش مساحات
+   * ما يشوفش صفّ فاضي بيقفل شاشته من غير فايدة.
+   */
+  function buildDerived(rowId, listId, attr, chipAttr, label) {
+    var row = document.getElementById(rowId);
+    var list = document.getElementById(listId);
+    if (!row || !list) return;
+
+    var rows = document.querySelectorAll('.prod-row[data-searchable]');
+    var seen = [];
+    for (var i = 0; i < rows.length; i++) {
+      var v = rows[i].getAttribute(attr);
+      if (!v || v === '__none__') continue;
+      if (seen.indexOf(v) === -1) seen.push(v);
+    }
+    if (!seen.length) return;   // يفضل مخفي
+
+    seen.sort();
+    var html = '<button class="drawer" type="button" ' + chipAttr + '="" data-on>الكل</button>';
+    for (var k = 0; k < seen.length; k++) {
+      var text = label ? label(seen[k]) : seen[k];
+      html += '<button class="drawer" type="button" ' + chipAttr + '="'
+        + seen[k] + '">' + text + '</button>';
+    }
+    list.innerHTML = html;
+    row.hidden = false;
+  }
+
   // ══════════ شرائط الموديلات ══════════
   var modelsEl = document.getElementById('models');
   if (modelsEl) {
@@ -5907,6 +6055,71 @@ ${MENU_JS}
       runSearch();
     });
   }
+
+  // ══════════ شرائط الألوان ══════════
+  var colorsEl = document.getElementById('colors');
+  if (colorsEl) {
+    colorsEl.addEventListener('click', async function (e) {
+      var chip = e.target.closest ? e.target.closest('.drawer') : null;
+      if (!chip) return;
+
+      // ─── لون جديد ───
+      if (chip.hasAttribute('data-add-color')) {
+        var name = prompt('اسم اللون؟');
+        if (name === null) return;
+        name = name.trim();
+        if (!name) return;
+
+        // ⚠ الكود اختياري. لو اتساب فاضي بيتعرض بالاسم وبس —
+        // وده أحسن من نقطة سودا بتخلّي المستخدم يفتكر إنه أسود.
+        var hex = prompt('كود اللون؟ (اختياري — بصيغة #RRGGBB)');
+        if (hex === null) hex = '';
+
+        try {
+          var res = await fetch('/api/products/colors', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ name: name, hex: hex.trim() || null })
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) {
+            say((data.error && data.error.message) || 'تعذّر إضافة اللون.', false);
+            return;
+          }
+          window.location.reload();
+        } catch (err) {
+          say('تعذّر الاتصال بالخادم.', false);
+        }
+        return;
+      }
+
+      // ─── اختيار لون ───
+      if (!chip.hasAttribute('data-color')) return;
+      var all = colorsEl.querySelectorAll('.drawer');
+      for (var j = 0; j < all.length; j++) all[j].removeAttribute('data-on');
+      chip.setAttribute('data-on', '');
+
+      activeColor = chip.getAttribute('data-color') || '';
+      runSearch();
+    });
+  }
+
+  // ══════════ المساحة والضريبة ══════════
+  //
+  // ⚠ بيتبنوا من الصفوف قبل ما نربطهم — الشرايط لسه مش موجودة
+  // في الصفحة وقت التحميل.
+  buildDerived('storage-row', 'storages', 'data-storage', 'data-storage', null);
+  buildDerived('customs-row', 'customs', 'data-customs', 'data-customs',
+    function (v) { return v === 'true' ? 'خالص' : 'ضريبة'; });
+
+  wireRow(document.getElementById('storages'), 'data-storage',
+    function (v) { activeStorage = v; });
+  wireRow(document.getElementById('customs'), 'data-customs',
+    function (v) { activeCustoms = v; });
+
+  // ⚠ الضريبة قيمتها على الصف "false" للي مش خالص، مش فاضية.
+  // فشريط "الكل" قيمته فاضية والفلتر بيتخطّى — وده صح.
 
   if (searchEl) {
     searchEl.addEventListener('input', runSearch);
