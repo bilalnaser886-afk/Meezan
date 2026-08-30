@@ -509,25 +509,36 @@ button{font:inherit}
   color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;
   break-inside:avoid;page-break-inside:avoid}
 /* اسم المحل: أكبر سطر على الملصق — هو اللي بيتشاف من بعيد */
-.pr-label-shop{font-family:var(--font-display);font-size:11px;font-weight:700;
+.pr-label-shop{font-family:var(--font-display);font-size:12px;font-weight:700;
   letter-spacing:.06em;white-space:nowrap;overflow:hidden;
-  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1px}
-.pr-label-name{font-size:9px;font-weight:700;margin-bottom:1px;
+  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1.5px}
+
+/* ══ ⚠ الجسم صفّ: الرمز جنب النص مش فوقه ══
+   الملصق عرضه 37مم وارتفاعه 25. العمود الواحد كان بيستهلك
+   الارتفاع (النادر) ويسيب العرض (المتاح) فاضي. */
+.pr-label-body{display:flex;align-items:center;gap:1mm;text-align:right}
+.pr-label-qr{flex:0 0 auto}
+/* ⚠ min-width:0 ضرورية: من غيرها العنصر المرن ما بيصغرش عن
+   محتواه، والاسم الطويل بيدفع الرمز بره الملصق. */
+.pr-label-info{flex:1 1 auto;min-width:0}
+
+.pr-label-name{font-size:10px;font-weight:700;margin-bottom:1px;
   /* اسم طويل بيتقص بنقط بدل ما يلفّ سطرين ويزقّ الباقي بره */
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ⚠ الرمز مربّع، والمتصفح بيسيب مسافة تحت الـsvg زي أي سطر
    نص. block بتشيلها — من غيرها بيضيع ملّيمتر بلا فايدة. */
 .pr-label svg{display:block;margin:0 auto}
-.pr-label-code{font-family:var(--font-mono);font-size:7px;font-weight:700;
-  letter-spacing:.3px;
-  margin-top:1px;direction:ltr;white-space:nowrap;overflow:hidden}
+.pr-label-code{font-family:var(--font-mono);font-size:8px;font-weight:700;
+  letter-spacing:0;
+  margin-top:1px;direction:ltr;text-align:right;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ⚠ سطر واحد بس. كان بيلفّ لو طال — واللفّ على ملصق 25mm
    معناه إن السطر السفلي بيتزقّ بره الورقة. */
-.pr-label-spec{font-size:6.5px;font-weight:700;margin-top:1px;line-height:1.15;
-  display:flex;flex-wrap:nowrap;justify-content:center;gap:0 5px;
+.pr-label-spec{font-size:7px;font-weight:700;margin-top:1px;line-height:1.2;
+  display:flex;flex-wrap:nowrap;justify-content:flex-start;gap:0 4px;
   overflow:hidden;white-space:nowrap}
-.pr-label-foot{display:flex;justify-content:space-between;margin-top:1px;
-  padding-top:1px;border-top:1px solid #000;font-size:6.5px;line-height:1.15;
+.pr-label-foot{display:flex;justify-content:space-between;margin-top:1.5px;
+  padding-top:1.5px;border-top:1px solid #000;font-size:8px;line-height:1.2;
   font-weight:700;font-family:var(--font-mono)}
 
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
