@@ -679,6 +679,19 @@ export interface ExpenseReasonRepository {
   /** أسباب الفرع + أسباب المحل العامة (branch_id = null) */
   listForBranch(tenantId: string, branchId: string | null): Promise<ExpenseReason[]>;
   findById(id: string): Promise<ExpenseReason | null>;
+  /**
+   * سبب جديد — **على مستوى المحل** دايمًا (`branch_id` فاضي).
+   *
+   * ⚠ مفيش أسباب خاصة بفرع من الشاشة، وده مقصود. الفهرس الفريد
+   * على (المحل · الفرع · الاسم)، فسبب فرعي اسمه "إيجار" جنب سبب
+   * عام اسمه "إيجار" **مسموح** في القاعدة — والمدير هيلاقي
+   * "إيجار" مرتين في قايمته ومش عارف الفرق.
+   *
+   * ⚠ و`is_advance` و`is_inventory` بيفضلوا false دايمًا:
+   * الاتنين بيغيّروا معاملة الحركة في قائمة الدخل، ومش قرار
+   * يتاخد من خانة نص في شاشة الخزينة.
+   */
+  create(input: { tenantId: string; name: string }): Promise<{ id: string }>;
 }
 
 // ═══════════════════ المنتجات ═══════════════════
@@ -738,6 +751,27 @@ export interface ProductRecord {
   /** مرتجع مستنّي المراجعة — مش متاح للبيع */
   quarantinedQuantity: number;
   /**
+   * درج المنتج. `null` = غير مصنّف.
+   *
+   * ⚠ الاسم مش هنا — الشاشة عندها شجرة الأدراج كاملة وبتوصّل
+   * بالمعرّف. لو رجّعنا الاسم مع كل منتج، أول ما حد يسمّي درج
+   * من جديد يبقى عندنا اسمين لنفس الدرج في نفس الشاشة.
+   */
+  categoryId: string | null;
+  /**
+   * موديل الجهاز. `null` = غير محدّد.
+   *
+   * ⚠ للنوعين مع بعض، ومعناه بيتغيّر:
+   *   الجهاز    → موديله هو
+   *   الإكسسوار → الجهاز اللي بيركب عليه
+   *
+   * ودمجهم في عمود واحد هو اللي بيخلّي "وريني كل حاجة ليها
+   * علاقة بالـ١٢ برو ماكس" سؤال ممكن.
+   */
+  modelId: string | null;
+  /** لون المنتج. `null` = غير محدّد. للنوعين. */
+  colorId: string | null;
+  /**
    * خلوّ الجمارك — تسجيل يدوي من المستلم.
    * ⚠ false معناها **"مش متأكد"** مش "مش مخلّص". غياب المعلومة
    * مش نفي.
@@ -766,6 +800,26 @@ export interface CreateProductInput {
   pricePiastres: number | null;
   costPiastres: number;
   quantityOnHand: number;
+  /**
+   * ⚠ التلاتة دول **للأجهزة بس**، وإلزاميين في العقد ده عن قصد.
+   *
+   * لو خلّيناهم اختياريين، أي مستودع جديد يقدر يسيبهم من غير ما
+   * حاجة تزعّق — والجهاز بيتسجّل ناقص مواصفاته وما حدش بيلاحظ.
+   * حالة الاستخدام بتصفّرهم للإكسسوار قبل ما يوصلوا هنا.
+   */
+  customsCleared: boolean;
+  batteryHealth: number | null;
+  storageCapacity: string | null;
+  /**
+   * درج المنتج. `null` = غير مصنّف.
+   *
+   * ⚠ فاضي مسموح عن قصد: المنتجات اللي كانت موجودة قبل الأدراج
+   * مالهاش درج، وتخمين مكانها أوحش من تركه فاضي — الفاضي بيبان
+   * في الشاشة وبتتصرّف، والتخمين الغلط بيتصدّق.
+   */
+  categoryId: string | null;
+  modelId: string | null;
+  colorId: string | null;
   createdById: string;
 }
 
@@ -782,6 +836,12 @@ export interface UpdateProductInput {
   customsCleared?: boolean;
   batteryHealth?: number | null;
   storageCapacity?: string | null;
+  /** `null` = شيل الدرج (رجّعه غير مصنّف) */
+  categoryId?: string | null;
+  /** `null` = شيل الموديل */
+  modelId?: string | null;
+  /** `null` = شيل اللون */
+  colorId?: string | null;
   /**
    * ⚠ إلزامي في كل تعديل.
    * سجل الأسعار في قاعدة البيانات بيقرا منه مين غيّر السعر —
@@ -813,6 +873,101 @@ export interface ProductListOptions {
   includeCost: boolean;
   /** المنتجات المفعّلة بس — لشاشة الكاشير */
   activeOnly?: boolean;
+}
+
+/**
+ * درج منتجات.
+ *
+ * ══ شجرة على مستويين ══
+ *   `parentId` فاضي  →  قسم رئيسي   (إكسسوار · مكملات)
+ *   `parentId` موجود →  درج جوّه قسم (جرابات · شواحن)
+ *
+ * ⚠ `productCount` **محسوب مش مخزّن** — بيتعدّ في نفس استعلام
+ * القراءة. نفس مبدأ رصيد الخزينة والتنبيهات: الرقم المخزّن
+ * بيختلف عن مصدره يوم ما، وساعتها الدرج بيقول حاجة والمخزون
+ * بيقول حاجة تانية.
+ */
+export interface ProductCategory {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sortOrder: number;
+  /** مزروع مع فتح المحل — مقفول ضد الحذف مش ضد التسمية */
+  isSystem: boolean;
+  productCount: number;
+}
+
+export interface CategoryRepository {
+  /** الشجرة كلها + عدد منتجات كل درج. `branchId` فاضي = كل الفروع. */
+  list(tenantId: string, branchId: string | null): Promise<ProductCategory[]>;
+  create(input: {
+    tenantId: string;
+    parentId: string | null;
+    name: string;
+  }): Promise<{ id: string }>;
+  rename(id: string, tenantId: string, name: string): Promise<void>;
+  /** حذف ناعم. الحارس (مزروع؟ فيه منتجات؟) في حالة الاستخدام. */
+  softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
+  /** للحراسة قبل التعديل والحذف */
+  findById(id: string, tenantId: string): Promise<ProductCategory | null>;
+}
+
+/**
+ * موديل موبايل.
+ *
+ * ══ ⚠ سجل مش نص حرّ ══
+ * "١٢ برو ماكس" و"12 promax" و"١٢ بروماكس" لازم يكونوا حاجة
+ * واحدة. لو النص حرّ، الجراب بيتسجّل تحت اسم والجهاز تحت اسم
+ * تاني ومحدش بيلاقي حد.
+ *
+ * ⚠ ونفس غلطة `products.source` اللي اتصلّحت بسجل موردين في
+ * ملف ٢٢. ده نفس العلاج.
+ */
+export interface DeviceModel {
+  id: string;
+  name: string;
+  /** ⚠ عمود مستقل عن الاسم عشان "كل الآيفون" تبقى سؤال ممكن */
+  brand: string | null;
+  sortOrder: number;
+  /** أجهزة متاحة للبيع — **بالكمية** مش بعدد الصفوف */
+  deviceCount: number;
+  /** أصناف إكسسوار مرتبطة بالموديل */
+  accessoryCount: number;
+}
+
+export interface ModelRepository {
+  list(tenantId: string, branchId: string | null): Promise<DeviceModel[]>;
+  create(input: { tenantId: string; name: string; brand: string | null }): Promise<{ id: string }>;
+  update(id: string, tenantId: string, patch: { name?: string; brand?: string | null }): Promise<void>;
+  softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
+  findById(id: string, tenantId: string): Promise<DeviceModel | null>;
+}
+
+/**
+ * لون منتج.
+ *
+ * ⚠ سجل مش نص حرّ — نفس سبب الموديل: أنا بجمّع بيه، و"أسود"
+ * و"اسود" و"black" لازم يكونوا حاجة واحدة.
+ *
+ * ⚠ وبيتزرع مع فتح المحل، على عكس الموديلات. الموديلات بتقدم
+ * (موديل ٢٠٢٧ مش في أي قايمة النهاردة)، والألوان ما بتقدمش.
+ */
+export interface ProductColor {
+  id: string;
+  name: string;
+  /** كود اللون للنقطة الملوّنة. فاضي = يتعرض بالاسم بس. */
+  hex: string | null;
+  sortOrder: number;
+  isSystem: boolean;
+  productCount: number;
+}
+
+export interface ColorRepository {
+  list(tenantId: string, branchId: string | null): Promise<ProductColor[]>;
+  create(input: { tenantId: string; name: string; hex: string | null }): Promise<{ id: string }>;
+  update(id: string, tenantId: string, patch: { name?: string; hex?: string | null }): Promise<void>;
+  softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
+  findById(id: string, tenantId: string): Promise<ProductColor | null>;
 }
 
 export interface ProductRepository {
