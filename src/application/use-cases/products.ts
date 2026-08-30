@@ -68,6 +68,21 @@ export interface CreateProductRequest {
   name: string;
   productType: ProductType;
   serialNumber?: string | null;
+  /**
+   * ⚠ "مش متاح سريال" — قرار صريح، مش خانة فاضية.
+   *
+   * الفرق بين الاتنين هو الفرق بين **غياب** و**قرار**. الخانة
+   * الفاضية بتسيب سؤال معلّق: الموظّف نسي، ولا الجهاز فعلاً
+   * مالوش؟ محدش هيعرف بعد شهرين.
+   *
+   * نفس تفريقة `batteryHealth` بالظبط: فاضي = ما اتقاسش،
+   * وصفر = بطارية خربانة. حاجتين مختلفتين.
+   *
+   * والقيد في قاعدة البيانات بقى: سريال **أو** العلامة دي.
+   * الحالة التالتة (فاضي وبلا علامة) لسه مرفوضة — وهي اللي
+   * بتمسك النسيان.
+   */
+  serialUnavailable?: boolean;
   source?: string | null;
   entryDate?: string | null;
   /** null = المنتج دخل من غير ما يتسعّر بعد */
@@ -109,6 +124,8 @@ export interface UpdateProductRequest {
   isActive?: boolean;
   source?: string | null;
   serialNumber?: string | null;
+  /** ⚠ بتتشال لوحدها أول ما يتكتب سريال — شوف updateProduct */
+  serialUnavailable?: boolean;
   entryDate?: string | null;
   /** ⚠ محكوم بصلاحية منفصلة — شوف updateProduct */
   reorderPoint?: number | null;
@@ -792,14 +809,28 @@ export async function createProduct(
 
   // ─── قواعد النوع ───
   let serialNumber: string | null = null;
+  let serialUnavailable = false;
   let quantityOnHand: number;
 
   if (productType === 'device') {
+    serialUnavailable = Boolean(input.serialUnavailable);
     serialNumber = (input.serialNumber ?? '').trim();
-    if (!serialNumber) {
-      throw Errors.validation('اكتب الرقم التسلسلي للجهاز.');
+
+    // ⚠ السريال بيغلب العلامة، مش العكس.
+    //
+    // لو المستخدم علّم "مش متاح" وكتب سريال برضه، الصح إن
+    // السريال يتسجّل والعلامة تتشال — لأن الرقم موجود قدامنا
+    // فعلاً. العكس كان هيرمي رقم صحيح في الزبالة.
+    if (serialNumber) {
+      assertSerial(serialNumber);
+      serialUnavailable = false;
+    } else if (serialUnavailable) {
+      serialNumber = null;
+    } else {
+      // ⚠ الحالة التالتة لسه مرفوضة: لا رقم ولا قرار.
+      // دي بالظبط حالة النسيان، وهي اللي الرفض هنا بيمسكها.
+      throw Errors.validation('اكتب الرقم التسلسلي، أو علّم «غير متاح».');
     }
-    assertSerial(serialNumber);
 
     // الكمية مقفولة على واحد — مش بنسأل المستخدم أصلاً.
     // لو سمحنا بغيرها، هيبقى عندنا "جهازين بنفس السريال" وده
@@ -808,6 +839,11 @@ export async function createProduct(
   } else {
     if ((input.serialNumber ?? '').trim()) {
       throw Errors.validation('الرقم التسلسلي للأجهزة فقط.');
+    }
+    // ⚠ والعلامة كمان للأجهزة بس. الإكسسوار مالوش سريال أصلاً،
+    // فـ"مش متاح" عليه جملة بلا معنى.
+    if (input.serialUnavailable) {
+      throw Errors.validation('علامة «غير متاح» للأجهزة فقط.');
     }
     assertQuantity(input.quantityOnHand);
     quantityOnHand = input.quantityOnHand;
@@ -843,6 +879,7 @@ export async function createProduct(
     name,
     productType,
     serialNumber,
+    serialUnavailable,
     source,
     entryDate,
     pricePiastres: input.pricePiastres,
@@ -867,6 +904,7 @@ export async function createProduct(
       productType,
       branchId: targetBranchId,
       hasSerial: serialNumber !== null,
+      serialUnavailable,
       hasPrice: input.pricePiastres !== null,
       quantityOnHand,
       customsCleared,
@@ -1069,16 +1107,51 @@ export async function updateProduct(
     if (parsed) patch.entryDate = parsed;
   }
 
-  // السريال يتعدّل للأجهزة بس، وما ينفعش يتفضّى.
-  // جهاز بلا سريال = صفّين متطابقين ومفيش طريقة تفرّق بينهم.
+  // ══ السريال بعد الإنشاء ══
+  //
+  // ⚠ العلامة بتتشال **لوحدها** أول ما يتكتب سريال.
+  //
+  // الجهاز اتفتح، أو الكرتونة ظهرت، فبتفتح المنتج وتكتب الرقم.
+  // لو سيبنا العلامة، هتفضل مكتوبة على صفّ ليه سريال — وده
+  // تناقض بيخلّي أي قايمة مراجعة تكدب.
+  //
+  // ومفيش تذكير ولا شاشة مستقلة: العلامة ظاهرة على الصفّ في
+  // المخزون، والبحث بيلاقيها. ده اللي اتفقنا عليه — تدوّر
+  // بنفسك مش النظام يزنّ عليك.
   if (input.serialNumber !== undefined) {
     if (existing.productType !== 'device') {
       throw Errors.validation('الرقم التسلسلي للأجهزة فقط.');
     }
     const serial = (input.serialNumber ?? '').trim();
-    if (!serial) throw Errors.validation('الجهاز لازم يكون له رقم تسلسلي.');
-    assertSerial(serial);
-    patch.serialNumber = serial;
+
+    if (serial) {
+      assertSerial(serial);
+      patch.serialNumber = serial;
+      patch.serialUnavailable = false;
+    } else {
+      // ⚠ التفضية مسموحة **بشرط** إن العلامة موجودة — في نفس
+      // الطلب أو على الصفّ أصلاً. من غير الشرط ده، أي حد يقدر
+      // يمسح سريال جهاز ويسيبه بلا هوية ولا سبب مكتوب.
+      const markedNow = input.serialUnavailable === true;
+      const markedBefore = existing.serialUnavailable === true
+        && input.serialUnavailable !== false;
+
+      if (!markedNow && !markedBefore) {
+        throw Errors.validation('لمسح الرقم التسلسلي، علّم «غير متاح» أولًا.');
+      }
+      patch.serialNumber = null;
+      patch.serialUnavailable = true;
+    }
+  } else if (input.serialUnavailable !== undefined) {
+    // العلامة اتغيّرت لوحدها من غير ما السريال يتبعت
+    if (existing.productType !== 'device') {
+      throw Errors.validation('علامة «غير متاح» للأجهزة فقط.');
+    }
+    if (input.serialUnavailable === false && !existing.serialNumber) {
+      throw Errors.validation('اكتب الرقم التسلسلي قبل رفع العلامة.');
+    }
+    patch.serialUnavailable = Boolean(input.serialUnavailable);
+    if (patch.serialUnavailable) patch.serialNumber = null;
   }
 
   // مفتاح updatedById موجود دايمًا، فبنعدّ اللي غيره
