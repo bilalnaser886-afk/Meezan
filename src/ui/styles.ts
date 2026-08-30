@@ -480,18 +480,27 @@ button{font:inherit}
 .pr-total{border-top:1.5px solid #000;margin-top:8px;padding-top:8px;
   font-size:16px;font-weight:600}
 .pr-note{margin-top:12px;font-size:11px;color:#444}
-/* الملصق: مقاس صغير مستقل عن الفاتورة */
-.pr-label{width:58mm;text-align:center;padding:3mm 1mm}
-.pr-label-shop{font-family:var(--font-display);font-size:12px;font-weight:600;
-  border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:4px}
-.pr-label-name{font-size:13px;font-weight:600;margin-bottom:3px}
-.pr-label-code{font-family:var(--font-mono);font-size:11px;letter-spacing:1px;
-  margin-top:2px;direction:ltr}
+/* ═══ الملصق ═══
+   ⚠ **العرض مش هنا.** بيتحطّ على العنصر وقت البناء من
+   LABEL_W_MM في pages.ts، عشان نفس القيمة تروح لـ@page كمان.
+   قيمة واحدة في مكان واحد = مستحيل الاتنين يختلفوا.
+
+   ⚠ والمقاسات تحت مضغوطة لملصق ٢٥ مم ارتفاع. لو كبّرت
+   الملصق، تقدر تكبّرهم — بس لو صغّرته، السطور هتتقص. */
+.pr-label{text-align:center;padding:1.5mm 1mm;line-height:1.35}
+.pr-label-shop{font-family:var(--font-display);font-size:9px;font-weight:600;
+  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:2px}
+.pr-label-name{font-size:10px;font-weight:600;margin-bottom:1px}
+/* ⚠ الرمز مربّع، والمتصفح بيسيب مسافة تحت الـsvg زي أي سطر
+   نص. block بتشيلها — من غيرها بيضيع ملّيمتر بلا فايدة. */
+.pr-label svg{display:block;margin:0 auto}
+.pr-label-code{font-family:var(--font-mono);font-size:8px;letter-spacing:.5px;
+  margin-top:1px;direction:ltr}
 /* سطر المواصفات: بيلف لو طال بدل ما يتقص */
-.pr-label-spec{font-size:10px;margin-top:4px;line-height:1.6;
-  display:flex;flex-wrap:wrap;justify-content:center;gap:3px 8px}
-.pr-label-foot{display:flex;justify-content:space-between;margin-top:5px;
-  padding-top:3px;border-top:1px solid #000;font-size:10px;
+.pr-label-spec{font-size:7px;margin-top:1px;line-height:1.4;
+  display:flex;flex-wrap:wrap;justify-content:center;gap:0 5px}
+.pr-label-foot{display:flex;justify-content:space-between;margin-top:1px;
+  padding-top:1px;border-top:1px solid #000;font-size:7px;
   font-family:var(--font-mono)}
 
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
@@ -831,6 +840,9 @@ select.field-input{appearance:none;
    صفة للمنتج — دي **فجوة في البيانات** لسه محتاجة تتقفل.
    لو خدت لون الجهاز، كانت هتبان حالة طبيعية والعين هتعدّي عليها. */
 .type-tag[data-type="nosn"]{color:var(--debit);background:var(--debit-wash)}
+/* الصفّ اللي الماسح وصل له — وميض ثانيتين وبيروح لوحده */
+.prod-row[data-found="true"]{outline:2px solid var(--brand);
+  outline-offset:2px;border-radius:var(--r-sm)}
 
 /* السريال بخط أحادي المسافة: الأرقام والحروف بتتصفّ فبتقارن أسرع */
 .serial{font-family:var(--font-mono);font-size:var(--fs-1);color:var(--ink-soft);
