@@ -76,6 +76,374 @@ const PRINT_SHARED_JS = `
     '/':'nwnwnnnwn','+':'nwnnnwnwn','%':'nnnwnwnwn','*':'nwnnwnwnn'
   };
 
+    // ═══════════════════════════════════════════════════════════
+    //  مولّد QR — بلا مكتبات، بلا إنترنت
+    //
+    //  ══ ليه مكتوب بإيدنا؟ ══
+    //  مفيش QR جاهز في المتصفح (BarcodeDetector بتقرا وما بتكتبش).
+    //  والمكتبات الجاهزة معناها طلب شبكة وقت الطباعة — والطابعة
+    //  بتشتغل في محل ممكن يكون النت فيه فاصل.
+    //
+    //  نفس مبدأ barcodeSvg فوق بالظبط: الرسم محلّي بالكامل.
+    //
+    //  ══ الإعدادات ══
+    //  نمط البايت · تصحيح مستوى M · النسخ من 1 لـ 10.
+    //  معرّف المنتج (36 حرف) بيقع في النسخة 3 = مربع 29×29.
+    //
+    //  ⚠ المستوى M معناه إن الكود بيتقرا حتى لو 15% منه اتخربش
+    //  أو اتوسّخ. وده مش رفاهية على ملصق بيقعد في محل.
+    // ═══════════════════════════════════════════════════════════
+  var QR_ECC_M_BLOCKS = {
+    // version: [totalCodewords, eccPerBlock, group1Blocks, g1Data, group2Blocks, g2Data]
+    1: [26, 10, 1, 16, 0, 0],
+    2: [44, 16, 1, 28, 0, 0],
+    3: [70, 26, 1, 44, 0, 0],
+    4: [100, 18, 2, 32, 0, 0],
+    5: [134, 24, 2, 43, 0, 0],
+    6: [172, 16, 4, 27, 0, 0],
+    7: [196, 18, 4, 31, 0, 0],
+    8: [242, 22, 2, 38, 2, 39],
+    9: [292, 22, 3, 36, 2, 37],
+    10: [346, 26, 4, 43, 1, 44]
+  };
+
+  var ALIGN_POS = {
+    1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30],
+    6: [6, 34], 7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50]
+  };
+
+  // ── حساب جالوا 256 ──
+  var GF_EXP = new Array(512), GF_LOG = new Array(256);
+  (function () {
+    var x = 1;
+    for (var i = 0; i < 255; i++) {
+      GF_EXP[i] = x; GF_LOG[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11d;
+    }
+    for (var j = 255; j < 512; j++) GF_EXP[j] = GF_EXP[j - 255];
+  })();
+
+  function gfMul(a, b) {
+    if (a === 0 || b === 0) return 0;
+    return GF_EXP[GF_LOG[a] + GF_LOG[b]];
+  }
+
+  function rsGenerator(degree) {
+    var poly = [1];
+    for (var i = 0; i < degree; i++) {
+      var next = new Array(poly.length + 1).fill(0);
+      for (var j = 0; j < poly.length; j++) {
+        next[j] ^= poly[j];
+        next[j + 1] ^= gfMul(poly[j], GF_EXP[i]);
+      }
+      poly = next;
+    }
+    return poly;
+  }
+
+  function rsEncode(data, eccLen) {
+    var gen = rsGenerator(eccLen);
+    var res = new Array(eccLen).fill(0);
+    for (var i = 0; i < data.length; i++) {
+      var factor = data[i] ^ res[0];
+      res.shift(); res.push(0);
+      for (var j = 0; j < gen.length - 1; j++) {
+        res[j] ^= gfMul(gen[j + 1], factor);
+      }
+    }
+    return res;
+  }
+
+  function pickVersion(byteLen) {
+    for (var v = 1; v <= 10; v++) {
+      var spec = QR_ECC_M_BLOCKS[v];
+      var dataCw = spec[2] * spec[3] + spec[4] * spec[5];
+      var lenBits = v < 10 ? 8 : 16;
+      var needBits = 4 + lenBits + byteLen * 8;
+      if (needBits <= dataCw * 8) return v;
+    }
+    return 0;
+  }
+
+  function buildCodewords(bytes, version) {
+    var spec = QR_ECC_M_BLOCKS[version];
+    var eccLen = spec[1];
+    var dataCw = spec[2] * spec[3] + spec[4] * spec[5];
+
+    var bits = [];
+    function push(val, len) {
+      for (var i = len - 1; i >= 0; i--) bits.push((val >> i) & 1);
+    }
+
+    push(4, 4);                                   // byte mode
+    push(bytes.length, version < 10 ? 8 : 16);
+    for (var i = 0; i < bytes.length; i++) push(bytes[i], 8);
+
+    // منهي + حشو للبايت
+    var term = Math.min(4, dataCw * 8 - bits.length);
+    push(0, term);
+    while (bits.length % 8 !== 0) bits.push(0);
+
+    var data = [];
+    for (var b = 0; b < bits.length; b += 8) {
+      var v = 0;
+      for (var k = 0; k < 8; k++) v = (v << 1) | bits[b + k];
+      data.push(v);
+    }
+    var pad = [0xec, 0x11], pi = 0;
+    while (data.length < dataCw) { data.push(pad[pi % 2]); pi++; }
+
+    // تقسيم لبلوكات
+    var blocks = [], eccBlocks = [], idx = 0;
+    function take(count, size) {
+      for (var n = 0; n < count; n++) {
+        var chunk = data.slice(idx, idx + size);
+        idx += size;
+        blocks.push(chunk);
+        eccBlocks.push(rsEncode(chunk, eccLen));
+      }
+    }
+    take(spec[2], spec[3]);
+    if (spec[4]) take(spec[4], spec[5]);
+
+    // تشبيك
+    var out = [], maxData = Math.max(spec[3], spec[5] || 0);
+    for (var c = 0; c < maxData; c++) {
+      for (var bl = 0; bl < blocks.length; bl++) {
+        if (c < blocks[bl].length) out.push(blocks[bl][c]);
+      }
+    }
+    for (var e = 0; e < eccLen; e++) {
+      for (var bl2 = 0; bl2 < eccBlocks.length; bl2++) out.push(eccBlocks[bl2][e]);
+    }
+    return out;
+  }
+
+  function makeMatrix(version) {
+    var size = version * 4 + 17;
+    var m = [], reserved = [];
+    for (var r = 0; r < size; r++) {
+      m.push(new Array(size).fill(0));
+      reserved.push(new Array(size).fill(false));
+    }
+
+    function finder(row, col) {
+      for (var r = -1; r <= 7; r++) {
+        for (var c = -1; c <= 7; c++) {
+          var rr = row + r, cc = col + c;
+          if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+          var on = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
+                   (c >= 0 && c <= 6 && (r === 0 || r === 6)) ||
+                   (r >= 2 && r <= 4 && c >= 2 && c <= 4);
+          m[rr][cc] = on ? 1 : 0;
+          reserved[rr][cc] = true;
+        }
+      }
+    }
+    finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+
+    // توقيت
+    for (var i = 8; i < size - 8; i++) {
+      m[6][i] = i % 2 === 0 ? 1 : 0; reserved[6][i] = true;
+      m[i][6] = i % 2 === 0 ? 1 : 0; reserved[i][6] = true;
+    }
+
+    // محاذاة
+    var pos = ALIGN_POS[version];
+    for (var a = 0; a < pos.length; a++) {
+      for (var b = 0; b < pos.length; b++) {
+        var pr = pos[a], pc = pos[b];
+        if (reserved[pr][pc]) continue;
+        for (var dr = -2; dr <= 2; dr++) {
+          for (var dc = -2; dc <= 2; dc++) {
+            m[pr + dr][pc + dc] =
+              (Math.abs(dr) === 2 || Math.abs(dc) === 2 || (dr === 0 && dc === 0)) ? 1 : 0;
+            reserved[pr + dr][pc + dc] = true;
+          }
+        }
+      }
+    }
+
+    // وحدة داكنة + حجز معلومات الصيغة
+    m[size - 8][8] = 1; reserved[size - 8][8] = true;
+    for (var f = 0; f <= 8; f++) {
+      if (!reserved[8][f]) reserved[8][f] = true;
+      if (!reserved[f][8]) reserved[f][8] = true;
+    }
+    for (var g = 0; g < 8; g++) {
+      reserved[8][size - 1 - g] = true;
+      reserved[size - 1 - g][8] = true;
+    }
+    return { m: m, reserved: reserved, size: size };
+  }
+
+  function placeData(grid, codewords) {
+    var m = grid.m, reserved = grid.reserved, size = grid.size;
+    var bitIdx = 0, total = codewords.length * 8;
+    var col = size - 1, up = true;
+
+    while (col > 0) {
+      if (col === 6) col--;
+      for (var n = 0; n < size; n++) {
+        var row = up ? size - 1 - n : n;
+        for (var s = 0; s < 2; s++) {
+          var c = col - s;
+          if (reserved[row][c]) continue;
+          var bit = 0;
+          if (bitIdx < total) {
+            bit = (codewords[bitIdx >> 3] >> (7 - (bitIdx & 7))) & 1;
+          }
+          bitIdx++;
+          m[row][c] = bit;
+        }
+      }
+      up = !up;
+      col -= 2;
+    }
+  }
+
+  function maskFn(id, r, c) {
+    switch (id) {
+      case 0: return (r + c) % 2 === 0;
+      case 1: return r % 2 === 0;
+      case 2: return c % 3 === 0;
+      case 3: return (r + c) % 3 === 0;
+      case 4: return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0;
+      case 5: return ((r * c) % 2) + ((r * c) % 3) === 0;
+      case 6: return (((r * c) % 2) + ((r * c) % 3)) % 2 === 0;
+      default: return (((r + c) % 2) + ((r * c) % 3)) % 2 === 0;
+    }
+  }
+
+  function applyMask(grid, id) {
+    var out = [];
+    for (var r = 0; r < grid.size; r++) {
+      out.push(grid.m[r].slice());
+      for (var c = 0; c < grid.size; c++) {
+        if (!grid.reserved[r][c] && maskFn(id, r, c)) out[r][c] ^= 1;
+      }
+    }
+    return out;
+  }
+
+  function formatBits(maskId) {
+    // ECC M = 00
+    var data = (0 << 3) | maskId;
+    var rem = data;
+    for (var i = 0; i < 10; i++) {
+      rem = (rem << 1);
+      if (rem & 0x400) rem ^= 0x537;
+    }
+    return ((data << 10) | rem) ^ 0x5412;
+  }
+
+  function placeFormat(matrix, size, maskId) {
+    var bits = formatBits(maskId);
+    for (var i = 0; i < 15; i++) {
+      var bit = (bits >> i) & 1;
+      // النسخة الأولى حوالين الزاوية الشمال-فوق
+      if (i < 6) matrix[8][i] = bit;
+      else if (i === 6) matrix[8][7] = bit;
+      else if (i === 7) matrix[8][8] = bit;
+      else if (i === 8) matrix[7][8] = bit;
+      else matrix[14 - i][8] = bit;
+      // النسخة التانية
+      if (i < 8) matrix[size - 1 - i][8] = bit;
+      else matrix[8][size - 15 + i] = bit;
+    }
+    matrix[size - 8][8] = 1;
+  }
+
+  function penalty(matrix, size) {
+    var score = 0, r, c, i;
+    // 1) خطوط متتالية
+    for (r = 0; r < size; r++) {
+      for (var dir = 0; dir < 2; dir++) {
+        var run = 1, prev = -1;
+        for (c = 0; c < size; c++) {
+          var v = dir === 0 ? matrix[r][c] : matrix[c][r];
+          if (v === prev) { run++; if (run === 5) score += 3; else if (run > 5) score++; }
+          else { run = 1; prev = v; }
+        }
+      }
+    }
+    // 2) مربعات 2×2
+    for (r = 0; r < size - 1; r++) {
+      for (c = 0; c < size - 1; c++) {
+        var a = matrix[r][c];
+        if (a === matrix[r][c + 1] && a === matrix[r + 1][c] && a === matrix[r + 1][c + 1]) score += 3;
+      }
+    }
+    // 3) نمط 1011101 مع فراغ
+    var pat1 = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0];
+    var pat2 = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
+    function match(get, len) {
+      for (var s = 0; s + 11 <= len; s++) {
+        var ok1 = true, ok2 = true;
+        for (var k = 0; k < 11; k++) {
+          var v = get(s + k);
+          if (v !== pat1[k]) ok1 = false;
+          if (v !== pat2[k]) ok2 = false;
+        }
+        if (ok1 || ok2) score += 40;
+      }
+    }
+    for (r = 0; r < size; r++) {
+      (function (row) { match(function (i2) { return matrix[row][i2]; }, size); })(r);
+      (function (col) { match(function (i2) { return matrix[i2][col]; }, size); })(r);
+    }
+    // 4) نسبة الداكن
+    var dark = 0;
+    for (r = 0; r < size; r++) for (c = 0; c < size; c++) dark += matrix[r][c];
+    var pct = (dark * 100) / (size * size);
+    score += Math.floor(Math.abs(pct - 50) / 5) * 10;
+    return score;
+  }
+
+  function qrMatrix(text) {
+    var bytes = [];
+    for (var i = 0; i < text.length; i++) {
+      var cp = text.charCodeAt(i);
+      if (cp < 128) bytes.push(cp);
+      else if (cp < 2048) { bytes.push(192 | (cp >> 6), 128 | (cp & 63)); }
+      else { bytes.push(224 | (cp >> 12), 128 | ((cp >> 6) & 63), 128 | (cp & 63)); }
+    }
+    var version = pickVersion(bytes.length);
+    if (!version) return null;
+
+    var codewords = buildCodewords(bytes, version);
+    var grid = makeMatrix(version);
+    placeData(grid, codewords);
+
+    var best = null, bestScore = Infinity;
+    for (var mk = 0; mk < 8; mk++) {
+      var cand = applyMask(grid, mk);
+      placeFormat(cand, grid.size, mk);
+      var sc = penalty(cand, grid.size);
+      if (sc < bestScore) { bestScore = sc; best = cand; }
+    }
+    return { matrix: best, size: grid.size, version: version };
+  }
+
+  function qrSvg(text, sizeMm) {
+    var res = qrMatrix(String(text || ''));
+    if (!res) return '';
+    var q = 2, dim = res.size + q * 2, rects = '';
+    for (var r = 0; r < res.size; r++) {
+      for (var c = 0; c < res.size; c++) {
+        if (res.matrix[r][c]) {
+          rects += '<rect x="' + (c + q) + '" y="' + (r + q) + '" width="1" height="1"/>';
+        }
+      }
+    }
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + sizeMm + 'mm" height="' + sizeMm +
+      'mm" viewBox="0 0 ' + dim + ' ' + dim + '" shape-rendering="crispEdges" fill="#000">' +
+      '<rect x="0" y="0" width="' + dim + '" height="' + dim + '" fill="#fff"/>' + rects + '</svg>';
+  }
+
+  window.qrSvg = qrSvg;
+
   // بيرسم الباركود كـ SVG. مفيش صور ولا طلبات شبكة.
   window.barcodeSvg = function (value, height) {
     var text = String(value || '').toUpperCase().replace(/[^0-9A-Z\-. $/+%]/g, '');
@@ -110,14 +478,36 @@ const PRINT_SHARED_JS = `
    * الطباعة: بنحط المحتوى في الحاوية المخفية وننادي print.
    * الـCSS بيخفي باقي الصفحة وقت الطباعة بس.
    */
-  window.printHtml = function (inner) {
+  window.printHtml = function (inner, pageMm) {
     var root = document.getElementById('print-root');
     if (!root) return;
+
+    // ══ ⚠ مقاس الورقة بيتحقن وقت الطباعة، مش مكتوب في الأنماط ══
+    //
+    // القاعدة @page واحدة للصفحة كلها، ومينفعش تتغيّر حسب اللي
+    // بتطبعه. والفاتورة والملصق مقاسهم مختلف تمامًا.
+    //
+    // فبنحطّ عنصر أنماط مؤقت قبل الطباعة ونشيله بعدها. لو
+    // سبناه، أول فاتورة بعد ملصق هتتطبع على ورقة ٣٧ مم.
+    var sizeTag = document.getElementById('print-page-size');
+    if (sizeTag) sizeTag.remove();
+    if (pageMm) {
+      sizeTag = document.createElement('style');
+      sizeTag.id = 'print-page-size';
+      sizeTag.textContent =
+        '@page{size:' + pageMm[0] + 'mm ' + pageMm[1] + 'mm;margin:0}';
+      document.head.appendChild(sizeTag);
+    }
+
     root.innerHTML = inner;
     // مهلة قصيرة عشان المتصفح يرسم المحتوى قبل ما يفتح الحوار
     setTimeout(function () {
       window.print();
-      setTimeout(function () { root.innerHTML = ''; }, 400);
+      setTimeout(function () {
+        root.innerHTML = '';
+        var tag = document.getElementById('print-page-size');
+        if (tag) tag.remove();
+      }, 400);
     }, 60);
   };
 
@@ -4934,6 +5324,17 @@ export function productsPage(data: ProductsPageData): Html {
               <label class="field-label" style="display:flex;gap:8px;align-items:center">
                 <input type="checkbox" id="np-nosn"> الرقم التسلسلي غير متاح
               </label>
+              <!-- ⚠ التلميحة دي بتوفّر مكتبة قراءة أرقام حجمها
+                   ١٥ ميجا. الشاشتين مكتوبين بالاسم عن قصد: من
+                   غير الاسم، الموظّف بيفتح شاشة "حول" اللي
+                   مفيهاش باركود ويقول إن الماسح باظ. -->
+              <p class="field-hint">
+                الماسح بيقرا الباركود. في الآيفون افتح:
+                الإعدادات ← عام ← حول ← مشاركة معرّفات الجهاز —
+                فيها باركود تحت الـIMEI.
+                ولو الرقم مكتوب بلا باركود، دوس مطوّل في الخانة
+                واختار «مسح النص».
+              </p>
               <p class="field-hint">الكمية تُضبط على قطعة واحدة تلقائيًا.</p>
             </div>
 
@@ -5557,6 +5958,35 @@ ${MENU_JS}
   }
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
 
+  // ══════════ فحص رقم الـIMEI ══════════
+  //
+  // ══ الفكرة ══
+  // آخر رقم في الـIMEI **محسوب** من الأربعتاشر اللي قبله
+  // بمعادلة ثابتة (Luhn). يعني الرقم بيشهد على نفسه: أي خانة
+  // اتكتبت غلط أو اتقرت غلط بتكسر الحساب.
+  //
+  // تشبيه: وزن الملاكم قبل النزال. مش بيقول هيكسب، بيقول إنه
+  // في الفئة الصح. الرقم الغلط بيسقط في الميزان قبل الحلبة.
+  //
+  // ⚠ بيشتغل على **١٥ رقم بالظبط** وبس. سريالات تانية في
+  // النظام (إكسسوار، أجهزة قديمة، أرقام داخلية) مالهاش الشكل
+  // ده، وفحصها كان هيطلّع إنذار كاذب على رقم سليم تمامًا —
+  // والإنذار الكاذب بيخلّي الواحد يبطّل يقرا الإنذارات.
+  function luhnOk(raw) {
+    var digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length !== 15) return true;   // مش بشكل IMEI — مش شغلنا
+
+    var sum = 0;
+    for (var i = 0; i < 15; i++) {
+      // من الشمال: الخانات في المواضع الفردية (الثانية، الرابعة…)
+      // بتتضاعف. ولو الناتج بقى خانتين، بنجمع الخانتين.
+      var d = Number(digits.charAt(i));
+      if (i % 2 === 1) { d = d * 2; if (d > 9) d = d - 9; }
+      sum += d;
+    }
+    return sum % 10 === 0;
+  }
+
   // ── الخانة والسريال بيتحكموا في بعض ──
   //
   // ⚠ السريال بيغلب العلامة، مش العكس. لو المستخدم علّم "غير
@@ -5607,6 +6037,14 @@ ${MENU_JS}
         serialEl.disabled = false;
         serialEl.value = scanned;
         serialEl.focus();
+
+        // ⚠ بنملا الخانة **وبعدين** ننبّه، مش نرفض ونمسح.
+        // القراءة الغلط بتبقى خانة واحدة غالبًا، وتصليحها أسهل
+        // بكتير من إعادة المسح من الأول. الرمي كان هيضيّع
+        // أربعتاشر رقم صح عشان واحد غلط.
+        if (!luhnOk(scanned)) {
+          say('الرقم اتقرا، بس فحص الـIMEI مش مظبوط. راجعه.', false);
+        }
       } catch (err) {
         say(err && err.message ? err.message : 'تعذّر المسح.', false);
       }
@@ -5622,6 +6060,28 @@ ${MENU_JS}
       var msgText = document.getElementById('addmsg-text');
       var branch = document.getElementById('np-branch');
       var isDevice = typeEl && typeEl.value === 'device';
+
+      // ══ ⚠ فحص الرقم قبل الإرسال ══
+      //
+      // بيشتغل على أي سريال ١٥ رقم مهما جه منين: مكتوب بإيدك،
+      // ممسوح بالكاميرا، أو ملزوق. القاعدة إن الفحص يقعد جنب
+      // **الإرسال** مش جنب طريقة الإدخال — وإلا كل طريقة جديدة
+      // بتضاف بكرة هتعدّي من غير فحص.
+      //
+      // ⚠ وتحذير مش منع. فيه أجهزة سريالها ١٥ رقم وهو مش IMEI
+      // أصلاً، والرفض القاطع كان هيقفل عليك جهاز سليم ومفيش
+      // طريقة تعدّي. فبنسأل، وإنت بتقرّر.
+      if (isDevice && !(noSnEl && noSnEl.checked)) {
+        var typedSerial = document.getElementById('np-serial').value;
+        if (!luhnOk(typedSerial)) {
+          var goOn = confirm(
+            'الرقم ده مش مطابق لفحص الـIMEI — يعني غالبًا فيه خانة غلط.' +
+            '\\n\\n' +
+            'تكمّل الإضافة برضه؟'
+          );
+          if (!goOn) { document.getElementById('np-serial').focus(); return; }
+        }
+      }
 
       btn.disabled = true;
       btn.textContent = 'جارٍ الإضافة…';
@@ -5691,23 +6151,32 @@ ${MENU_JS}
           // بتتحدّث عادي والزرار على الصفّ لسه موجود يطبع منه
           // في أي وقت. فمفيش حاجة بتضيع.
           try {
+            // ⚠ المعرّف بييجي من **رد الخادم** مش من النموذج.
+            // ده الرقم اللي القاعدة ولّدته فعلاً، وهو اللي
+            // الرمز هيشاور عليه للأبد. أي رقم نخترعه هنا
+            // هيبقى ملصق بيشاور على منتج مش موجود.
+            var body = await res.json();
+            var newId = body && body.id ? body.id : '';
+
             var wantLabel = confirm('تمت الإضافة. تطبع ملصق للمنتج؟');
             if (wantLabel) {
               window.printHtml(labelHtml({
+                id: newId,
                 name: document.getElementById('np-name').value,
-                // ⚠ فاضي لو "غير متاح" — والملصق بيطلع بلا
-                // باركود بدل ما يترفض. الجهاز لسه محتاج ورقة
-                // عليها اسمه وسعره تتحطّ عليه في الفاترينة.
+                // ⚠ فاضي لو "غير متاح" — والملصق بيطلع بالرمز
+                // من غير سطر السريال. الرمز نفسه موجود دايمًا،
+                // فالجهاز بيتمسح عادي حتى وهو بلا رقم.
                 serial: isDevice && !(noSnEl && noSnEl.checked)
                   ? document.getElementById('np-serial').value.trim()
                   : '',
+                isDevice: isDevice,
                 storage: isDevice ? document.getElementById('np-storage').value : '',
                 battery: isDevice ? document.getElementById('np-battery').value : '',
                 customs: isDevice
                   && document.getElementById('np-customs').value === 'true',
                 entry: document.getElementById('np-entry').value || '',
                 price: document.getElementById('np-price').value || ''
-              }));
+              }), [LABEL_W_MM, LABEL_H_MM]);
               // مهلة تكفي حوار الطباعة يفتح قبل ما الصفحة تروح
               setTimeout(function () { window.location.reload(); }, 2500);
               return;
@@ -6521,6 +6990,29 @@ ${MENU_JS}
         var code = await window.scanBarcode();
         if (!code || !searchEl) return;
 
+        // ══ ⚠ الرمز اللي على الملصق فيه **معرّف المنتج** ══
+        //
+        // والمعرّف ده مش مكتوب في نصّ البحث على الصفوف (ولا
+        // المفروض يتكتب — محدش بيدوّر بيه بإيده). فلو حطّيناه
+        // في الخانة على طول، الفلترة هترجّع صفر نتايج والموظّف
+        // هيقول إن الماسح باظ.
+        //
+        // فبندوّر عليه كصفّ الأول. لقيناه؟ نروح له مباشرةً.
+        // ملقناش؟ يبقى ده باركود عادي (سريال جهاز، أو كود
+        // إكسسوار من المصنع) ويكمّل بحث نصّي زي الأول.
+        var direct = document.querySelector('[data-pid="' + code + '"]');
+        if (direct) {
+          searchEl.value = '';
+          runSearch();
+          direct.scrollIntoView({ block: 'center' });
+          // ⚠ وميض قصير: من غيره الصفّ بيوصل لنص الشاشة ومفيش
+          // حاجة بتقول "ده هو". وسط عشرين صفّ متشابه، الوصول
+          // من غير إشارة = إنك لسه بتدوّر.
+          direct.setAttribute('data-found', 'true');
+          setTimeout(function () { direct.removeAttribute('data-found'); }, 1800);
+          return;
+        }
+
         // بنحطّه في خانة البحث وبنشغّل الفلترة — نفس ما لو
         // اتكتب بالماسح الموصول بالكمبيوتر
         searchEl.value = code;
@@ -6530,6 +7022,20 @@ ${MENU_JS}
       }
     });
   }
+
+  // ══════════ مقاس الملصق ══════════
+  //
+  // ⚠ **الأربع أرقام دي هي كل اللي تغيّره لو الطابعة اتغيّرت.**
+  // القيم دلوقتي مظبوطة على ٣٧ × ٢٥ مم.
+  //
+  // ⚠ واختيار الطابعة نفسها مش من هنا — ده حوار الطباعة بتاع
+  // المتصفح. اللي إحنا بنتحكم فيه هو **مقاس الورقة**، ولازم
+  // يطابق اللي مضبوط في الطابعة وإلا هتطلع مقصوصة أو مزاحة.
+  var LABEL_W_MM = 37;
+  var LABEL_H_MM = 25;
+  // ⚠ ضلع مربّع الـQR. لو كبّرته أكتر من نص عرض الملصق، باقي
+  // السطور هتتزاحم وتتقص. جرّب أي تغيير بطبعة واحدة الأول.
+  var LABEL_QR_MM = 12;
 
   // ══════════ طباعة الملصق ══════════
   //
@@ -6548,27 +7054,48 @@ ${MENU_JS}
     var specs = [];
     if (o.storage) specs.push(o.storage);
     if (o.battery) specs.push('بطارية ' + o.battery + '٪');
-    // ⚠ على الملصق بنكتب "ضريبة خالص" مش "خالص" لوحدها.
-    // في الشاشة اسم الخانة جنبها فبتتفهم؛ على ورقة صغيرة جنب
-    // "بطارية ٩٠٪" و"256GB"، كلمة "خالص" لوحدها بلا معنى.
-    if (o.customs) specs.push('ضريبة خالص');
+    // ══ ⚠ الضريبة بتظهر بالحالتين ══
+    //
+    // كانت بتظهر لما تكون خالصة بس، والغياب كان بيتقرا غلط:
+    // الزبون بيشوف ملصق مالوش سطر ضريبة ويفترض إنها خالصة.
+    // السكوت هنا مش حياد — هو إجابة، وإجابة غلط.
+    //
+    // ⚠ وللأجهزة بس. الإكسسوار مالوش جمرك أصلًا، وسطر
+    // "غير خالص" عليه هيخوّف زبون بلا سبب.
+    if (o.isDevice) specs.push(o.customs ? 'ضريبة خالص' : 'ضريبة غير خالصة');
 
     var specHtml = '';
     for (var k = 0; k < specs.length; k++) specHtml += '<span>' + specs[k] + '</span>';
 
-    // ══ ⚠ الباركود بقى شرطي زي سطر المواصفات بالظبط ══
+    // ══════════ الرمز: QR على معرّف المنتج ══════════
     //
-    // الملصق كان بيترفض خالص من غير سريال. والجهاز اللي مالوش
-    // سريال متاح لسه محتاج ورقة عليها اسمه وسعره تتحطّ عليه في
-    // الفاترينة — الباركود مش هو الملصق، هو سطر فيه.
+    // ══ ⚠ ليه المعرّف مش السريال؟ ══
+    // المعرّف بيتولد مرة واحدة يوم ما المنتج يتضاف، وما بيتغيّرش
+    // أبدًا. فالملصق اللي طبعته النهاردة يفضل شغّال حتى لو كتبت
+    // السريال بكرة أو عدّلته بعد شهر.
     //
-    // ومفيش باركود لنص فاضي: الدالة بترجّع نص فاضي، بس
-    // سطر الرقم تحته كان هيفضل ظاهر فاضي. فبنشيل الاتنين مع بعض.
+    // لو الرمز كان على السريال، كان كل تعديل يخلّي الملصق
+    // المطبوع يشاور على حاجة مش موجودة — وإنت مش هتعرف غير
+    // لما تمسحه ومايجيش حاجة.
+    //
+    // ══ ⚠ وليه QR مش باركود خطي؟ ══
+    // مسألة مقاس، مش ذوق. الـIMEI ١٥ خانة في Code 39 بياخد
+    // حوالي ٤٩١ وحدة عرض. على ملصق ٣٧ مم الخط الرفيع بيطلع
+    // ٠.١٤ مم، والماسح محتاج ٠.١٩ على الأقل — يعني بيتطبع
+    // شكله تمام وما بيتقراش.
+    //
+    // الـQR بيحطّ نفس المعلومة في مربّع، وبيتظبط في ١٢ مم
+    // بمساحة واسعة. وكاميرا الموبايل بتقراه أحسن أصلًا.
+    //
+    // ⚠ وكل منتج بقى ليه رمز — حتى الإكسسوار اللي مالوش سريال.
     var codeBlock = '';
-    if (o.serial) {
-      codeBlock = window.barcodeSvg(o.serial, 46) +
-        '<div class="pr-label-code">' + o.serial + '</div>';
-    }
+    if (o.id) codeBlock = window.qrSvg(o.id, LABEL_QR_MM);
+
+    // السريال بيتكتب **كنص** تحت الرمز لو موجود، عشان تقارنه
+    // بعينك بالمكتوب على الجهاز من غير ما تمسح.
+    var serialLine = o.serial
+      ? '<div class="pr-label-code">' + o.serial + '</div>'
+      : '';
 
     // ⚠ التاريخ بيتوحّد هنا مش عند المنادي.
     // الصفّ بيبعته متنسّق (٣٠ / ٠٨ / ٢٠٢٦) والنموذج بيبعته خام
@@ -6580,10 +7107,14 @@ ${MENU_JS}
       entryText = parts[2] + ' / ' + parts[1] + ' / ' + parts[0];
     }
 
-    return '<div class="pr-doc pr-label">' +
+    // ⚠ المقاس بيتحطّ على العنصر نفسه مش في ملف الأنماط.
+    // السبب إن نفس القيمة لازم تروح لـ@page كمان (تحت في
+    // printHtml). قيمة واحدة في مكان واحد = مستحيل يختلفوا.
+    return '<div class="pr-doc pr-label" style="width:' + LABEL_W_MM + 'mm">' +
       '<div class="pr-label-shop">' + SHOP_NAME + '</div>' +
       '<div class="pr-label-name">' + (o.name || '') + '</div>' +
       codeBlock +
+      serialLine +
       (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
       '<div class="pr-label-foot">' +
         '<span>' + entryText + '</span>' +
@@ -6602,14 +7133,16 @@ ${MENU_JS}
     var serial = row.getAttribute('data-serial') || '';
 
     window.printHtml(labelHtml({
+      id: row.getAttribute('data-pid') || '',
       name: row.getAttribute('data-name') || '',
       serial: serial,
+      isDevice: row.getAttribute('data-type') === 'device',
       storage: row.getAttribute('data-storage') || '',
       battery: row.getAttribute('data-battery') || '',
       customs: row.getAttribute('data-customs') === 'true',
       entry: row.getAttribute('data-entry') || '',
       price: row.getAttribute('data-price') || ''
-    }));
+    }), [LABEL_W_MM, LABEL_H_MM]);
   });
 
   // ══════════ التحويل للصيانة ══════════
