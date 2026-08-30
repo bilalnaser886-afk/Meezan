@@ -760,6 +760,53 @@ export async function listExpenseReasons(deps: TreasuryDeps, actor: Authenticate
 }
 
 /**
+ * سبب صرف جديد.
+ *
+ * ══ ⚠ `expense.approve` مش `expense.create` — وده قرار ══
+ *
+ * أي حد بيصرف من الدرج عنده `expense.create`. لكن سبب الصرف مش
+ * بيان على الحركة — هو **بند في قائمة الدخل**. تفصيل المصروفات
+ * بيتجمّع بيه، وهو اللي بيوري صاحب المحل بيصرف فين.
+ *
+ * لو كل موظّف يقدر يزوّد بند، هتلاقي "نثرية" و"نثريات" و"فطار"
+ * و"فطار الصبح" — والتقرير بيبقى عشرين سطر بجنيهات، وصاحب
+ * المحل يبطّل يقراه.
+ *
+ * والموظّف اللي مالوش الصلاحية مش متعطّل: "مصروفات نثرية"
+ * موجودة في البذرة عشان الحالات دي بالظبط، والملاحظة بتشيل
+ * التفصيل.
+ *
+ * ⚠ لو حبيت تفتحها للمندوب، غيّر `EXPENSE_APPROVE` لـ
+ * `EXPENSE_CREATE` في السطرين تحت وخلاص.
+ */
+export async function createExpenseReason(
+  deps: TreasuryDeps,
+  actor: AuthenticatedUser,
+  rawName: unknown,
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_APPROVE)) {
+    throw Errors.forbidden(PERMISSIONS.EXPENSE_APPROVE);
+  }
+
+  const name = String(rawName ?? '').trim();
+  if (name.length < 2 || name.length > 60) {
+    throw Errors.validation('اسم السبب من حرفين إلى 60 حرفًا.');
+  }
+
+  const created = await deps.expenseReasons.create({ tenantId: actor.tenantId, name });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'expense_reason.create',
+    entity: 'ExpenseReason',
+    entityId: created.id,
+    metadata: { name, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+/**
  * كشف حساب الموظّف.
  * الموظّف يقدر يشوف كشفه هو. المدير يشوف كشوف فرعه. المالك الكل.
  */
