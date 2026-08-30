@@ -1275,7 +1275,8 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 // ═══════════════════════════════════════════════════════════
 
 const PRODUCT_BASE_COLUMNS =
-  'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
+  'id, tenant_id, branch_id, name, product_type, serial_number, serial_unavailable, ' +
+  'source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
   'customs_cleared, battery_health, storage_capacity, category_id, model_id, color_id, is_active';
 
@@ -1293,6 +1294,7 @@ interface RawProduct {
   name: string;
   product_type: string;
   serial_number: string | null;
+  serial_unavailable: boolean | null;
   source: string | null;
   entry_date: string;
   price_piastres: number | string | null;
@@ -1314,6 +1316,9 @@ function toProduct(raw: RawProduct): ProductRecord {
     name: raw.name,
     productType: (raw.product_type === 'device' ? 'device' : 'accessory') as ProductType,
     serialNumber: raw.serial_number,
+    // ⚠ الافتراضي false مش null. الصفوف القديمة اتعملت قبل ما
+    // العمود يوجد، والقيمة الغايبة معناها "ليه سريال عادي".
+    serialUnavailable: raw.serial_unavailable === true,
     source: raw.source,
     // عمود date بيرجع نص زي "2026-08-15" — بنسيبه نص.
     // تحويله لـ Date بيحطّ عليه وقت ومنطقة زمنية، وأول ما يترجع
@@ -1703,6 +1708,7 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
           name: data.name,
           product_type: data.productType,
           serial_number: data.serialNumber,
+          serial_unavailable: data.serialUnavailable,
           source: data.source,
           // null = سيب افتراضي قاعدة البيانات يشتغل (تاريخ القاهرة)
           ...(data.entryDate ? { entry_date: data.entryDate } : {}),
@@ -1758,6 +1764,9 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       if (data.isActive !== undefined) patch.is_active = data.isActive;
       if (data.source !== undefined) patch.source = data.source;
       if (data.serialNumber !== undefined) patch.serial_number = data.serialNumber;
+      if (data.serialUnavailable !== undefined) {
+        patch.serial_unavailable = data.serialUnavailable;
+      }
       if (data.entryDate !== undefined) patch.entry_date = data.entryDate;
       // ⚠ محكوم بصلاحية `inventory.reorder_point` في حالة الاستخدام،
       // مش هنا. المستودع بينفّذ، والقرار فوق.
