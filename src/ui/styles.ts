@@ -827,6 +827,10 @@ select.field-input{appearance:none;
   letter-spacing:.04em;line-height:1.6;white-space:nowrap}
 .type-tag[data-type="device"]{color:var(--brand);background:var(--brand-wash)}
 .type-tag[data-type="accessory"]{color:var(--ink-soft);background:var(--surface)}
+/* ⚠ "بدون سريال" بلون الخصم مش بلون الجهاز، وده مقصود: دي مش
+   صفة للمنتج — دي **فجوة في البيانات** لسه محتاجة تتقفل.
+   لو خدت لون الجهاز، كانت هتبان حالة طبيعية والعين هتعدّي عليها. */
+.type-tag[data-type="nosn"]{color:var(--debit);background:var(--debit-wash)}
 
 /* السريال بخط أحادي المسافة: الأرقام والحروف بتتصفّ فبتقارن أسرع */
 .serial{font-family:var(--font-mono);font-size:var(--fs-1);color:var(--ink-soft);
