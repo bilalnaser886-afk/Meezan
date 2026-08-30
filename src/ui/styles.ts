@@ -461,6 +461,8 @@ button{font:inherit}
 .scan-video{width:100%;max-height:62vh;border-radius:var(--r);background:#000;
   object-fit:cover}
 .scan-hint{color:#fff;font-size:var(--fs-4);margin:12px 0}
+/* زرارين جنب بعض في شاشة المسح: إلغاء والكتابة اليدوية */
+.scan-box .btn-mini{margin:0 4px}
 
 @media print{
   body > *{display:none !important}
@@ -502,43 +504,42 @@ button{font:inherit}
 
    ⚠ والأهم إنه **ببلاش**: العرض ما بياخدش مساحة رأسية، يعني
    الوضوح اتحسّن من غير ما الملصق يكبر ولا سطر يتشال. */
-.pr-label{text-align:center;padding:.6mm 1mm;line-height:1.15;
+.pr-label{text-align:center;padding:.5mm 1mm;line-height:1.1;
   box-sizing:border-box;overflow:hidden;font-weight:700;
   /* ⚠ أسود خالص مش رمادي: أي تدرّج بيتحوّل نقط متفرّقة على
      الطابعة الحرارية، والحرف بيبان مهترئ. */
   color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;
   break-inside:avoid;page-break-inside:avoid}
+/* ══ ⚠ كل المقاسات تحت مضبوطة على ميزانية 25 مم ══
+
+   الترتيب عمود، فالستة سطور بيتقاسموا الارتفاع والرمز بياخد
+   الفاضل. أي تكبير هنا بيصغّر الرمز مباشرةً — ولو نزل تحت
+   0.375 مم للمربع، بيبطّل يتمسح.
+
+   يعني دول مش أرقام ذوق. */
+
 /* اسم المحل: أكبر سطر على الملصق — هو اللي بيتشاف من بعيد */
-.pr-label-shop{font-family:var(--font-display);font-size:12px;font-weight:700;
-  letter-spacing:.06em;white-space:nowrap;overflow:hidden;
-  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1.5px}
+.pr-label-shop{font-family:var(--font-display);font-size:10px;font-weight:700;
+  letter-spacing:.05em;white-space:nowrap;overflow:hidden;
+  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1px}
 
-/* ══ ⚠ الجسم صفّ: الرمز جنب النص مش فوقه ══
-   الملصق عرضه 37مم وارتفاعه 25. العمود الواحد كان بيستهلك
-   الارتفاع (النادر) ويسيب العرض (المتاح) فاضي. */
-.pr-label-body{display:flex;align-items:center;gap:1mm;text-align:right}
-.pr-label-qr{flex:0 0 auto}
-/* ⚠ min-width:0 ضرورية: من غيرها العنصر المرن ما بيصغرش عن
-   محتواه، والاسم الطويل بيدفع الرمز بره الملصق. */
-.pr-label-info{flex:1 1 auto;min-width:0}
-
-.pr-label-name{font-size:10px;font-weight:700;margin-bottom:1px;
+.pr-label-name{font-size:8.5px;font-weight:700;margin-bottom:.5px;
   /* اسم طويل بيتقص بنقط بدل ما يلفّ سطرين ويزقّ الباقي بره */
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ⚠ الرمز مربّع، والمتصفح بيسيب مسافة تحت الـsvg زي أي سطر
    نص. block بتشيلها — من غيرها بيضيع ملّيمتر بلا فايدة. */
 .pr-label svg{display:block;margin:0 auto}
-.pr-label-code{font-family:var(--font-mono);font-size:8px;font-weight:700;
-  letter-spacing:0;
-  margin-top:1px;direction:ltr;text-align:right;
+.pr-label-code{font-family:var(--font-mono);font-size:7px;font-weight:700;
+  letter-spacing:.2px;
+  margin-top:.5px;direction:ltr;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ⚠ سطر واحد بس. كان بيلفّ لو طال — واللفّ على ملصق 25mm
    معناه إن السطر السفلي بيتزقّ بره الورقة. */
-.pr-label-spec{font-size:7px;font-weight:700;margin-top:1px;line-height:1.2;
-  display:flex;flex-wrap:nowrap;justify-content:flex-start;gap:0 4px;
+.pr-label-spec{font-size:6.5px;font-weight:700;margin-top:.5px;line-height:1.1;
+  display:flex;flex-wrap:nowrap;justify-content:center;gap:0 5px;
   overflow:hidden;white-space:nowrap}
-.pr-label-foot{display:flex;justify-content:space-between;margin-top:1.5px;
-  padding-top:1.5px;border-top:1px solid #000;font-size:8px;line-height:1.2;
+.pr-label-foot{display:flex;justify-content:space-between;margin-top:1px;
+  padding-top:1px;border-top:1px solid #000;font-size:7px;line-height:1.1;
   font-weight:700;font-family:var(--font-mono)}
 
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
