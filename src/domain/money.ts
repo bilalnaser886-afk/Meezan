@@ -136,7 +136,25 @@ export function parseCount(raw: unknown, options: { allowNegative?: boolean } = 
   return value;
 }
 
-/** عرض القروش كنص للمستخدم: 15075 → "150.75" */
+/**
+ * عرض القروش كنص للمستخدم.
+ *
+ *     15075  →  "150.75"
+ *     400000 →  "4,000"
+ *
+ * ══ ⚠ الكسور بتبان لما تكون موجودة بس ══
+ * "4,000.00" فيها صفرين ما بيضيفوش معلومة، والعين بتعدّي عليهم
+ * في كل سطر بلا فايدة. و"150.75" بتفضل كاملة لأن الـ75 قرش دي
+ * معلومة حقيقية.
+ *
+ * ⚠ والتغيير في **العرض** وحده. التخزين والحساب لسه بالقرش
+ * الصحيح زي ما هما — القاعدة اللي الملف كله مبني عليها.
+ *
+ * ⚠ وثمن القرار: في جداول التقارير الأرقام مش هتبقى متحاذية
+ * ("150.75" جنب "4,000"). ده مقبول لأن الجداول عندنا قصيرة،
+ * ولو طالت يوم ما ممكن نضيف صيغة منفصلة للجداول — مش نرجّع
+ * الصفرين في كل شاشة.
+ */
 export function formatPiastres(piastres: number): string {
   const negative = piastres < 0;
   const abs = Math.abs(Math.trunc(piastres));
@@ -145,7 +163,11 @@ export function formatPiastres(piastres: number): string {
   const rest = abs % 100;
 
   const grouped = pounds.toLocaleString('en-US'); // فواصل الآلاف
-  return `${negative ? '-' : ''}${grouped}.${String(rest).padStart(2, '0')}`;
+  const sign = negative ? '-' : '';
+
+  if (rest === 0) return `${sign}${grouped}`;
+
+  return `${sign}${grouped}.${String(rest).padStart(2, '0')}`;
 }
 
 /** عرض مع العملة: 15075 → "150.75 ج.م" */
