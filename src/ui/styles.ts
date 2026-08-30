@@ -491,27 +491,44 @@ button{font:inherit}
    المفروض، والملصق بيطلع 25mm + 1.6mm = ورقتين تاني.
    overflow:hidden هو الضمانة الأخيرة، و break-inside بيمنع
    المتصفح يقسّمه على صفحتين حتى لو حصل أي شيء غير متوقّع. */
-.pr-label{text-align:center;padding:.8mm 1mm;line-height:1.2;
-  box-sizing:border-box;overflow:hidden;
+/* ══ ⚠ كل حاجة على الملصق **عريضة**، وده مش ذوق ══
+
+   الطابعة الحرارية بتحرق نقط كاملة — مفيش نص نقطة. وعلى
+   6.5px الخط العادي سُمكه 1.1 نقطة، يعني الطابعة بتقرّبه
+   لنقطة واحدة والحرف بيطلع باهت أو مقطّع.
+
+   العريض بيوصل السُمك لـ2.1 نقطة = نقطتين كاملتين، فالحرف
+   بيتحرق كامل.
+
+   ⚠ والأهم إنه **ببلاش**: العرض ما بياخدش مساحة رأسية، يعني
+   الوضوح اتحسّن من غير ما الملصق يكبر ولا سطر يتشال. */
+.pr-label{text-align:center;padding:.6mm 1mm;line-height:1.15;
+  box-sizing:border-box;overflow:hidden;font-weight:700;
+  /* ⚠ أسود خالص مش رمادي: أي تدرّج بيتحوّل نقط متفرّقة على
+     الطابعة الحرارية، والحرف بيبان مهترئ. */
+  color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;
   break-inside:avoid;page-break-inside:avoid}
-.pr-label-shop{font-family:var(--font-display);font-size:8px;font-weight:600;
+/* اسم المحل: أكبر سطر على الملصق — هو اللي بيتشاف من بعيد */
+.pr-label-shop{font-family:var(--font-display);font-size:11px;font-weight:700;
+  letter-spacing:.06em;white-space:nowrap;overflow:hidden;
   border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1px}
-.pr-label-name{font-size:9px;font-weight:600;margin-bottom:1px;
+.pr-label-name{font-size:9px;font-weight:700;margin-bottom:1px;
   /* اسم طويل بيتقص بنقط بدل ما يلفّ سطرين ويزقّ الباقي بره */
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ⚠ الرمز مربّع، والمتصفح بيسيب مسافة تحت الـsvg زي أي سطر
    نص. block بتشيلها — من غيرها بيضيع ملّيمتر بلا فايدة. */
 .pr-label svg{display:block;margin:0 auto}
-.pr-label-code{font-family:var(--font-mono);font-size:7px;letter-spacing:.3px;
+.pr-label-code{font-family:var(--font-mono);font-size:7px;font-weight:700;
+  letter-spacing:.3px;
   margin-top:1px;direction:ltr;white-space:nowrap;overflow:hidden}
 /* ⚠ سطر واحد بس. كان بيلفّ لو طال — واللفّ على ملصق 25mm
    معناه إن السطر السفلي بيتزقّ بره الورقة. */
-.pr-label-spec{font-size:6px;margin-top:1px;line-height:1.25;
+.pr-label-spec{font-size:6.5px;font-weight:700;margin-top:1px;line-height:1.15;
   display:flex;flex-wrap:nowrap;justify-content:center;gap:0 5px;
   overflow:hidden;white-space:nowrap}
 .pr-label-foot{display:flex;justify-content:space-between;margin-top:1px;
-  padding-top:1px;border-top:1px solid #000;font-size:6px;line-height:1.25;
-  font-family:var(--font-mono)}
+  padding-top:1px;border-top:1px solid #000;font-size:6.5px;line-height:1.15;
+  font-weight:700;font-family:var(--font-mono)}
 
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
   border-radius:var(--r);margin-bottom:14px;background:var(--card);
