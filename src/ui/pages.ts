@@ -4629,7 +4629,8 @@ export function productsPage(data: ProductsPageData): Html {
             p.pricePiastres === null ? 'بلا سعر' : `${formatPiastres(p.pricePiastres)} ج.م`;
 
           return html`<div class="prod-row" data-row="${p.id}" data-pid="${p.id}"
-            data-searchable="${p.name} ${p.serialNumber ?? ''}"
+            data-searchable="${p.name} ${p.serialNumber ?? ''}${
+              isDevice && !p.serialNumber && p.serialUnavailable ? ' بدون سريال' : ''}"
             data-name="${p.name}" data-serial="${p.serialNumber ?? ''}"
             data-price="${p.pricePiastres === null ? '' : formatPiastres(p.pricePiastres)}"
             data-storage="${p.storageCapacity ?? ''}"
@@ -4639,7 +4640,7 @@ export function productsPage(data: ProductsPageData): Html {
             data-model="${p.modelId ?? '__none__'}"
             data-color="${p.colorId ?? '__none__'}"
             data-type="${p.productType}"
-            data-storage="${p.storageCapacity ?? '__none__'}"
+            data-nosn="${p.serialUnavailable ? 'true' : 'false'}"
             data-entry="${formatDate(p.entryDate)}">
             <div class="prod-row-main">
               <span class="prod-row-name" data-off="${p.isActive ? 'false' : 'true'}">
@@ -4659,6 +4660,14 @@ export function productsPage(data: ProductsPageData): Html {
 
               ${isDevice && p.serialNumber
                 ? html`<span class="serial">SN: ${p.serialNumber}</span>`
+                : ''}
+
+              <!-- ⚠ الشارة ظاهرة على الصفّ نفسه مش جوّه لوحة
+                   التعديل. الهدف إنك تدوّر بعينك في المخزون
+                   وتلاقيها من بره — شارة مخفية جوّه لوحة
+                   بتتفتح بضغطة = شارة مش موجودة. -->
+              ${isDevice && !p.serialNumber && p.serialUnavailable
+                ? html`<span class="type-tag" data-type="nosn">بدون سريال</span>`
                 : ''}
             </div>
 
@@ -4909,6 +4918,22 @@ export function productsPage(data: ProductsPageData): Html {
               <label class="field-label" for="np-serial">الرقم التسلسلي</label>
               <input class="field-input" id="np-serial" type="text" dir="ltr"
                 autocomplete="off" maxlength="64">
+              <!-- ⚠ نفس ماسح خانة البحث بالظبط، مش ماسح تاني.
+                   window.scanBarcode معرّفة مرة واحدة في السكربت
+                   المشترك؛ نسخة تانية هنا كانت هتخلّي سلوك
+                   الكاميرا يختلف بين شاشتين في نفس الصفحة. -->
+              <button class="btn-mini" type="button" id="np-serial-scan">مسح بالكاميرا</button>
+              <!-- ══ ⚠ "غير متاح" خيار مش خانة فاضية ══
+                   الفرق بين الاتنين هو الفرق بين غياب وقرار.
+                   الخانة الفاضية بتسيب سؤال معلّق: نسي، ولا
+                   الجهاز فعلاً مالوش؟ والعلامة بتقول: حد بصّ
+                   وقرّر وسجّل.
+
+                   نفس تفريقة صحة البطارية: فاضي = ما اتقاسش،
+                   وصفر = بطارية خربانة. -->
+              <label class="field-label" style="display:flex;gap:8px;align-items:center">
+                <input type="checkbox" id="np-nosn"> الرقم التسلسلي غير متاح
+              </label>
               <p class="field-hint">الكمية تُضبط على قطعة واحدة تلقائيًا.</p>
             </div>
 
@@ -5532,6 +5557,62 @@ ${MENU_JS}
   }
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
 
+  // ── الخانة والسريال بيتحكموا في بعض ──
+  //
+  // ⚠ السريال بيغلب العلامة، مش العكس. لو المستخدم علّم "غير
+  // متاح" وبعدين مسح باركود، الرقم موجود قدامنا فعلاً — الصح
+  // إنه يتسجّل والعلامة تتشال لوحدها.
+  //
+  // والخادم بيعمل نفس القاعدة بالظبط. السطور دي راحة للعين
+  // مش حماية؛ الحماية عند البيانات.
+  var noSnEl = document.getElementById('np-nosn');
+  var serialInput = document.getElementById('np-serial');
+
+  function syncNoSerial() {
+    if (!noSnEl || !serialInput) return;
+    serialInput.disabled = noSnEl.checked;
+    if (noSnEl.checked) serialInput.value = '';
+  }
+  if (noSnEl) { noSnEl.addEventListener('change', syncNoSerial); syncNoSerial(); }
+  if (serialInput) {
+    serialInput.addEventListener('input', function () {
+      if (noSnEl && noSnEl.checked && serialInput.value.trim()) {
+        noSnEl.checked = false;
+        syncNoSerial();
+      }
+    });
+  }
+
+  // ── مسح السريال وقت الإضافة ──
+  //
+  // ⚠ نفس حارس زرار البحث: لو السكربت المشترك ما اتحمّلش،
+  // الزرار كان هيسكت من غير أي رسالة — والسكوت أوحش من الرفض.
+  var serialScanBtn = document.getElementById('np-serial-scan');
+  if (serialScanBtn) {
+    serialScanBtn.addEventListener('click', async function () {
+      try {
+        if (typeof window.scanBarcode !== 'function') {
+          say('الماسح غير متاح على هذا المتصفح.', false);
+          return;
+        }
+        var scanned = await window.scanBarcode();
+        if (!scanned) return;
+        var serialEl = document.getElementById('np-serial');
+        if (!serialEl) return;
+        // ⚠ الماسح بيشيل العلامة كمان. من غير السطرين دول،
+        // الخانة بتفضل متعلّمة والحقل معطّل — فالرقم المقروء
+        // بيتكتب في مكان مش هيتبعت أصلاً.
+        var flag = document.getElementById('np-nosn');
+        if (flag && flag.checked) { flag.checked = false; }
+        serialEl.disabled = false;
+        serialEl.value = scanned;
+        serialEl.focus();
+      } catch (err) {
+        say(err && err.message ? err.message : 'تعذّر المسح.', false);
+      }
+    });
+  }
+
   var form = document.getElementById('addf');
   if (form) {
     form.addEventListener('submit', async function (e) {
@@ -5553,7 +5634,12 @@ ${MENU_JS}
           body: JSON.stringify({
             name: document.getElementById('np-name').value,
             productType: typeEl ? typeEl.value : 'accessory',
-            serialNumber: isDevice ? document.getElementById('np-serial').value : null,
+            serialNumber: isDevice && !(noSnEl && noSnEl.checked)
+              ? document.getElementById('np-serial').value
+              : null,
+            // ⚠ بتتبعت للجهاز بس. الإكسسوار مالوش سريال أصلاً،
+            // فـ"غير متاح" عليه جملة بلا معنى — والخادم بيرفضها.
+            serialUnavailable: isDevice && !!(noSnEl && noSnEl.checked),
             source: document.getElementById('np-source').value,
             entryDate: document.getElementById('np-entry').value || null,
             price: document.getElementById('np-price').value,
@@ -5593,6 +5679,46 @@ ${MENU_JS}
         if (res.ok) {
           msg.setAttribute('data-tone', 'ok');
           msgText.textContent = 'تمت إضافة المنتج.';
+
+          // ══ ⚠ الملصق بيتعرض **قبل** التحديث، ودي التفصيلة كلها ══
+          //
+          // الملصق بيتبني من القيم اللي في النموذج قدامنا دلوقتي.
+          // لو حدّثنا الصفحة الأول واستنّينا الصفّ يظهر، كنا
+          // هنحتاج نعرف معرّف المنتج الجديد ونستنّى الرسم —
+          // وأي تأخير هيخلّي السؤال يطلع بعد ما الشاشة اتغيّرت.
+          //
+          // ⚠ والرفض قرار كامل مش تأجيل: لو قال لأ، الصفحة
+          // بتتحدّث عادي والزرار على الصفّ لسه موجود يطبع منه
+          // في أي وقت. فمفيش حاجة بتضيع.
+          try {
+            var wantLabel = confirm('تمت الإضافة. تطبع ملصق للمنتج؟');
+            if (wantLabel) {
+              window.printHtml(labelHtml({
+                name: document.getElementById('np-name').value,
+                // ⚠ فاضي لو "غير متاح" — والملصق بيطلع بلا
+                // باركود بدل ما يترفض. الجهاز لسه محتاج ورقة
+                // عليها اسمه وسعره تتحطّ عليه في الفاترينة.
+                serial: isDevice && !(noSnEl && noSnEl.checked)
+                  ? document.getElementById('np-serial').value.trim()
+                  : '',
+                storage: isDevice ? document.getElementById('np-storage').value : '',
+                battery: isDevice ? document.getElementById('np-battery').value : '',
+                customs: isDevice
+                  && document.getElementById('np-customs').value === 'true',
+                entry: document.getElementById('np-entry').value || '',
+                price: document.getElementById('np-price').value || ''
+              }));
+              // مهلة تكفي حوار الطباعة يفتح قبل ما الصفحة تروح
+              setTimeout(function () { window.location.reload(); }, 2500);
+              return;
+            }
+          } catch (labelErr) {
+            // ⚠ فشل الملصق ما يصحّش يبلّع نجاح الإضافة.
+            // المنتج **اتسجّل فعلاً** في القاعدة؛ ورقة ما طلعتش
+            // مسألة تانية خالص، وبتتحل بزرار الطباعة على الصفّ.
+            say('تمت الإضافة، لكن تعذّر تجهيز الملصق.', false);
+          }
+
           setTimeout(function () { window.location.reload(); }, 900);
           return;
         }
@@ -6406,6 +6532,66 @@ ${MENU_JS}
   }
 
   // ══════════ طباعة الملصق ══════════
+  //
+  // ⚠ البناء اتفصل في دالة مستقلة عن قراءة الصفّ، والسبب عملي:
+  // الملصق بقى بيتطبع من **مكانين** — زرار الصفّ في المخزون،
+  // ونافذة التأكيد بعد الإضافة. ووقت الإضافة الصفّ ده **لسه
+  // مش موجود** أصلًا لأن الصفحة ما اتحدّثتش.
+  //
+  // لو سبنا البناء جوّه معالج الضغطة، كنا هنكتبه تاني للنموذج —
+  // ونسختين معناهم إن أي تعديل في شكل الملصق بيتنفّذ في واحدة
+  // وينسى التانية.
+  function labelHtml(o) {
+    // ⚠ سطر المواصفات بيتبني من الموجود بس. الحقل الفاضي ما
+    // بيطبعش شرطة ولا "غير محدّد" — سطر فيه فراغات بيخلّي
+    // الزبون يسأل، والملصق النضيف بيجاوب لوحده.
+    var specs = [];
+    if (o.storage) specs.push(o.storage);
+    if (o.battery) specs.push('بطارية ' + o.battery + '٪');
+    // ⚠ على الملصق بنكتب "ضريبة خالص" مش "خالص" لوحدها.
+    // في الشاشة اسم الخانة جنبها فبتتفهم؛ على ورقة صغيرة جنب
+    // "بطارية ٩٠٪" و"256GB"، كلمة "خالص" لوحدها بلا معنى.
+    if (o.customs) specs.push('ضريبة خالص');
+
+    var specHtml = '';
+    for (var k = 0; k < specs.length; k++) specHtml += '<span>' + specs[k] + '</span>';
+
+    // ══ ⚠ الباركود بقى شرطي زي سطر المواصفات بالظبط ══
+    //
+    // الملصق كان بيترفض خالص من غير سريال. والجهاز اللي مالوش
+    // سريال متاح لسه محتاج ورقة عليها اسمه وسعره تتحطّ عليه في
+    // الفاترينة — الباركود مش هو الملصق، هو سطر فيه.
+    //
+    // ومفيش باركود لنص فاضي: الدالة بترجّع نص فاضي، بس
+    // سطر الرقم تحته كان هيفضل ظاهر فاضي. فبنشيل الاتنين مع بعض.
+    var codeBlock = '';
+    if (o.serial) {
+      codeBlock = window.barcodeSvg(o.serial, 46) +
+        '<div class="pr-label-code">' + o.serial + '</div>';
+    }
+
+    // ⚠ التاريخ بيتوحّد هنا مش عند المنادي.
+    // الصفّ بيبعته متنسّق (٣٠ / ٠٨ / ٢٠٢٦) والنموذج بيبعته خام
+    // (2026-08-30). من غير السطور دي، نفس الملصق بيطلع بشكلين
+    // حسب إنت طبعته منين — والاختلاف ده بيخلّي الواحد يشكّ.
+    var entryText = String(o.entry || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(entryText)) {
+      var parts = entryText.split('-');
+      entryText = parts[2] + ' / ' + parts[1] + ' / ' + parts[0];
+    }
+
+    return '<div class="pr-doc pr-label">' +
+      '<div class="pr-label-shop">' + SHOP_NAME + '</div>' +
+      '<div class="pr-label-name">' + (o.name || '') + '</div>' +
+      codeBlock +
+      (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
+      '<div class="pr-label-foot">' +
+        '<span>' + entryText + '</span>' +
+        '<span>' + (o.price ? o.price + ' ج.م' : '') + '</span>' +
+      '</div>' +
+    '</div>';
+  }
+
   document.addEventListener('click', function (e) {
     var btn = e.target.closest ? e.target.closest('[data-label]') : null;
     if (!btn) return;
@@ -6414,40 +6600,16 @@ ${MENU_JS}
     if (!row) return;
 
     var serial = row.getAttribute('data-serial') || '';
-    if (!serial) { say('الملصق يحتاج سريالًا.', false); return; }
 
-    // ⚠ سطر المواصفات بيتبني من الموجود بس. الحقل الفاضي ما
-    // بيطبعش شرطة ولا "غير محدّد" — سطر فيه فراغات بيخلّي
-    // الزبون يسأل، والملصق النضيف بيجاوب لوحده.
-    var specs = [];
-    var storage = row.getAttribute('data-storage') || '';
-    var battery = row.getAttribute('data-battery') || '';
-
-    if (storage) specs.push(storage);
-    if (battery) specs.push('بطارية ' + battery + '٪');
-    // ⚠ على الملصق بنكتب "ضريبة خالص" مش "خالص" لوحدها.
-    // في الشاشة اسم الخانة جنبها فبتتفهم؛ على ورقة صغيرة جنب
-    // "بطارية ٩٠٪" و"256GB"، كلمة "خالص" لوحدها بلا معنى.
-    if (row.getAttribute('data-customs') === 'true') specs.push('ضريبة خالص');
-
-    var specHtml = '';
-    for (var k = 0; k < specs.length; k++) specHtml += '<span>' + specs[k] + '</span>';
-
-    var price = row.getAttribute('data-price') || '';
-
-    window.printHtml(
-      '<div class="pr-doc pr-label">' +
-        '<div class="pr-label-shop">' + SHOP_NAME + '</div>' +
-        '<div class="pr-label-name">' + (row.getAttribute('data-name') || '') + '</div>' +
-        window.barcodeSvg(serial, 46) +
-        '<div class="pr-label-code">' + serial + '</div>' +
-        (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
-        '<div class="pr-label-foot">' +
-          '<span>' + (row.getAttribute('data-entry') || '') + '</span>' +
-          '<span>' + (price ? price + ' ج.م' : '') + '</span>' +
-        '</div>' +
-      '</div>'
-    );
+    window.printHtml(labelHtml({
+      name: row.getAttribute('data-name') || '',
+      serial: serial,
+      storage: row.getAttribute('data-storage') || '',
+      battery: row.getAttribute('data-battery') || '',
+      customs: row.getAttribute('data-customs') === 'true',
+      entry: row.getAttribute('data-entry') || '',
+      price: row.getAttribute('data-price') || ''
+    }));
   });
 
   // ══════════ التحويل للصيانة ══════════
