@@ -481,7 +481,9 @@ const PRINT_SHARED_JS = `
   function qrSvg(text, sizeMm) {
     var res = qrMatrix(String(text || ''));
     if (!res) return '';
-    var q = 2, dim = res.size + q * 2, rects = '';
+    // ⚠ الهامش الصامت 4 مربعات — ده اللي المواصفة بتطلبه.
+    // كان 2، والقارئ بيتعب في تحديد حدود الرمز من غيره.
+    var q = 4, dim = res.size + q * 2, rects = '';
     for (var r = 0; r < res.size; r++) {
       for (var c = 0; c < res.size; c++) {
         if (res.matrix[r][c]) {
@@ -637,8 +639,25 @@ const PRINT_SHARED_JS = `
     overlay.querySelector('[data-scan-cancel]').addEventListener('click', cleanup);
 
     try {
+      // ══ ⚠ الدقة مطلوبة صراحةً، والافتراضي مش كفاية ══
+      //
+      // من غير طلب، المتصفح بيدّي 640×480 غالبًا. ومربع الرمز
+      // على الملصق نصف مليمتر — فبيوصل الكاميرا **بيكسلين**،
+      // والقارئ محتاج تلاتة على الأقل.
+      //
+      // يعني الماسح كان بيشتغل صح وبيبصّ على صورة مالهاش معنى.
+      //
+      // ⚠ وبنطلب المفضّل مش الإجباري: لو الكاميرا ما تقدرش، بتدّي أقرب
+      // حاجة بدل ما ترفض وتسيبنا بلا كاميرا خالص.
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          // التركيز المستمر — الملصق بيتقرا من 10 سم، والكاميرا
+          // بتفضل مركّزة على البعيد لو ما طلبناش
+          focusMode: 'continuous'
+        }
       });
       video.srcObject = stream;
       await video.play();
@@ -653,20 +672,31 @@ const PRINT_SHARED_JS = `
         var det = new window.BarcodeDetector({
           formats: ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'qr_code']
         });
-        return await new Promise(function (resolve, reject) {
+        var nativeWorked = await new Promise(function (resolve) {
+          var fails = 0;
           var timer = setInterval(async function () {
-            if (stopped) { clearInterval(timer); reject(new Error('أُلغي المسح.')); return; }
+            if (stopped) { clearInterval(timer); resolve(null); return; }
             try {
               var found = await det.detect(video);
+              fails = 0;
               if (found && found.length) {
                 clearInterval(timer);
-                var value = found[0].rawValue;
-                cleanup();
-                resolve(value);
+                resolve(found[0].rawValue);
               }
-            } catch (e) { /* إطار مش واضح — نكمّل */ }
+            } catch (e) {
+              // ⚠ الفشل المتكرر معناه إن الكاشف المدمج مش
+              // شغّال فعليًا (صيغة مش مدعومة، أو منّفذ ناقص).
+              // من غير العدّاد ده كان بيفضل يلفّ للأبد والزرار
+              // ساكت — والسكوت أوحش من الرفض.
+              fails++;
+              if (fails >= 12) { clearInterval(timer); resolve(null); }
+            }
           }, 220);
         });
+
+        if (nativeWorked) { cleanup(); return nativeWorked; }
+        if (stopped) throw new Error('أُلغي المسح.');
+        // ما اشتغلش — بنكمّل للمكتبة تحت
       } catch (e) { /* الصيغ مش مدعومة — بنكمّل للمكتبة */ }
     }
 
@@ -7172,7 +7202,13 @@ ${MENU_JS}
   //
   // ⚠ لو غيّرت الطابعة لـ300dpi، الرقم الصح يبقى 25 × 0.0847 × 3
   // = 6.35 مم. اضرب: (25.4 ÷ dpi) × 3 × 25.
-  var LABEL_QR_MM = 9.375;
+  //
+  // ⚠ اتغيّر من 9.375 لـ14.5 بعد ما الترتيب بقى صفّين.
+  //
+  // 29 مربع (21 بيانات + 8 هامش صامت) × 0.5 مم = 4 نقط لكل
+  // مربع. والهامش الصامت بقى 4 مربعات زي ما المواصفة بتطلب،
+  // بدل 2 — القارئ محتاجه عشان يعرف فين الرمز بيبتدي.
+  var LABEL_QR_MM = 14.5;
 
   // ══════════ طباعة الملصق ══════════
   //
@@ -7256,16 +7292,28 @@ ${MENU_JS}
     //
     // ⚠ والقص أرحم من الورقتين: ملصق ناقص سطر بيتقرا، وملصق
     // متقسّم على ورقتين بيتقطع نصين ويتحطّ في الزبالة.
+    // ══ ⚠ الترتيب بقى صفّين، مش عمود واحد ══
+    //
+    // الملصق 37 مم عرض و25 ارتفاع. لما كل حاجة كانت فوق بعض،
+    // الارتفاع كان بيخنقنا و**العرض كان سايب فاضي** — فالرمز
+    // اضطر يفضل 9.4 مم، والكاميرا ما كانتش بتقراه.
+    //
+    // دلوقتي الرمز جنب النص. الارتفاع المتاح للرمز بقى تلات
+    // أضعاف، فكبر لـ14.5 مم — ومربعه بقى نص مليمتر بدل ربع.
     return '<div class="pr-doc pr-label" style="width:' + LABEL_W_MM +
       'mm;height:' + LABEL_H_MM + 'mm">' +
       '<div class="pr-label-shop">' + SHOP_NAME + '</div>' +
-      '<div class="pr-label-name">' + (o.name || '') + '</div>' +
-      codeBlock +
-      serialLine +
-      (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
-      '<div class="pr-label-foot">' +
-        '<span>' + entryText + '</span>' +
-        '<span>' + (o.price ? o.price + ' ج.م' : '') + '</span>' +
+      '<div class="pr-label-body">' +
+        '<div class="pr-label-qr">' + codeBlock + '</div>' +
+        '<div class="pr-label-info">' +
+          '<div class="pr-label-name">' + (o.name || '') + '</div>' +
+          serialLine +
+          (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
+          '<div class="pr-label-foot">' +
+            '<span>' + (o.price ? o.price + ' ج.م' : '') + '</span>' +
+            '<span>' + entryText + '</span>' +
+          '</div>' +
+        '</div>' +
       '</div>' +
     '</div>';
   }
