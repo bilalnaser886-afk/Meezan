@@ -166,6 +166,29 @@ const PRINT_SHARED_JS = `
     return 0;
   }
 
+  // ══ نمط الحروف والأرقام ══
+  //
+  // 45 رمز بس (أرقام وحروف كبيرة وشوية علامات)، بس حرفين منهم
+  // بيتكتبوا في 11 بتّة بدل 16. يعني توفير 30%.
+  //
+  // ⚠ والتوفير ده هو كل الحكاية: بينزّل الرمز من نسخة 3
+  // (29 مربع) لنسخة 1 (21 مربع). ومربعات أقل = كل مربع أكبر
+  // = الطابعة بتطبعه بعدد نقط صحيح بدل ما تقرّب.
+  var ALNUM = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:';
+
+  function isAlnum(text) {
+    for (var i = 0; i < text.length; i++) {
+      if (ALNUM.indexOf(text.charAt(i)) < 0) return false;
+    }
+    return text.length > 0;
+  }
+
+  function pickVersionAlnum(len) {
+    var caps = { 1: 20, 2: 38, 3: 61, 4: 90, 5: 122, 6: 154, 7: 178, 8: 221, 9: 262, 10: 311 };
+    for (var v = 1; v <= 10; v++) if (len <= caps[v]) return v;
+    return 0;
+  }
+
   function buildCodewords(bytes, version) {
     var spec = QR_ECC_M_BLOCKS[version];
     var eccLen = spec[1];
@@ -176,9 +199,18 @@ const PRINT_SHARED_JS = `
       for (var i = len - 1; i >= 0; i--) bits.push((val >> i) & 1);
     }
 
-    push(4, 4);                                   // byte mode
-    push(bytes.length, version < 10 ? 8 : 16);
-    for (var i = 0; i < bytes.length; i++) push(bytes[i], 8);
+    if (typeof bytes === 'string') {
+      push(2, 4);
+      push(bytes.length, version < 10 ? 9 : 11);
+      for (var a = 0; a + 1 < bytes.length; a += 2) {
+        push(ALNUM.indexOf(bytes.charAt(a)) * 45 + ALNUM.indexOf(bytes.charAt(a + 1)), 11);
+      }
+      if (bytes.length % 2) push(ALNUM.indexOf(bytes.charAt(bytes.length - 1)), 6);
+    } else {
+      push(4, 4);                                 // نمط البايت
+      push(bytes.length, version < 10 ? 8 : 16);
+      for (var i = 0; i < bytes.length; i++) push(bytes[i], 8);
+    }
 
     // منهي + حشو للبايت
     var term = Math.min(4, dataCw * 8 - bits.length);
@@ -402,6 +434,26 @@ const PRINT_SHARED_JS = `
   }
 
   function qrMatrix(text) {
+    // ⚠ الاختيار تلقائي ومفيش حاجة بتضيع: القارئ بيعرف النمط
+    // من أول 4 بتّات جوّه الرمز نفسه. فالرموز القديمة اللي
+    // اتطبعت بنمط البايت تفضل مقروءة عادي.
+    if (isAlnum(text)) {
+      var av = pickVersionAlnum(text.length);
+      if (av) {
+        var acw = buildCodewords(text, av);
+        var ag = makeMatrix(av);
+        placeData(ag, acw);
+        var ab = null, abs = Infinity;
+        for (var am = 0; am < 8; am++) {
+          var ac = applyMask(ag, am);
+          placeFormat(ac, ag.size, am);
+          var asc = penalty(ac, ag.size);
+          if (asc < abs) { abs = asc; ab = ac; }
+        }
+        return { matrix: ab, size: ag.size, version: av };
+      }
+    }
+
     var bytes = [];
     for (var i = 0; i < text.length; i++) {
       var cp = text.charCodeAt(i);
@@ -7027,7 +7079,19 @@ ${MENU_JS}
         // فبندوّر عليه كصفّ الأول. لقيناه؟ نروح له مباشرةً.
         // ملقناش؟ يبقى ده باركود عادي (سريال جهاز، أو كود
         // إكسسوار من المصنع) ويكمّل بحث نصّي زي الأول.
+        // ⚠ الرمز فيه المختصر مش المعرّف الكامل، فمينفعش نقارن
+        // مباشرةً. بندوّر على الصفّ اللي مختصره يطابق.
         var direct = document.querySelector('[data-pid="' + code + '"]');
+        if (!direct) {
+          var wanted = String(code).replace(/-/g, '').toUpperCase();
+          var rows = document.querySelectorAll('[data-pid]');
+          for (var ri = 0; ri < rows.length; ri++) {
+            if (shortCode(rows[ri].getAttribute('data-pid')) === wanted) {
+              direct = rows[ri];
+              break;
+            }
+          }
+        }
         if (direct) {
           searchEl.value = '';
           runSearch();
@@ -7050,6 +7114,26 @@ ${MENU_JS}
     });
   }
 
+  // ══════════ الرمز المختصر ══════════
+  //
+  // ⚠ الرمز على الملصق فيه **أول 16 خانة** من معرّف المنتج،
+  // مش المعرّف كامل. والسبب مقاس مش كسل.
+  //
+  // المعرّف الكامل 36 حرف وفيه حروف صغيرة وشرط — فبيحتاج نمط
+  // البايت ونسخة 3 (29 مربع). والـ16 خانة بحروف كبيرة بتقع
+  // في نمط الحروف والأرقام ونسخة 1 (21 مربع).
+  //
+  // ══ والاختصار مش بيضيّع حاجة ══
+  // 16 خانة ست عشرية = 64 بتّة = رقم بين صفر و18 كوينتليون.
+  // احتمال إن منتجين في نفس المحل ياخدوا نفس الأول 16 خانة
+  // أقل من احتمال إن الشهاب يقع على المحل.
+  //
+  // ⚠ ولسه ثابت: مشتق من المعرّف اللي ما بيتغيّرش، فالملصق
+  // المطبوع النهاردة يفضل شغّال بعد سنة.
+  function shortCode(id) {
+    return String(id || '').replace(/-/g, '').toUpperCase().slice(0, 16);
+  }
+
   // ══════════ مقاس الملصق ══════════
   //
   // ⚠ **الأربع أرقام دي هي كل اللي تغيّره لو الطابعة اتغيّرت.**
@@ -7069,9 +7153,20 @@ ${MENU_JS}
   // ⚠ ومتكبّروش من غير ما تصغّر حاجة تانية. كل مليمتر هنا
   // محجوز، وأي زيادة بترجّع مشكلة الورقتين.
   //
-  // وعلى 9.5 مم كل وحدة في الرمز = 2.3 نقطة في طابعة 203dpi،
-  // وده فوق حدّ القراءة بمساحة مريحة.
-  var LABEL_QR_MM = 9.5;
+  // ══ ⚠ الرقم ده محسوب، مش مختار بالذوق ══
+  //
+  // طابعة 203dpi نقطتها 0.125 مم. والرمز 21 مربع + 4 هامش
+  // صامت = 25 مربع.
+  //
+  //     9.375 مم ÷ 25 مربع = 0.375 مم للمربع = **3 نقط بالظبط**
+  //
+  // ⚠ وده اللي كان ناقص. قبل كده كان 2.3 نقطة للمربع، فالطابعة
+  // كانت بتقرّب: مربع ياخد نقطتين واللي جنبه ياخد تلاتة. النتيجة
+  // مربعات مش متساوية — وده اللي كان مبوّظ شكل الرمز.
+  //
+  // ⚠ لو غيّرت الطابعة لـ300dpi، الرقم الصح يبقى 25 × 0.0847 × 3
+  // = 6.35 مم. اضرب: (25.4 ÷ dpi) × 3 × 25.
+  var LABEL_QR_MM = 9.375;
 
   // ══════════ طباعة الملصق ══════════
   //
@@ -7125,7 +7220,7 @@ ${MENU_JS}
     //
     // ⚠ وكل منتج بقى ليه رمز — حتى الإكسسوار اللي مالوش سريال.
     var codeBlock = '';
-    if (o.id) codeBlock = window.qrSvg(o.id, LABEL_QR_MM);
+    if (o.id) codeBlock = window.qrSvg(shortCode(o.id), LABEL_QR_MM);
 
     // السريال بيتكتب **كنص** تحت الرمز لو موجود، عشان تقارنه
     // بعينك بالمكتوب على الجهاز من غير ما تمسح.
