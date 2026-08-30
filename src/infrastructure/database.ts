@@ -47,6 +47,11 @@ import type {
   PriceChangeRecord,
   ProductListOptions,
   ProductRecord,
+  CategoryRepository,
+  ColorRepository,
+  DeviceModel,
+  ModelRepository,
+  ProductColor,
   ProductRepository,
   ProductType,
   RateLimiter,
@@ -1035,6 +1040,24 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
       const { data: row, error } = await db
         .from('treasury_movements')
         .insert({
+          // ⚠⚠ `tenant_id` كان **ناقص** هنا، والعمود `not null`
+          // بلا قيمة افتراضية — يعني **كل** حركة خزينة كانت
+          // بترفض قبل ما تتكتب، والرد بيطلع 500.
+          //
+          // ══ إزاي فات علينا شهور؟ ══
+          // العقد في `ports.ts` بيطلب `tenantId`، وحالة الاستخدام
+          // بتبعته فعلاً. فالأنواع كلها سليمة والبناء بيعدّي —
+          // الحقل بيوصل للمستودع وبيتساب على الأرض.
+          //
+          // ⚠ ودي نفس عيلة الفخ ١٩: **الدالة اللي بتاخد المحل
+          // ولا بتستخدمه**. التوقيع بيقول إنها محروسة، فمحدش
+          // بيراجعها.
+          //
+          // ══ وليه البيع كان شغّال؟ ══
+          // البيع بيمر على دالة ذرية جوّه القاعدة بتحطّ المحل
+          // بنفسها. تسجيل الحركة اليدوي بيكتب في الجدول مباشرةً
+          // من هنا. مسارين مختلفين، وواحد بس هو اللي نسي.
+          tenant_id: data.tenantId,
           treasury_id: data.treasuryId,
           branch_id: data.branchId,
           direction: data.direction,
@@ -1057,6 +1080,18 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         // قاعدة البيانات رفضت السجل (سُلفة بلا موظّف مثلاً)
         if (error?.code === '23514') {
           throw Errors.validation('بيانات الحركة ناقصة أو غير متسقة.');
+        }
+        // ⚠ 23502 = عمود إلزامي وصل فاضي.
+        //
+        // الرسالة دي اتضافت عشان الغلطة اللي فوق. من غيرها،
+        // العطل بيطلع "حدث خطأ غير متوقّع" — وقعدنا ندوّر ساعات
+        // في الصلاحيات والقيود وأسباب الصرف، والسبب كان عمود
+        // ناسي اسمه مكتوب في رسالة بوستجرس من أول ثانية.
+        //
+        // الرسالة للمستخدم تفضل عامة (مفيش أسماء أعمدة تتسرّب)،
+        // لكن التفصيلة بتروح للوق.
+        if (error?.code === '23502') {
+          throw Errors.internal(`movement insert — missing column: ${error.message}`);
         }
         throw Errors.internal(`movement insert: ${error?.message}`);
       }
@@ -1184,6 +1219,29 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
       return (data ?? []).map(map);
     },
 
+    async create(input) {
+      const { data, error } = await db
+        .from('expense_reasons')
+        .insert({
+          tenant_id: input.tenantId,
+          name: input.name,
+          // ⚠ عام على المحل، ومصروف عادي. شوف التعليق على العقد.
+          branch_id: null,
+          is_advance: false,
+          is_inventory: false,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // 23505 = تعارض تفرّد على (المحل · الفرع · الاسم)
+        if (error.code === '23505') throw Errors.validation('السبب ده موجود بالفعل.');
+        throw Errors.internal(`expense reason create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
     async findById(id) {
       const { data, error } = await db
         .from('expense_reasons')
@@ -1219,7 +1277,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 const PRODUCT_BASE_COLUMNS =
   'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
-  'customs_cleared, battery_health, storage_capacity, is_active';
+  'customs_cleared, battery_health, storage_capacity, category_id, model_id, color_id, is_active';
 
 function productColumns(includeCost: boolean): string {
   return includeCost ? `${PRODUCT_BASE_COLUMNS}, cost_piastres` : PRODUCT_BASE_COLUMNS;
@@ -1227,6 +1285,9 @@ function productColumns(includeCost: boolean): string {
 
 interface RawProduct {
   id: string;
+  category_id?: string | null;
+  model_id?: string | null;
+  color_id?: string | null;
   tenant_id: string;
   branch_id: string;
   name: string;
@@ -1268,6 +1329,10 @@ function toProduct(raw: RawProduct): ProductRecord {
     batteryHealth: raw.battery_health === null || raw.battery_health === undefined
       ? null : Number(raw.battery_health),
     storageCapacity: raw.storage_capacity ? String(raw.storage_capacity) : null,
+    // فاضي = غير مصنّف، والشاشة بتعرضه في درج "غير مصنّف"
+    categoryId: raw.category_id ?? null,
+    modelId: raw.model_id ?? null,
+    colorId: raw.color_id ?? null,
     isActive: raw.is_active,
   };
 
@@ -1278,6 +1343,320 @@ function toProduct(raw: RawProduct): ProductRecord {
   }
 
   return record;
+}
+
+export function createCategoryRepository(db: SupabaseClient): CategoryRepository {
+  return {
+    /**
+     * الشجرة + عدد منتجات كل درج في **نداء واحد**.
+     *
+     * ⚠ الدالة في القاعدة هي اللي بتعدّ. لو عدّينا هنا، كانت
+     * هتبقى رحلة شبكة لكل درج — سبع أدراج دلوقتي وتلاتين بعد سنة.
+     */
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_product_categories', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`categories list: ${error.message}`);
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        id: String(r.id),
+        parentId: (r.parent_id as string | null) ?? null,
+        name: String(r.name),
+        sortOrder: Number(r.sort_order ?? 0),
+        isSystem: Boolean(r.is_system),
+        productCount: Number(r.product_count ?? 0),
+      }));
+    },
+
+    async findById(id, tenantId) {
+      // ⚠ المحل جزء من الاستعلام مش فلتر بعده. من غير كده أي حد
+      // يعرف معرّف درج يقراه من محل تاني.
+      const { data, error } = await db
+        .from('product_categories')
+        .select('id, parent_id, name, sort_order, is_system')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`category findById: ${error.message}`);
+      if (!data) return null;
+
+      const raw = data as Record<string, unknown>;
+      return {
+        id: String(raw.id),
+        parentId: (raw.parent_id as string | null) ?? null,
+        name: String(raw.name),
+        sortOrder: Number(raw.sort_order ?? 0),
+        isSystem: Boolean(raw.is_system),
+        // ⚠ صفر مش العدد الحقيقي — الدالة دي للحراسة مش للعرض.
+        // العدّ الحقيقي بييجي من `list` وحدها.
+        productCount: 0,
+      };
+    },
+
+    async create(input) {
+      const { data, error } = await db
+        .from('product_categories')
+        .insert({
+          tenant_id: input.tenantId,
+          parent_id: input.parentId,
+          name: input.name,
+          // الجديد بيتحطّ في الآخر. الترتيب بإيد المستخدم بعدين.
+          sort_order: 99,
+          is_system: false,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // 23505 = تعارض تفرّد. والفهرس على (المحل · الأب · الاسم).
+        if (error.code === '23505') {
+          throw Errors.validation('فيه درج بنفس الاسم في نفس القسم.');
+        }
+        throw Errors.internal(`category create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
+    async rename(id, tenantId, name) {
+      const { error } = await db
+        .from('product_categories')
+        .update({ name })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') {
+          throw Errors.validation('فيه درج بنفس الاسم في نفس القسم.');
+        }
+        throw Errors.internal(`category rename: ${error.message}`);
+      }
+    },
+
+    /**
+     * حذف ناعم.
+     *
+     * ⚠ السجل بيفضل في القاعدة عشان أي منتج قديم لسه بيشاور
+     * عليه ما يكسرش. والمنتج بيبان "غير مصنّف" لأن الدرج مش
+     * بيترجع في القايمة — من غير ما نلمس صف المنتج أصلاً.
+     */
+    async softDelete(id, tenantId, actorId, at) {
+      const { error } = await db
+        .from('product_categories')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة المنتجات',
+        })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`category delete: ${error.message}`);
+    },
+  };
+}
+
+export function createModelRepository(db: SupabaseClient): ModelRepository {
+  const map = (r: Record<string, unknown>): DeviceModel => ({
+    id: String(r.id),
+    name: String(r.name),
+    brand: (r.brand as string | null) ?? null,
+    sortOrder: Number(r.sort_order ?? 0),
+    deviceCount: Number(r.device_count ?? 0),
+    accessoryCount: Number(r.accessory_count ?? 0),
+  });
+
+  return {
+    /**
+     * السجل + العدّين في نداء واحد.
+     *
+     * ⚠ عمودين عدّ منفصلين مش مجموع واحد: "كام جهاز ١٢ برو ماكس
+     * عندي" و"كام صنف إكسسوار ليه" سؤالين مختلفين. الرقم المجمّع
+     * كان هيقول "٧" ومش هتعرف سبع أجهزة ولا سبع جرابات.
+     */
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_device_models', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`models list: ${error.message}`);
+      return ((data ?? []) as Array<Record<string, unknown>>).map(map);
+    },
+
+    async findById(id, tenantId) {
+      // ⚠ المحل جزء من الاستعلام مش فلتر بعده
+      const { data, error } = await db
+        .from('device_models')
+        .select('id, name, brand, sort_order')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`model findById: ${error.message}`);
+      if (!data) return null;
+      // ⚠ العدّ صفر هنا — الدالة دي للحراسة مش للعرض
+      return map(data as Record<string, unknown>);
+    },
+
+    async create(input) {
+      const { data, error } = await db
+        .from('device_models')
+        .insert({
+          tenant_id: input.tenantId,
+          name: input.name,
+          brand: input.brand,
+          sort_order: 99,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // 23505 = تعارض تفرّد، والفهرس على (المحل · الاسم)
+        if (error.code === '23505') throw Errors.validation('الموديل ده مسجّل بالفعل.');
+        throw Errors.internal(`model create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
+    async update(id, tenantId, patch) {
+      const row: Record<string, unknown> = {};
+      if (patch.name !== undefined) row.name = patch.name;
+      if (patch.brand !== undefined) row.brand = patch.brand;
+      if (Object.keys(row).length === 0) return;
+
+      const { error } = await db
+        .from('device_models')
+        .update(row)
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('الموديل ده مسجّل بالفعل.');
+        throw Errors.internal(`model update: ${error.message}`);
+      }
+    },
+
+    /**
+     * حذف ناعم.
+     *
+     * ⚠ الصف بيفضل عشان المنتجات القديمة اللي بتشاور عليه ما
+     * تكسرش. والمنتج بيبان "بلا موديل" لأن الموديل مش بيترجع
+     * في القايمة — من غير ما نلمس صف المنتج.
+     */
+    async softDelete(id, tenantId, actorId, at) {
+      const { error } = await db
+        .from('device_models')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة المنتجات',
+        })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`model delete: ${error.message}`);
+    },
+  };
+}
+
+export function createColorRepository(db: SupabaseClient): ColorRepository {
+  const map = (r: Record<string, unknown>): ProductColor => ({
+    id: String(r.id),
+    name: String(r.name),
+    hex: (r.hex as string | null) ?? null,
+    sortOrder: Number(r.sort_order ?? 0),
+    isSystem: Boolean(r.is_system),
+    productCount: Number(r.product_count ?? 0),
+  });
+
+  return {
+    async list(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_product_colors', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`colors list: ${error.message}`);
+      return ((data ?? []) as Array<Record<string, unknown>>).map(map);
+    },
+
+    async findById(id, tenantId) {
+      // ⚠ المحل جزء من الاستعلام مش فلتر بعده
+      const { data, error } = await db
+        .from('product_colors')
+        .select('id, name, hex, sort_order, is_system')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`color findById: ${error.message}`);
+      if (!data) return null;
+      // ⚠ العدّ صفر — الدالة دي للحراسة مش للعرض
+      return map(data as Record<string, unknown>);
+    },
+
+    async create(input) {
+      const { data, error } = await db
+        .from('product_colors')
+        .insert({
+          tenant_id: input.tenantId,
+          name: input.name,
+          hex: input.hex,
+          sort_order: 99,
+          is_system: false,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('اللون ده مسجّل بالفعل.');
+        throw Errors.internal(`color create: ${error.message}`);
+      }
+      return { id: String((data as { id: string }).id) };
+    },
+
+    async update(id, tenantId, patch) {
+      const row: Record<string, unknown> = {};
+      if (patch.name !== undefined) row.name = patch.name;
+      if (patch.hex !== undefined) row.hex = patch.hex;
+      if (Object.keys(row).length === 0) return;
+
+      const { error } = await db
+        .from('product_colors')
+        .update(row)
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('اللون ده مسجّل بالفعل.');
+        throw Errors.internal(`color update: ${error.message}`);
+      }
+    },
+
+    async softDelete(id, tenantId, actorId, at) {
+      const { error } = await db
+        .from('product_colors')
+        .update({
+          deleted_at: at.toISOString(),
+          deleted_by: actorId,
+          delete_reason: 'حذف من شاشة المنتجات',
+        })
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (error) throw Errors.internal(`color delete: ${error.message}`);
+    },
+  };
 }
 
 export function createProductRepository(db: SupabaseClient): ProductRepository {
@@ -1330,6 +1709,16 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
           price_piastres: data.pricePiastres,
           cost_piastres: data.costPiastres,
           quantity_on_hand: data.quantityOnHand,
+          // ⚠ مواصفات الجهاز بتتكتب مع الصف من أول لحظة.
+          // قبل كده كانت بتتضاف في تعديل تاني بعد الإنشاء —
+          // يعني كان فيه لحظة الجهاز فيها مسجّل بلا مواصفاته،
+          // ولو التعديل التاني فشل بتفضل ناقصة بلا أثر.
+          customs_cleared: data.customsCleared,
+          battery_health: data.batteryHealth,
+          storage_capacity: data.storageCapacity,
+          category_id: data.categoryId,
+          model_id: data.modelId,
+          color_id: data.colorId,
           is_active: true,
           created_by_id: data.createdById,
           updated_by_id: data.createdById,
@@ -1376,6 +1765,11 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       if (data.customsCleared !== undefined) patch.customs_cleared = data.customsCleared;
       if (data.batteryHealth !== undefined) patch.battery_health = data.batteryHealth;
       if (data.storageCapacity !== undefined) patch.storage_capacity = data.storageCapacity;
+      // ⚠ `undefined` = ما تلمسش الدرج. `null` = شيله (غير مصنّف).
+      // من غير التفريق ده مستحيل ترجّع منتج بلا درج بعد ما اتحطّ فيه.
+      if (data.categoryId !== undefined) patch.category_id = data.categoryId;
+      if (data.modelId !== undefined) patch.model_id = data.modelId;
+      if (data.colorId !== undefined) patch.color_id = data.colorId;
 
       const { error } = await db.from('products').update(patch).eq('id', id).is('deleted_at', null);
 
@@ -1579,8 +1973,28 @@ function raiseSaleError(error: { code?: string; message?: string }): never {
     case 'MZ409':
     case 'MZ400':
       throw Errors.validation(message);
+
+    // ══ ⚠ MZ403 هنا **مش** فشل صلاحية، وده مقصود ══
+    //
+    // الدالة بترمي الكود ده في حالتين بس: الخزينة من فرع تاني،
+    // أو منتج في السلة من فرع تاني. الاتنين **غلطة على الكاونتر**
+    // مش محاولة تجاوز.
+    //
+    // والحراسة الحقيقية اتعملت قبل ما نوصل هنا: `createSale`
+    // بتقفل غير صاحب المحل على خزينة فرعه. اللي بيوصل للكود ده
+    // هو صاحب المحل اللي فروعه كلها بتاعته — بيخلط بينهم بس.
+    //
+    // ══ وليه اتغيّر من forbidden ══
+    // `Errors.forbidden` رسالته للمستخدم **ثابتة**: "لا تملك
+    // صلاحية تنفيذ هذا الإجراء." والرسالة الحقيقية — «المنتج
+    // "س" مش تابع لفرعك» — كانت بتروح للوق وتختفي.
+    //
+    // فصاحب المحل كان بيقرا إنه مش مصرّح له يبيع في محله هو،
+    // والسبب الفعلي مكتوب وموجود وما بيوصلش. الرسالة اللي
+    // بتشاور على المكان الغلط أوحش من مفيش رسالة.
     case 'MZ403':
-      throw Errors.forbidden(`sale scope: ${message}`);
+      throw Errors.validation(message);
+
     case 'MZ404':
       throw Errors.notFound('العنصر المطلوب');
     default:
