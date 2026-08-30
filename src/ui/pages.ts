@@ -601,12 +601,34 @@ const PRINT_SHARED_JS = `
 
   function loadZxing() {
     if (zxingReady) return zxingReady;
+    // ⚠ مصدرين مش واحد.
+    //
+    // المكتبة دي هي **الطريق الوحيد** للمسح على الأيفون (مفيش
+    // كاشف مدمج في محرك سفاري). فلو المصدر الأول مقفول — شبكة
+    // محل، أو مانع إعلانات، أو المصدر نفسه واقع — الماسح
+    // بيتعطّل خالص.
+    //
+    // ⚠ ولاحظ إن الفشل هنا بيبان: بنرمي رسالة واضحة. الحاجة
+    // الوحيدة اللي بتتقبل السكوت هي الإطار اللي مفيهوش باركود.
+    var SOURCES = [
+      'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js',
+      'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'
+    ];
+
     zxingReady = new Promise(function (resolve, reject) {
-      var tag = document.createElement('script');
-      tag.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
-      tag.onload = function () { resolve(window.ZXing); };
-      tag.onerror = function () { reject(new Error('cdn')); };
-      document.head.appendChild(tag);
+      var at = 0;
+      function attempt() {
+        if (at >= SOURCES.length) { reject(new Error('cdn')); return; }
+        var tag = document.createElement('script');
+        tag.src = SOURCES[at++];
+        tag.onload = function () {
+          if (window.ZXing) resolve(window.ZXing);
+          else attempt();
+        };
+        tag.onerror = function () { attempt(); };
+        document.head.appendChild(tag);
+      }
+      attempt();
     });
     return zxingReady;
   }
@@ -623,6 +645,12 @@ const PRINT_SHARED_JS = `
         '<video class="scan-video" playsinline muted></video>' +
         '<p class="scan-hint">صوّب الكاميرا على الباركود</p>' +
         '<button class="btn-mini" type="button" data-scan-cancel>إلغاء</button>' +
+        // ⚠ مخرج يدوي دايمًا موجود.
+        //
+        // الماسح بيعتمد على كاميرا وإضاءة ومكتبة من الإنترنت —
+        // تلات حاجات ممكن تخذلك والزبون واقف قدامك. الزرار ده
+        // بيخلّي أسوأ حالة "اكتبه بإيدك" مش "اقفل وارجع بعدين".
+        '<button class="btn-mini" type="button" data-scan-manual>اكتبه بإيدك</button>' +
       '</div>';
     document.body.appendChild(overlay);
 
@@ -637,6 +665,13 @@ const PRINT_SHARED_JS = `
     }
 
     overlay.querySelector('[data-scan-cancel]').addEventListener('click', cleanup);
+
+    var manualValue = null;
+    overlay.querySelector('[data-scan-manual]').addEventListener('click', function () {
+      var typed = prompt('اكتب الرقم:');
+      if (typed && typed.trim()) { manualValue = typed.trim(); }
+      cleanup();
+    });
 
     try {
       // ══ ⚠ الدقة مطلوبة صراحةً، والافتراضي مش كفاية ══
@@ -695,6 +730,10 @@ const PRINT_SHARED_JS = `
         });
 
         if (nativeWorked) { cleanup(); return nativeWorked; }
+        // ⚠ نفس معالجة الكتابة اليدوية في المسارين. لو حطّيناها
+        // في واحد بس، الزرار يشتغل على الأيفون ويسكت على
+        // الأندرويد — وده أوحش من إنه مش موجود خالص.
+        if (manualValue) { cleanup(); return manualValue; }
         if (stopped) throw new Error('أُلغي المسح.');
         // ما اشتغلش — بنكمّل للمكتبة تحت
       } catch (e) { /* الصيغ مش مدعومة — بنكمّل للمكتبة */ }
@@ -709,17 +748,83 @@ const PRINT_SHARED_JS = `
       throw new Error('تعذّر تحميل الماسح. تأكّد من الاتصال بالإنترنت.');
     }
 
+    // ══ ⚠ بنسحب الإطارات بإيدنا، ومش بنسلّم الفيديو للمكتبة ══
+    //
+    // ══ الغلطة اللي كانت هنا ══
+    // كنا بننادي decodeFromVideoElement. الدالة دي بتستنّى
+    // إشارة إن الفيديو **بدأ يشتغل** — وإحنا شغّلناه بإيدنا
+    // فوق بـplay(). فالإشارة حصلت **قبل** ما المكتبة تستنّاها،
+    // وهي فضلت مستنّية حاجة عدّت خلاص.
+    //
+    // النتيجة: الكاميرا بتفتح، والصورة بتبان، والحلقة **ما
+    // بتبدأش أصلاً**. ومفيش رسالة خطأ لأن مفيش حاجة فشلت —
+    // فيه حاجة ما ابتدتش.
+    //
+    // تشبيه: تقول للمدرب "نبّهني أول ما الجرس يرنّ" بعد ما رنّ.
+    //
+    // ⚠ الحل: نرسم الإطار على لوحة إحنا مالكينها، وننادي
+    // القارئ عليها. مفيش أي اعتماد على دورة حياة الفيديو.
+    var hints = new Map();
+    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
+      ZX.BarcodeFormat.QR_CODE,
+      ZX.BarcodeFormat.CODE_128,
+      ZX.BarcodeFormat.CODE_39,
+      ZX.BarcodeFormat.EAN_13,
+      ZX.BarcodeFormat.EAN_8,
+      ZX.BarcodeFormat.UPC_A,
+      ZX.BarcodeFormat.ITF
+    ]);
+    // ⚠ محاولة أعمق لكل إطار. أبطأ، بس إحنا بنفحص 4 إطارات في
+    // الثانية مش 60 — فالبطء مش محسوس والفرق في القراءة كبير.
+    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    var reader = new ZX.BrowserMultiFormatReader(hints);
+    var hintEl = overlay.querySelector('.scan-hint');
+
     return await new Promise(function (resolve, reject) {
-      var reader = new ZX.BrowserMultiFormatReader();
-      reader.decodeFromVideoElement(video, function (result) {
-        if (stopped) { reader.reset(); reject(new Error('أُلغي المسح.')); return; }
-        if (result) {
-          reader.reset();
-          var value = result.getText();
-          cleanup();
-          resolve(value);
+      var frames = 0;
+
+      var timer = setInterval(function () {
+        if (stopped) {
+          clearInterval(timer);
+          // ⚠ لو كتبه بإيده، ده نجاح مش إلغاء
+          if (manualValue) resolve(manualValue);
+          else reject(new Error('أُلغي المسح.'));
+          return;
         }
-      });
+
+        var w = video.videoWidth, h = video.videoHeight;
+        // الإطار لسه ما وصلش — نستنّى من غير ما نعدّ محاولة
+        if (!w || !h) return;
+
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+
+        try {
+          var result = reader.decodeFromCanvas(canvas);
+          if (result) {
+            clearInterval(timer);
+            var value = result.getText();
+            cleanup();
+            resolve(value);
+            return;
+          }
+        } catch (e) {
+          // ⚠ المكتبة بترمي استثناء لكل إطار مفيهوش باركود.
+          // ده السلوك الطبيعي مش عطل — بنتجاهله ونكمّل.
+        }
+
+        // ⚠ تلميحة بعد 6 ثواني بدل شاشة صامتة.
+        // الماسح اللي بيفضل مفتوح من غير ما يقول حاجة بيخلّي
+        // الواحد يفتكر إنه باظ ويقفله.
+        frames++;
+        if (frames === 24 && hintEl) {
+          hintEl.textContent = 'قرّب الكاميرا 10 سم وثبّتها، وخلّي الإضاءة على الرمز.';
+        }
+      }, 250);
     });
   };
 
@@ -7203,12 +7308,17 @@ ${MENU_JS}
   // ⚠ لو غيّرت الطابعة لـ300dpi، الرقم الصح يبقى 25 × 0.0847 × 3
   // = 6.35 مم. اضرب: (25.4 ÷ dpi) × 3 × 25.
   //
-  // ⚠ اتغيّر من 9.375 لـ14.5 بعد ما الترتيب بقى صفّين.
+  // ⚠ 29 مربع (21 بيانات + 8 هامش صامت) × 0.375 مم
+  //   = **3 نقط لكل مربع** في طابعة 203dpi.
   //
-  // 29 مربع (21 بيانات + 8 هامش صامت) × 0.5 مم = 4 نقط لكل
-  // مربع. والهامش الصامت بقى 4 مربعات زي ما المواصفة بتطلب،
-  // بدل 2 — القارئ محتاجه عشان يعرف فين الرمز بيبتدي.
-  var LABEL_QR_MM = 14.5;
+  // والهامش الصامت 4 مربعات زي ما المواصفة بتطلب بدل 2 —
+  // القارئ محتاج فراغ أبيض حواليه عشان يعرف فين الرمز بيبتدي،
+  // وده كان جزء من سبب إن الملصقات القديمة ما كانتش بتتمسح.
+  //
+  // ⚠ الرقم ده هو **الفاضل** من الـ25 مم بعد الستة سطور.
+  // لو كبّرت أي خط في الأنماط، صغّر الرقم ده بنفس المقدار —
+  // وإلا الملصق هيطلع على ورقتين.
+  var LABEL_QR_MM = 10.875;
 
   // ══════════ طباعة الملصق ══════════
   //
@@ -7292,28 +7402,26 @@ ${MENU_JS}
     //
     // ⚠ والقص أرحم من الورقتين: ملصق ناقص سطر بيتقرا، وملصق
     // متقسّم على ورقتين بيتقطع نصين ويتحطّ في الزبالة.
-    // ══ ⚠ الترتيب بقى صفّين، مش عمود واحد ══
+    // ══ ⚠ الترتيب عمود واحد — والمقايضة مكتوبة هنا ══
     //
-    // الملصق 37 مم عرض و25 ارتفاع. لما كل حاجة كانت فوق بعض،
-    // الارتفاع كان بيخنقنا و**العرض كان سايب فاضي** — فالرمز
-    // اضطر يفضل 9.4 مم، والكاميرا ما كانتش بتقراه.
+    // كل حاجة فوق بعض. الشكل ده أوضح في القراءة بالعين، بس
+    // تمنه إن الارتفاع (25 مم) بيتقسّم على ستة سطور، والرمز
+    // بياخد **اللي فاضل** منهم.
     //
-    // دلوقتي الرمز جنب النص. الارتفاع المتاح للرمز بقى تلات
-    // أضعاف، فكبر لـ14.5 مم — ومربعه بقى نص مليمتر بدل ربع.
+    // ⚠ يعني أي تكبير في أي خط تحت بيصغّر الرمز مباشرةً.
+    // بالخطوط الكبيرة كان الرمز هيبقى 7.9 مم ومربعه 2.2 نقطة —
+    // وده تحت حدّ القراءة. فالخطوط مضبوطة عشان الرمز يقعد
+    // على 10.875 مم بالظبط.
     return '<div class="pr-doc pr-label" style="width:' + LABEL_W_MM +
       'mm;height:' + LABEL_H_MM + 'mm">' +
       '<div class="pr-label-shop">' + SHOP_NAME + '</div>' +
-      '<div class="pr-label-body">' +
-        '<div class="pr-label-qr">' + codeBlock + '</div>' +
-        '<div class="pr-label-info">' +
-          '<div class="pr-label-name">' + (o.name || '') + '</div>' +
-          serialLine +
-          (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
-          '<div class="pr-label-foot">' +
-            '<span>' + (o.price ? o.price + ' ج.م' : '') + '</span>' +
-            '<span>' + entryText + '</span>' +
-          '</div>' +
-        '</div>' +
+      '<div class="pr-label-name">' + (o.name || '') + '</div>' +
+      codeBlock +
+      serialLine +
+      (specHtml ? '<div class="pr-label-spec">' + specHtml + '</div>' : '') +
+      '<div class="pr-label-foot">' +
+        '<span>' + entryText + '</span>' +
+        '<span>' + (o.price ? o.price + ' ج.م' : '') + '</span>' +
       '</div>' +
     '</div>';
   }
