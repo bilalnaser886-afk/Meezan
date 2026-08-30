@@ -487,20 +487,30 @@ button{font:inherit}
 
    ⚠ والمقاسات تحت مضغوطة لملصق ٢٥ مم ارتفاع. لو كبّرت
    الملصق، تقدر تكبّرهم — بس لو صغّرته، السطور هتتقص. */
-.pr-label{text-align:center;padding:1.5mm 1mm;line-height:1.35}
-.pr-label-shop{font-family:var(--font-display);font-size:9px;font-weight:600;
-  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:2px}
-.pr-label-name{font-size:10px;font-weight:600;margin-bottom:1px}
+/* ⚠ box-sizing لازم: من غيره الحشو بيتزوّد **فوق** الارتفاع
+   المفروض، والملصق بيطلع 25mm + 1.6mm = ورقتين تاني.
+   overflow:hidden هو الضمانة الأخيرة، و break-inside بيمنع
+   المتصفح يقسّمه على صفحتين حتى لو حصل أي شيء غير متوقّع. */
+.pr-label{text-align:center;padding:.8mm 1mm;line-height:1.2;
+  box-sizing:border-box;overflow:hidden;
+  break-inside:avoid;page-break-inside:avoid}
+.pr-label-shop{font-family:var(--font-display);font-size:8px;font-weight:600;
+  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1px}
+.pr-label-name{font-size:9px;font-weight:600;margin-bottom:1px;
+  /* اسم طويل بيتقص بنقط بدل ما يلفّ سطرين ويزقّ الباقي بره */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* ⚠ الرمز مربّع، والمتصفح بيسيب مسافة تحت الـsvg زي أي سطر
    نص. block بتشيلها — من غيرها بيضيع ملّيمتر بلا فايدة. */
 .pr-label svg{display:block;margin:0 auto}
-.pr-label-code{font-family:var(--font-mono);font-size:8px;letter-spacing:.5px;
-  margin-top:1px;direction:ltr}
-/* سطر المواصفات: بيلف لو طال بدل ما يتقص */
-.pr-label-spec{font-size:7px;margin-top:1px;line-height:1.4;
-  display:flex;flex-wrap:wrap;justify-content:center;gap:0 5px}
+.pr-label-code{font-family:var(--font-mono);font-size:7px;letter-spacing:.3px;
+  margin-top:1px;direction:ltr;white-space:nowrap;overflow:hidden}
+/* ⚠ سطر واحد بس. كان بيلفّ لو طال — واللفّ على ملصق 25mm
+   معناه إن السطر السفلي بيتزقّ بره الورقة. */
+.pr-label-spec{font-size:6px;margin-top:1px;line-height:1.25;
+  display:flex;flex-wrap:nowrap;justify-content:center;gap:0 5px;
+  overflow:hidden;white-space:nowrap}
 .pr-label-foot{display:flex;justify-content:space-between;margin-top:1px;
-  padding-top:1px;border-top:1px solid #000;font-size:7px;
+  padding-top:1px;border-top:1px solid #000;font-size:6px;line-height:1.25;
   font-family:var(--font-mono)}
 
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
