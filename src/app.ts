@@ -43,7 +43,7 @@ import {
   listMovements,
   listTransfers,
 } from './application/use-cases/treasury';
-import { listProducts, listSellableProducts } from './application/use-cases/products';
+import { listCategories, listColors, listModels, listProducts, listSellableProducts } from './application/use-cases/products';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
 import { listTenants } from './application/use-cases/platform';
@@ -362,7 +362,7 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const idleRule = idleRuleFor(user.roleKey);
 
-  const [products, balances, recent, branchLabel] = await Promise.all([
+  const [products, balances, recent, branchLabel, posBranches] = await Promise.all([
     listSellableProducts(container.products, user),
     listBalances(container.treasury, user),
     // ⚠ الخطأ ما يصحّش يتبلع في صمت. لو الاستعلام فشل، القائمة
@@ -373,6 +373,11 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       return [];
     }),
     branchLabelFor(container, user),
+    // ⚠ لصاحب المحل وحده. غيره مقفول على فرعه أصلاً، فقائمة
+    // فروع عنده بتبقى خانة باختيار واحد — أثاث بلا وظيفة.
+    user.roleKey === 'SUPER_ADMIN'
+      ? container.branches.listActive(user.tenantId).catch(() => [])
+      : Promise.resolve([]),
   ]);
 
   return c.html(
@@ -390,9 +395,20 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       // ⚠ الخزائن اللي مالهاش فرع (مستوى الشركة) مستبعدة: البيع
       // لازم يتسجّل على فرع، والدالة في قاعدة البيانات بترفضها.
       // إخفاؤها هنا بيمنع الموظّف يختار حاجة هتترفض بعد الضغط.
+      //
+      // ⚠ و`branchId` بيتمرّر دلوقتي عشان الشاشة تفلتر بيه.
+      // الفلتر ده **راحة مش حماية** — الحارس الحقيقي في دالة
+      // القاعدة، وهو اللي بيرفض خزينة فرع مع منتج فرع تاني.
       treasuries: balances
         .filter((b) => b.isActive && b.branchId !== null)
-        .map((b) => ({ treasuryId: b.treasuryId, name: b.name, type: b.type })),
+        .map((b) => ({
+          treasuryId: b.treasuryId,
+          name: b.name,
+          type: b.type,
+          branchId: b.branchId as string,
+        })),
+      // ⚠ فاضية لغير صاحب المحل — والشاشة بتخفي الخانة ساعتها.
+      branches: posBranches.map((b: { id: string; name: string }) => ({ id: b.id, name: b.name })),
       products: products.map((p) => ({
         id: p.id,
         name: p.name,
@@ -400,6 +416,7 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         serialNumber: p.serialNumber,
         pricePiastres: p.pricePiastres,
         quantityOnHand: p.quantityOnHand,
+        branchId: p.branchId,
       })),
       recentSales: recent.map((s) => ({
         id: s.id,
@@ -443,7 +460,7 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
   const idleRule = idleRuleFor(user.roleKey);
   const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
 
-  const [products, branches, allBranches, branchLabel] = await Promise.all([
+  const [products, branches, allBranches, branchLabel, categories, models, colors] = await Promise.all([
     listProducts(container.products, user),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
@@ -457,6 +474,15 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
     branchLabelFor(container, user),
+    // ⚠ الأدراج بتتجاب لكل من يشوف المخزون، مش للمعدّل بس.
+    // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
+    // شايفين أدراج مش بيشوف نفس المحل.
+    listCategories(container.products, user).catch(() => []),
+    // ⚠ نفس السبب: سجل الموديلات بيتجاب لكل من يشوف المخزون.
+    // الشاشة بتفلتر بيه، واللي شايف قايمة بلا فلتر مش بيشوف
+    // نفس المحل.
+    listModels(container.products, user).catch(() => []),
+    listColors(container.products, user).catch(() => []),
   ]);
 
   // ورش الصيانة — لقائمة "تحويل للصيانة" في كارت المنتج
@@ -480,6 +506,9 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canSetReorder: user.permissions.includes(PERMISSIONS.INVENTORY_REORDER_POINT),
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      categories,
+      models,
+      colors,
       branches,
       // ⚠ فروع التحويل غير قائمة الإضافة: هنا بنستبعد فرع
       // المستخدم نفسه — تحويل لفرعك مالوش معنى، والقاعدة
