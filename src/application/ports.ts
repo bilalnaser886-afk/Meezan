@@ -731,6 +731,11 @@ export interface ProductRecord {
   productType: ProductType;
   /** للأجهزة فقط. الإكسسوار بيفضل null. */
   serialNumber: string | null;
+  /**
+   * ⚠ "مش متاح سريال" — قرار صريح مش خانة فاضية.
+   * الإكسسوار بيفضل false دايمًا.
+   */
+  serialUnavailable: boolean;
   /** اسم التاجر أو المحل اللي اتشترى منه. نص حر. */
   source: string | null;
   /** YYYY-MM-DD — نص مش Date، عشان ما يتزحلقش يوم بالتوقيت */
@@ -794,6 +799,7 @@ export interface CreateProductInput {
   name: string;
   productType: ProductType;
   serialNumber: string | null;
+  serialUnavailable: boolean;
   source: string | null;
   /** null = سيب الافتراضي (تاريخ النهاردة بتوقيت القاهرة) */
   entryDate: string | null;
@@ -830,6 +836,7 @@ export interface UpdateProductInput {
   isActive?: boolean;
   source?: string | null;
   serialNumber?: string | null;
+  serialUnavailable?: boolean;
   entryDate?: string;
   /** محكوم بصلاحية `inventory.reorder_point` — صاحب المحل وحده */
   reorderPoint?: number;
