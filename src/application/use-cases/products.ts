@@ -34,7 +34,13 @@ import type {
   AuditLogger,
   AuthenticatedUser,
   BranchRepository,
+  CategoryRepository,
   Clock,
+  ColorRepository,
+  DeviceModel,
+  ModelRepository,
+  ProductCategory,
+  ProductColor,
   ListScope,
   PriceChange,
   ProductRecord,
@@ -45,6 +51,12 @@ import type {
 
 export interface ProductDeps {
   products: ProductRepository;
+  /** أدراج المنتجات — التنظيم فوق النوع مش بدلاً منه */
+  categories: CategoryRepository;
+  /** سجل موديلات الموبايل — البُعد التاني جنب الدرج */
+  models: ModelRepository;
+  /** سجل الألوان — البُعد التالت */
+  colors: ColorRepository;
   branches: BranchRepository;
   /** لتحويل معرّفات من غيّر السعر لأسماء */
   users: UserRepository;
@@ -64,6 +76,30 @@ export interface CreateProductRequest {
   quantityOnHand: number;
   /** مطلوب من المالك بس — مدير الفرع مقفول على فرعه */
   branchId?: string | null;
+  /**
+   * ══ مواصفات الجهاز — بتتسجّل مع الإنشاء ══
+   *
+   * ⚠ التلاتة دول كانوا في التعديل بس. المستلم كان بيسجّل الجهاز
+   * الأول، وبعدين يفتحه تاني ويكمّل مواصفاته — خطوتين لفعل واحد.
+   *
+   * والخطوة التانية هي اللي بتتنسي. فبتلاقي أجهزة في المخزن
+   * مالهاش مساحة ولا بطارية، والملصق بيطلع ناقص.
+   *
+   * ⚠ وللأجهزة بس. الإكسسوار مالوش بطارية ولا مساحة، والقيم
+   * بتتصفّر تحت لو النوع إكسسوار — بدل ما نرفض الطلب. الرفض
+   * كان هيكسر أي نموذج بيبعت الحقول فاضية وهو سليم.
+   */
+  customsCleared?: boolean;
+  /** 0–100. null = ما اتقاسش — وهي **غير** الصفر. */
+  batteryHealth?: number | null;
+  /** "256GB" · "8/256" · "1TB" — نص عن قصد، شوف 23_device_specs.sql */
+  storageCapacity?: string | null;
+  /** درج الإكسسوار. فاضي = غير مصنّف. الجهاز بيتجاهله. */
+  categoryId?: string | null;
+  /** موديل الموبايل — للنوعين. فاضي = غير محدّد. */
+  modelId?: string | null;
+  /** لون المنتج — للنوعين. فاضي = غير محدّد. */
+  colorId?: string | null;
 }
 
 export interface UpdateProductRequest {
@@ -81,6 +117,12 @@ export interface UpdateProductRequest {
   batteryHealth?: number | null;
   /** "256GB" · "8/256" · "1TB" */
   storageCapacity?: string | null;
+  /** نقل المنتج لدرج تاني. `null` = شيله من الدرج. */
+  categoryId?: string | null;
+  /** `null` = شيل الموديل */
+  modelId?: string | null;
+  /** `null` = شيل اللون */
+  colorId?: string | null;
 }
 
 /** حد أقصى احترازي للكمية — يمنع صفر زيادة بالغلط */
@@ -172,6 +214,552 @@ export async function listSellableProducts(
   return all.filter((p) => p.quantityOnHand > 0);
 }
 
+// ═══════════════════ الأدراج ═══════════════════
+
+/**
+ * أدراج المنتجات.
+ *
+ * ══ إيه اللي بتحلّه ══
+ * كل حاجة مش جهاز كانت في كومة واحدة: جرابات وشواحن وسماعات
+ * وإسكرينات. عشرة أصناف دلوقتي، وتلتمية بعد سنة.
+ *
+ * ══ ⚠ و"مكملات" **درج** مش نوع منتج ══
+ * `product_type` هو اللي بيحكم قواعد المخزون (الجهاز قطعة
+ * بسريال · الإكسسوار صنف بكمية)، والقواعد دي متحطّة في قيود
+ * قاعدة البيانات. والشاحن بيتصرّف زي الجراب بالحرف.
+ *
+ * لو عملناه نوع تالت، كان لازم يتزوّد في القيود والفهارس
+ * و`fn_alerts` وعشر أماكن في الكود — والمكان اللي بينُسى بيسكت
+ * وبيشتغل غلط.
+ */
+
+/**
+ * قراءة الأدراج.
+ *
+ * ⚠ `inventory.view` مش `inventory.adjust`. الأدراج تنظيم عرض،
+ * وأي حد بيشوف المخزون لازم يشوف تقسيمته — وإلا هيبصّ على قايمة
+ * مسطّحة والباقي بيشوفوا أدراج.
+ */
+export async function listCategories(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<ProductCategory[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+
+  // fail-closed: مدير بلا فرع ما يشوفش حاجة بدل ما يشوف المحل كله.
+  // ⚠ والفرع بيأثّر على **العدّ** بس — الأدراج نفسها للمحل كله.
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+
+  return deps.categories.list(actor.tenantId, branchId);
+}
+
+const CATEGORY_NAME_MAX = 40;
+
+function readCategoryName(raw: unknown): string {
+  const name = String(raw ?? '').trim();
+  if (name.length < 2 || name.length > CATEGORY_NAME_MAX) {
+    throw Errors.validation(`اسم الدرج من حرفين إلى ${CATEGORY_NAME_MAX} حرفًا.`);
+  }
+  return name;
+}
+
+/**
+ * درج جديد.
+ *
+ * ⚠ `inventory.adjust` — نفس صلاحية إضافة المنتج نفسه.
+ * اللي بيستلم البضاعة هو اللي بيلاقي صنف جديد مالوش درج، وتقييد
+ * ده في المالك معناه إنه هيحطّه في درج غلط لحد ما المالك يفضى.
+ */
+export async function createCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  input: { parentId?: string | null; name: string },
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const name = readCategoryName(input.name);
+  const parentId = String(input.parentId ?? '').trim() || null;
+
+  if (parentId) {
+    // ⚠ الأب لازم يكون في نفس المحل، ولازم يكون **قسم رئيسي**.
+    const parent = await deps.categories.findById(parentId, actor.tenantId);
+    if (!parent) throw Errors.validation('القسم المختار غير موجود.');
+
+    // ══ ⚠ مستويين وبس، وده مقصود ══
+    // لو سمحنا بعمق مفتوح، هتلاقي درج جوّه درج جوّه درج بعد شهر،
+    // والموظّف بيدوّر على الجراب في أربع نقرات. والأهم: موديلات
+    // الموبايل جايّة كـ**سجل** مش كأدراج، فالمستوى التالت محجوز
+    // ليها أصلاً.
+    if (parent.parentId !== null) {
+      throw Errors.validation('لا يمكن إنشاء درج داخل درج. اختر قسمًا رئيسيًا.');
+    }
+  }
+
+  const created = await deps.categories.create({
+    tenantId: actor.tenantId,
+    parentId,
+    name,
+  });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'category.create',
+    entity: 'ProductCategory',
+    entityId: created.id,
+    metadata: { name, parentId, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+/**
+ * إعادة تسمية درج.
+ *
+ * ⚠ المزروع **بيتسمّى عادي**. القفل على الحذف بس — تقدر تسمّي
+ * "مكملات" باسم تاني يناسب محلّك، وما تقدرش تمسحها وتسيب
+ * منتجاتها بلا مكان.
+ */
+export async function renameCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  categoryId: string,
+  rawName: unknown,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.categories.findById(categoryId, actor.tenantId);
+  // درج محل تاني = غير موجود بالنسبة لك
+  if (!existing) throw Errors.notFound('الدرج');
+
+  const name = readCategoryName(rawName);
+  await deps.categories.rename(categoryId, actor.tenantId, name);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'category.rename',
+    entity: 'ProductCategory',
+    entityId: categoryId,
+    // ⚠ القديم والجديد مع بعض. "اتغيّر" من غير "من إيه" مش سجل.
+    metadata: { from: existing.name, to: name },
+  });
+}
+
+/**
+ * حذف درج.
+ *
+ * ══ ⚠ تلات حواجز، كل واحد ليه سبب ══
+ */
+export async function deleteCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  categoryId: string,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  // 1) المحل
+  const existing = await deps.categories.findById(categoryId, actor.tenantId);
+  if (!existing) throw Errors.notFound('الدرج');
+
+  // 2) المزروع محصّن.
+  //    القسم الرئيسي لو اتمسح، كل أدراجه ومنتجاتها تبقى بلا مكان
+  //    ومفيش طريق رجوع من الشاشة. ده باب مسدود مش مخاطرة.
+  if (existing.isSystem) {
+    throw Errors.validation('الأدراج الأساسية لا تُحذف. يمكنك إعادة تسميتها.');
+  }
+
+  // 3) والفاضي بس.
+  //    ⚠ العدّ بيتقرا من نفس الدالة اللي بتعرض الشاشة، عشان
+  //    الرقم اللي المستخدم شايفه هو الرقم اللي بنحكم بيه.
+  //    والفرع فاضي هنا عن قصد: درج فيه منتج في **أي** فرع مش
+  //    فاضي، حتى لو فرع الحاذف مالوش فيه حاجة.
+  const tree = await deps.categories.list(actor.tenantId, null);
+  const row = tree.find((c) => c.id === categoryId);
+
+  if (row && row.productCount > 0) {
+    throw Errors.validation(
+      `الدرج فيه ${row.productCount} منتج. انقلهم أولًا أو غيّر اسم الدرج.`,
+    );
+  }
+  // وأي درج جوّاه كمان
+  if (tree.some((c) => c.parentId === categoryId)) {
+    throw Errors.validation('القسم فيه أدراج. احذفها أولًا.');
+  }
+
+  await deps.categories.softDelete(categoryId, actor.tenantId, actor.id, deps.clock.now());
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'category.delete',
+    entity: 'ProductCategory',
+    entityId: categoryId,
+    metadata: { name: existing.name, parentId: existing.parentId },
+  });
+}
+
+/**
+ * قراءة الدرج من طلب المنتج.
+ *
+ * ⚠ الجهاز بياخد `null` دايمًا. الأدراج للإكسسوار والمكملات —
+ * والأجهزة هتتجمّع بموديلها في مرحلة تانية، مش هنا.
+ *
+ * ⚠ والدرج لازم يكون **درج** مش قسم رئيسي: "إكسسوار" مكان
+ * تجميع، والمنتج بيتحطّ في "جرابات". لو سمحنا بالقسم، هتلاقي
+ * نص المنتجات في الجذر ونصها في الأدراج.
+ */
+async function resolveCategory(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  raw: unknown,
+  productType: ProductType,
+): Promise<string | null> {
+  if (productType === 'device') return null;
+
+  const categoryId = String(raw ?? '').trim();
+  if (!categoryId) return null; // غير مصنّف — مسموح
+
+  const category = await deps.categories.findById(categoryId, actor.tenantId);
+  if (!category) throw Errors.validation('الدرج المختار غير موجود.');
+  if (category.parentId === null) {
+    throw Errors.validation('اختر درجًا داخل القسم، لا القسم نفسه.');
+  }
+
+  return categoryId;
+}
+
+// ═══════════════════ موديلات الموبايل ═══════════════════
+
+/**
+ * سجل الموديلات.
+ *
+ * ══ البُعدين ══
+ *   الدرج   → إيه الصنف  (جراب · شاحن · إسكرين)
+ *   الموديل → لأنهي جهاز (١٢ برو ماكس)
+ *
+ * ⚠ والموديل للنوعين. الجهاز موديله هو، والإكسسوار موديله
+ * الجهاز اللي بيركب عليه.
+ */
+export async function listModels(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<DeviceModel[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+
+  // fail-closed. والفرع بيأثّر على **العدّ** بس — السجل للمحل كله.
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+  return deps.models.list(actor.tenantId, branchId);
+}
+
+const MODEL_NAME_MAX = 60;
+
+function readModelName(raw: unknown): string {
+  const name = String(raw ?? '').trim();
+  if (name.length < 2 || name.length > MODEL_NAME_MAX) {
+    throw Errors.validation(`اسم الموديل من حرفين إلى ${MODEL_NAME_MAX} حرفًا.`);
+  }
+  return name;
+}
+
+function readBrand(raw: unknown): string | null {
+  const brand = String(raw ?? '').trim();
+  if (!brand) return null;
+  if (brand.length > 40) throw Errors.validation('اسم الماركة أطول من 40 حرفًا.');
+  return brand;
+}
+
+/**
+ * موديل جديد.
+ *
+ * ⚠ `inventory.adjust` — نفس صلاحية إضافة المنتج.
+ * اللي بيستلم جهاز موديله جديد هو اللي لازم يسجّله؛ وتقييد ده
+ * في المالك معناه إن الموظّف هيسيب الموديل فاضي ويكمّل شغله،
+ * والسجل يفضل فاضي للأبد.
+ */
+export async function createModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  input: { name: string; brand?: string | null },
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const name = readModelName(input.name);
+  const brand = readBrand(input.brand);
+
+  const created = await deps.models.create({ tenantId: actor.tenantId, name, brand });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'model.create',
+    entity: 'DeviceModel',
+    entityId: created.id,
+    metadata: { name, brand, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+export async function updateModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  modelId: string,
+  input: { name?: unknown; brand?: unknown },
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.models.findById(modelId, actor.tenantId);
+  // موديل محل تاني = غير موجود بالنسبة لك
+  if (!existing) throw Errors.notFound('الموديل');
+
+  const patch: { name?: string; brand?: string | null } = {};
+  if (input.name !== undefined) patch.name = readModelName(input.name);
+  if (input.brand !== undefined) patch.brand = readBrand(input.brand);
+  if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
+
+  await deps.models.update(modelId, actor.tenantId, patch);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'model.update',
+    entity: 'DeviceModel',
+    entityId: modelId,
+    // ⚠ القديم والجديد. "اتغيّر" من غير "من إيه" مش سجل.
+    metadata: {
+      from: { name: existing.name, brand: existing.brand },
+      to: patch,
+    },
+  });
+}
+
+/**
+ * حذف موديل.
+ *
+ * ⚠ الفاضي بس — ومفيش استثناء "مزروع" هنا زي الأدراج، لأن
+ * السجل بيبدأ فاضي أصلاً وكل موديل فيه المستخدم كتبه بإيده.
+ */
+export async function deleteModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  modelId: string,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.models.findById(modelId, actor.tenantId);
+  if (!existing) throw Errors.notFound('الموديل');
+
+  // ⚠ العدّ على **كل الفروع** مش فرع الحاذف: موديل عليه جهاز في
+  // فرع تاني مش فاضي، حتى لو فرع الحاذف مالوش فيه حاجة.
+  const all = await deps.models.list(actor.tenantId, null);
+  const row = all.find((m) => m.id === modelId);
+
+  if (row && (row.deviceCount > 0 || row.accessoryCount > 0)) {
+    throw Errors.validation(
+      `الموديل مرتبط بـ${row.deviceCount} جهاز و${row.accessoryCount} صنف إكسسوار.`,
+    );
+  }
+
+  await deps.models.softDelete(modelId, actor.tenantId, actor.id, deps.clock.now());
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'model.delete',
+    entity: 'DeviceModel',
+    entityId: modelId,
+    metadata: { name: existing.name, brand: existing.brand },
+  });
+}
+
+/**
+ * قراءة الموديل من طلب المنتج.
+ *
+ * ⚠ للنوعين — على عكس الدرج اللي للإكسسوار وحده.
+ * وفاضي مسموح: منتجاتك القديمة مالهاش موديل.
+ */
+async function resolveModel(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  raw: unknown,
+): Promise<string | null> {
+  const modelId = String(raw ?? '').trim();
+  if (!modelId) return null;
+
+  const model = await deps.models.findById(modelId, actor.tenantId);
+  if (!model) throw Errors.validation('الموديل المختار غير موجود.');
+  return modelId;
+}
+
+// ═══════════════════ الألوان ═══════════════════
+
+/**
+ * سجل الألوان.
+ *
+ * ⚠ بيتزرع مع فتح المحل بعشر ألوان شائعة، على عكس الموديلات
+ * اللي بتبدأ فاضية. الموديلات بتقدم؛ الأسود أسود من عشرين سنة.
+ */
+export async function listColors(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<ProductColor[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+  return deps.colors.list(actor.tenantId, branchId);
+}
+
+function readColorName(raw: unknown): string {
+  const name = String(raw ?? '').trim();
+  if (name.length < 2 || name.length > 30) {
+    throw Errors.validation('اسم اللون من حرفين إلى 30 حرفًا.');
+  }
+  return name;
+}
+
+/**
+ * قراءة كود اللون.
+ *
+ * ⚠ بنرفض الصيغة الغلط بدل ما نتجاهلها. الكود الغلط بيدّي نقطة
+ * سودا في الشاشة والمستخدم يفتكر إنه اختار أسود.
+ */
+function readHex(raw: unknown): string | null {
+  const hex = String(raw ?? '').trim();
+  if (!hex) return null;
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) {
+    throw Errors.validation('كود اللون لازم يكون بصيغة #RRGGBB.');
+  }
+  return hex.toUpperCase();
+}
+
+export async function createColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  input: { name: string; hex?: string | null },
+): Promise<{ id: string }> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const name = readColorName(input.name);
+  const hex = readHex(input.hex);
+  const created = await deps.colors.create({ tenantId: actor.tenantId, name, hex });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'color.create',
+    entity: 'ProductColor',
+    entityId: created.id,
+    metadata: { name, hex, tenantId: actor.tenantId },
+  });
+
+  return created;
+}
+
+export async function updateColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  colorId: string,
+  input: { name?: unknown; hex?: unknown },
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.colors.findById(colorId, actor.tenantId);
+  if (!existing) throw Errors.notFound('اللون');
+
+  const patch: { name?: string; hex?: string | null } = {};
+  if (input.name !== undefined) patch.name = readColorName(input.name);
+  if (input.hex !== undefined) patch.hex = readHex(input.hex);
+  if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
+
+  await deps.colors.update(colorId, actor.tenantId, patch);
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'color.update',
+    entity: 'ProductColor',
+    entityId: colorId,
+    metadata: { from: { name: existing.name, hex: existing.hex }, to: patch },
+  });
+}
+
+/**
+ * حذف لون.
+ *
+ * ⚠ نفس حارسَي الأدراج: المزروع محصّن، والفاضي بس.
+ */
+export async function deleteColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  colorId: string,
+): Promise<void> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
+  }
+
+  const existing = await deps.colors.findById(colorId, actor.tenantId);
+  if (!existing) throw Errors.notFound('اللون');
+
+  if (existing.isSystem) {
+    throw Errors.validation('الألوان الأساسية لا تُحذف. يمكنك إعادة تسميتها.');
+  }
+
+  // ⚠ العدّ على كل الفروع — لون عليه منتج في فرع تاني مش فاضي
+  const all = await deps.colors.list(actor.tenantId, null);
+  const row = all.find((c) => c.id === colorId);
+  if (row && row.productCount > 0) {
+    throw Errors.validation(`اللون مرتبط بـ${row.productCount} منتج.`);
+  }
+
+  await deps.colors.softDelete(colorId, actor.tenantId, actor.id, deps.clock.now());
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'color.delete',
+    entity: 'ProductColor',
+    entityId: colorId,
+    metadata: { name: existing.name },
+  });
+}
+
+/** ⚠ للنوعين زي الموديل. الجراب الأحمر غير الأزرق. */
+async function resolveColor(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+  raw: unknown,
+): Promise<string | null> {
+  const colorId = String(raw ?? '').trim();
+  if (!colorId) return null;
+  const color = await deps.colors.findById(colorId, actor.tenantId);
+  if (!color) throw Errors.validation('اللون المختار غير موجود.');
+  return colorId;
+}
+
+// ═══════════════════ المنتجات ═══════════════════
+
 // ─────────── الكتابة ───────────
 
 /**
@@ -232,6 +820,23 @@ export async function createProduct(
   const source = trimOrNull(input.source, 80, 'اسم المصدر طويل جدًا.');
   const entryDate = readDate(input.entryDate);
 
+  // ─── مواصفات الجهاز ───
+  //
+  // ⚠ الإكسسوار بياخد صفر/فاضي مش رفض. النموذج بيبعت الحقول
+  // موجودة دايمًا، وهي مخفية بس لما النوع إكسسوار — فالرفض كان
+  // هيكسر طلب سليم تمامًا.
+  const isDevice = productType === 'device';
+
+  const customsCleared = isDevice ? Boolean(input.customsCleared) : false;
+  const batteryHealth = isDevice ? readBatteryHealth(input.batteryHealth) : null;
+  const storageCapacity = isDevice
+    ? trimOrNull(input.storageCapacity, 32, 'المساحة أطول من 32 حرفًا.')
+    : null;
+
+  const categoryId = await resolveCategory(deps, actor, input.categoryId, productType);
+  const modelId = await resolveModel(deps, actor, input.modelId);
+  const colorId = await resolveColor(deps, actor, input.colorId);
+
   const created = await deps.products.create({
     tenantId: actor.tenantId,
     branchId: targetBranchId,
@@ -243,6 +848,12 @@ export async function createProduct(
     pricePiastres: input.pricePiastres,
     costPiastres: input.costPiastres,
     quantityOnHand,
+    customsCleared,
+    batteryHealth,
+    storageCapacity,
+    categoryId,
+    modelId,
+    colorId,
     createdById: actor.id,
   });
 
@@ -258,10 +869,36 @@ export async function createProduct(
       hasSerial: serialNumber !== null,
       hasPrice: input.pricePiastres !== null,
       quantityOnHand,
+      customsCleared,
+      batteryHealth,
+      storageCapacity,
+      categoryId,
+      modelId,
+      colorId,
     },
   });
 
   return created;
+}
+
+/**
+ * قراءة صحة البطارية.
+ *
+ * ⚠ الفاضي معناه **"ما اتقاسش"** مش صفر. والفرق مش لغوي:
+ * جهاز جديد ما حدش قاس بطاريته، وجهاز بطاريته خربانة قيمته صفر.
+ * لو خلطناهم، أول جهاز يتسجّل بلا قياس هيبان كأن بطاريته تالفة.
+ *
+ * نفس المنطق المكتوب في `23_device_specs.sql` بالحرف، والقيد
+ * في قاعدة البيانات بيحرسه من الناحية التانية.
+ */
+function readBatteryHealth(raw: number | null | undefined): number | null {
+  if (raw === null || raw === undefined || (raw as unknown) === '') return null;
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw Errors.validation('صحة البطارية رقم صحيح من 0 إلى 100.');
+  }
+  return value;
 }
 
 /**
@@ -317,8 +954,26 @@ export async function updateProduct(
     customsCleared?: boolean;
     batteryHealth?: number | null;
     storageCapacity?: string | null;
+    categoryId?: string | null;
+    modelId?: string | null;
+    colorId?: string | null;
     updatedById: string;
   } = { updatedById: actor.id };
+
+  // ⚠ الدرج بيتفحص بنوع المنتج **الموجود** مش المرسل: النوع
+  // ما بيتغيّرش بعد الإنشاء (الجهاز بسريال والإكسسوار بكمية،
+  // والتحويل بينهم بيكسر المخزون).
+  if (input.categoryId !== undefined) {
+    patch.categoryId = await resolveCategory(
+      deps, actor, input.categoryId, existing.productType,
+    );
+  }
+  if (input.modelId !== undefined) {
+    patch.modelId = await resolveModel(deps, actor, input.modelId);
+  }
+  if (input.colorId !== undefined) {
+    patch.colorId = await resolveColor(deps, actor, input.colorId);
+  }
 
   let changedPrice = false;
 
