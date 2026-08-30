@@ -34,6 +34,7 @@ import {
 } from '../application/use-cases/users';
 import { createBranch, listBranches } from '../application/use-cases/branches';
 import {
+  createExpenseReason,
   createTreasury,
   getFinancialSummary,
   getSalaryStatement,
@@ -45,11 +46,23 @@ import {
   updateTreasury,
 } from '../application/use-cases/treasury';
 import {
+  createCategory,
+  createColor,
+  createModel,
   createProduct,
+  deleteCategory,
+  deleteColor,
+  deleteModel,
   getPriceHistory,
+  listCategories,
+  listColors,
+  listModels,
   listProducts,
   listSellableProducts,
+  renameCategory,
   restockProduct,
+  updateColor,
+  updateModel,
   updateProduct,
 } from '../application/use-cases/products';
 import {
@@ -637,6 +650,23 @@ interface MovementBody {
   adjustmentDirection?: string;
 }
 
+/**
+ * سبب صرف جديد.
+ *
+ * ⚠ `expense.approve` مش `expense.create` — السبب بند في قائمة
+ * الدخل مش بيان على الحركة. شوف التعليق في حالة الاستخدام.
+ */
+treasuryRoutes.post(
+  '/expense-reasons',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_APPROVE] }),
+  async (c) => {
+    const body = await readJson<{ name?: string }>(c);
+    const container = buildContainer(c.env);
+    const created = await createExpenseReason(container.treasury, c.get('user'), body.name);
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
 treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }), async (c) => {
   const body = await readJson<MovementBody>(c);
 
@@ -887,6 +917,155 @@ productRoutes.get(
   },
 );
 
+// ═══════════════════ أدراج المنتجات ═══════════════════
+//
+// ⚠ المسارات دي تحت `/api/products/categories`، وترتيبها قبل
+// `/:id` **مقصود**: هونو بيطابق أول مسار مناسب، فلو حطّيناها
+// بعده كان `/categories` هيتقرا كمعرّف منتج اسمه "categories".
+
+productRoutes.get(
+  '/categories',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listCategories(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+productRoutes.post(
+  '/categories',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ parentId?: string | null; name?: string }>(c);
+    const container = buildContainer(c.env);
+    const created = await createCategory(container.products, c.get('user'), {
+      parentId: body.parentId ?? null,
+      name: String(body.name ?? ''),
+    });
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
+productRoutes.patch(
+  '/categories/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string }>(c);
+    const container = buildContainer(c.env);
+    await renameCategory(container.products, c.get('user'), c.req.param('id'), body.name);
+    return c.json({ ok: true });
+  },
+);
+
+productRoutes.delete(
+  '/categories/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    await deleteCategory(container.products, c.get('user'), c.req.param('id'));
+    return c.json({ ok: true });
+  },
+);
+
+// ═══════════════════ موديلات الموبايل ═══════════════════
+//
+// ⚠ قبل `/:id` زي الأدراج بالظبط — هونو بيطابق أول مسار مناسب.
+
+productRoutes.get(
+  '/models',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listModels(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+productRoutes.post(
+  '/models',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; brand?: string | null }>(c);
+    const container = buildContainer(c.env);
+    const created = await createModel(container.products, c.get('user'), {
+      name: String(body.name ?? ''),
+      brand: body.brand ?? null,
+    });
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
+productRoutes.patch(
+  '/models/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; brand?: string | null }>(c);
+    const container = buildContainer(c.env);
+    await updateModel(container.products, c.get('user'), c.req.param('id'), body);
+    return c.json({ ok: true });
+  },
+);
+
+productRoutes.delete(
+  '/models/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    await deleteModel(container.products, c.get('user'), c.req.param('id'));
+    return c.json({ ok: true });
+  },
+);
+
+// ═══════════════════ ألوان المنتجات ═══════════════════
+//
+// ⚠ قبل `/:id` زي الأدراج والموديلات.
+
+productRoutes.get(
+  '/colors',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_VIEW], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const items = await listColors(container.products, c.get('user'));
+    return c.json({ ok: true, items });
+  },
+);
+
+productRoutes.post(
+  '/colors',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; hex?: string | null }>(c);
+    const container = buildContainer(c.env);
+    const created = await createColor(container.products, c.get('user'), {
+      name: String(body.name ?? ''),
+      hex: body.hex ?? null,
+    });
+    return c.json({ ok: true, id: created.id }, 201);
+  },
+);
+
+productRoutes.patch(
+  '/colors/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const body = await readJson<{ name?: string; hex?: string | null }>(c);
+    const container = buildContainer(c.env);
+    await updateColor(container.products, c.get('user'), c.req.param('id'), body);
+    return c.json({ ok: true });
+  },
+);
+
+productRoutes.delete(
+  '/colors/:id',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    await deleteColor(container.products, c.get('user'), c.req.param('id'));
+    return c.json({ ok: true });
+  },
+);
+
 /** قائمة شاشة الكاشير: المفعّل واللي فيه كمية بس */
 productRoutes.get(
   '/sellable',
@@ -909,6 +1088,20 @@ interface ProductBody {
   quantity?: string;
   branchId?: string | null;
   isActive?: boolean;
+  /**
+   * ⚠ الأربعة دول كانت **ناقصة من النوع ده**، والواجهة بتبعتهم
+   * من زمان. يعني الخادم كان بيرميهم في صمت ويرد "تم الحفظ" —
+   * والصفحة بتتحدّث وتوري القيمة القديمة.
+   *
+   * أوحش نوع عطل: بيشتغل صح، وبيبان صح، وما بيحفظش.
+   */
+  reorderPoint?: number;
+  customsCleared?: boolean;
+  batteryHealth?: number | null;
+  storageCapacity?: string | null;
+  categoryId?: string | null;
+  modelId?: string | null;
+  colorId?: string | null;
 }
 
 /**
@@ -953,6 +1146,14 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     costPiastres,
     quantityOnHand: quantity,
     branchId: body.branchId ?? null,
+    // ⚠ مواصفات الجهاز مع الإنشاء. حالة الاستخدام بتصفّرهم
+    // للإكسسوار، فمفيش داعي نفحص النوع هنا كمان.
+    customsCleared: body.customsCleared ?? false,
+    batteryHealth: body.batteryHealth ?? null,
+    storageCapacity: body.storageCapacity ?? null,
+    categoryId: body.categoryId ?? null,
+    modelId: body.modelId ?? null,
+    colorId: body.colorId ?? null,
   });
 
   return c.json({ ok: true, id: created.id }, 201);
@@ -975,6 +1176,13 @@ productRoutes.post(
       source?: string | null;
       serialNumber?: string | null;
       entryDate?: string | null;
+      reorderPoint?: number | null;
+      customsCleared?: boolean;
+      batteryHealth?: number | null;
+      storageCapacity?: string | null;
+      categoryId?: string | null;
+      modelId?: string | null;
+      colorId?: string | null;
     } = {};
 
     try {
@@ -992,6 +1200,26 @@ productRoutes.post(
       if (body.source !== undefined) patch.source = body.source;
       if (body.serialNumber !== undefined) patch.serialNumber = body.serialNumber;
       if (body.entryDate !== undefined) patch.entryDate = body.entryDate;
+
+      // ── مواصفات الجهاز والحد الأدنى ──
+      //
+      // ⚠ الأربعة دول كانوا **بيتقروش خالص**. الواجهة بتبعتهم،
+      // والنوع مكانش فيه مكان ليهم، فكانوا بيتبخّروا هنا.
+      //
+      // ⚠ ونفس قاعدة السعر شغّالة عليهم: `undefined` معناها
+      // "ما تلمسش"، والقيمة الفاضية معناها "امسح". من غير
+      // التفريق ده مستحيل ترجّع صحة البطارية فاضية بعد ما
+      // اتكتبت — وفاضي هنا معناه "ما اتقاسش" مش صفر.
+      //
+      // ⚠ والصلاحية على `reorderPoint` بتتفحص في حالة الاستخدام
+      // مش هنا. المسار بيقرا، والحراسة جنب البيانات.
+      if (body.reorderPoint !== undefined) patch.reorderPoint = body.reorderPoint;
+      if (body.customsCleared !== undefined) patch.customsCleared = body.customsCleared;
+      if (body.batteryHealth !== undefined) patch.batteryHealth = body.batteryHealth;
+      if (body.storageCapacity !== undefined) patch.storageCapacity = body.storageCapacity;
+      if (body.categoryId !== undefined) patch.categoryId = body.categoryId;
+      if (body.modelId !== undefined) patch.modelId = body.modelId;
+      if (body.colorId !== undefined) patch.colorId = body.colorId;
     } catch (error) {
       throw Errors.validation(error instanceof MoneyError ? error.message : 'بيانات غير صالحة.');
     }
