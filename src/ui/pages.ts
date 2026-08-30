@@ -1120,7 +1120,13 @@ const IDLE_SHARED_JS = `
  * الشبكة — وده أسوأ إحساس ممكن في نظام كاشير.
  */
 const FONTS =
-  'https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@600&family=El+Messiri:wght@500;600;700&family=Alexandria:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap';
+  // ⚠ الوزن 700 في JetBrains Mono اتضاف عشان **الملصق**.
+  //
+  // السريال والسعر بيتكتبوا بالخط ده، والملصق بيطلبهم عريضين.
+  // من غير الوزن ده المتصفح بيزوّر العرض بنفسه (بيتخّن الحروف
+  // برمجيًا) — وعلى الطابعة الحرارية التزوير بيطلع مطخطخ لأن
+  // التخانة المزوّرة مش بتقع على حدود النقط.
+  'https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@600&family=El+Messiri:wght@500;600;700&family=Alexandria:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap';
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
