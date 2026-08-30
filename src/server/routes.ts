@@ -1081,6 +1081,7 @@ interface ProductBody {
   name?: string;
   productType?: string;
   serialNumber?: string | null;
+  serialUnavailable?: boolean;
   source?: string | null;
   entryDate?: string | null;
   price?: string;
@@ -1140,6 +1141,7 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     name: body.name ?? '',
     productType: (body.productType ?? 'accessory') as ProductType,
     serialNumber: body.serialNumber ?? null,
+    serialUnavailable: body.serialUnavailable === true,
     source: body.source ?? null,
     entryDate: body.entryDate ?? null,
     pricePiastres,
@@ -1175,6 +1177,7 @@ productRoutes.post(
       isActive?: boolean;
       source?: string | null;
       serialNumber?: string | null;
+      serialUnavailable?: boolean;
       entryDate?: string | null;
       reorderPoint?: number | null;
       customsCleared?: boolean;
@@ -1199,6 +1202,9 @@ productRoutes.post(
       if (typeof body.isActive === 'boolean') patch.isActive = body.isActive;
       if (body.source !== undefined) patch.source = body.source;
       if (body.serialNumber !== undefined) patch.serialNumber = body.serialNumber;
+      if (body.serialUnavailable !== undefined) {
+        patch.serialUnavailable = body.serialUnavailable === true;
+      }
       if (body.entryDate !== undefined) patch.entryDate = body.entryDate;
 
       // ── مواصفات الجهاز والحد الأدنى ──
