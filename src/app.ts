@@ -489,23 +489,18 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     //
     // ⚠ ومش بنبلع الخطأ ونرجّع قايمة فاضية — القايمة الفاضية
     // شكلها زي "مفيش بضاعة" بالظبط، وده أوحش من رسالة خطأ.
-    // ⚠⚠⚠ تشخيص مؤقت — شيله بعد ما تلاقي السبب ⚠⚠⚠
+    // ⚠ الفشل هنا بيسمّي نفسه بدل ما يطلع "خطأ غير متوقّع".
     //
-    // بنرمي خطأ **تحقّق** بدل خطأ داخلي، عشان الرسالة تتعرض
-    // للمستخدم بدل ما تتخبّى. ده بيوفّر إعداد المتغيّر كله.
+    // الرسالة الموحّدة بتحمي النظام، بس لما الصفحة كلها تقع
+    // بيها إنت مش عارف وقعت من فين: البضاعة؟ الفروع؟ الأدراج؟
     //
-    // ⚠ وده **تسريب مقصود ومؤقت**: نص خطأ قاعدة البيانات
-    // بيوصل للمتصفح، وفيه أسماء أعمدة وجداول. مقبول على
-    // الاستينج لدقايق، ممنوع في الإنتاج.
-    //
-    // بعد ما تعرف السبب، رجّعه لـ:
-    //     throw Errors.internal(`listProducts: ${...}`);
+    // ⚠ ومش بنبلع الخطأ ونرجّع قايمة فاضية — القايمة الفاضية
+    // شكلها زي "مفيش بضاعة" بالظبط، وده أوحش من رسالة خطأ.
     listProducts(container.products, user).catch((err) => {
       console.error('[products] تعذّر جلب البضاعة:', err);
-      const raw = err instanceof AppError
-        ? (err.internalDetail ?? err.userMessage)
-        : err instanceof Error ? err.message : String(err);
-      throw Errors.validation(`تشخيص مؤقت · البضاعة: ${raw}`);
+      throw Errors.internal(
+        `listProducts: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
@@ -518,13 +513,11 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     canEdit
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
-    // ⚠⚠⚠ تشخيص مؤقت — شيله مع اللي فوق ⚠⚠⚠
     branchLabelFor(container, user).catch((err) => {
       console.error('[products] تعذّر جلب اسم الفرع:', err);
-      const raw = err instanceof AppError
-        ? (err.internalDetail ?? err.userMessage)
-        : err instanceof Error ? err.message : String(err);
-      throw Errors.validation(`تشخيص مؤقت · الفرع: ${raw}`);
+      throw Errors.internal(
+        `branchLabel: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }),
     // ⚠ الأدراج بتتجاب لكل من يشوف المخزون، مش للمعدّل بس.
     // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
