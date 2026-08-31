@@ -25,6 +25,7 @@ import type { ReportDeps } from '../application/use-cases/reports';
 import type { AlertDeps } from '../application/use-cases/alerts';
 import type { TransferDeps } from '../application/use-cases/transfers';
 import type { SupplierDeps } from '../application/use-cases/suppliers';
+import type { ShopDeps } from '../application/use-cases/shops';
 import type { MaintenanceDeps } from '../application/use-cases/maintenance';
 import type { CustomerDeps } from '../application/use-cases/customers';
 import type { PlatformDeps } from '../application/use-cases/platform';
@@ -53,6 +54,7 @@ import {
   createMaintenanceRepository,
   createPurchaseRepository,
   createWarrantyRepository,
+  createShopRepository,
   createSupplierRepository,
   createTransferRepository,
   createReportRepository,
@@ -80,6 +82,7 @@ export interface Container {
   alerts: AlertDeps;
   transfers: TransferDeps;
   suppliers: SupplierDeps;
+  shops: ShopDeps;
   maintenance: MaintenanceDeps;
   customers: CustomerDeps;
   platform: PlatformDeps;
@@ -147,11 +150,11 @@ export function buildContainer(env: Env): Container {
       clock: systemClock,
       audit,
     },
-    // ⚠ الأدراج مستودع منفصل عن المنتجات عن قصد.
+    // ⚠ الأدراج مستودع منفصل عن البضاعة عن قصد.
     //
     // المنتج بيتقرا ويتكتب في كل شاشة تقريبًا؛ والأدراج بتتقرا
-    // في شاشة المنتجات وبس. دمجهم كان هيخلّي أي شاشة بتلمس
-    // المنتجات تشيل معاها كود تنظيم مالهاش دعوة بيه.
+    // في شاشة البضاعة وبس. دمجهم كان هيخلّي أي شاشة بتلمس
+    // البضاعة تشيل معاها كود تنظيم مالهاش دعوة بيه.
     products: {
       products: createProductRepository(db),
       categories: createCategoryRepository(db),
@@ -204,6 +207,22 @@ export function buildContainer(env: Env): Container {
       clock: systemClock,
       audit,
     },
+    // ⚠ حساب المحلات بياخد الخزنة زي الموردين بالظبط.
+    //
+    // السبب إن السداد **بيدخّل فلوس الدرج** — عكس سداد المورّد
+    // اللي بيطلّعها. والعمليتين لازم يمسّوا الدفتر والخزنة مع
+    // بعض، وإلا رصيدك على الورق بيختلف عن اللي في الدرج.
+    //
+    // ⚠ وما بياخدش البضاعة: خصم الكمية بيحصل جوّه
+    // `fn_shop_consign` في نفس معاملة الدين. لو خصمناها من هنا،
+    // بينهم رحلة شبكة — وأي فشل بيسيب بضاعة نقصت ومحدش مديون
+    // بيها، أو دين على محل وبضاعة لسه في المخزون.
+    shops: {
+      shops: createShopRepository(db),
+      treasuries: treasuryRepo,
+      clock: systemClock,
+      audit,
+    },
     customers: {
       customers: createCustomerRepository(db),
       branches: branchRepo,
@@ -216,7 +235,7 @@ export function buildContainer(env: Env): Container {
       clock: systemClock,
       audit,
     },
-    // ⚠ شرا البضاعة بياخد الخزينة، مش الموردين.
+    // ⚠ شرا البضاعة بياخد الخزنة، مش الموردين.
     // السبب إن العملية **مالية** في جوهرها: فلوس بتطلع من الدرج
     // وبيان بيتكتب جنبها. المورّد اسم على البيان مش طرف في
     // المعاملة — الدين بيتسجّل في وحدة الموردين لوحدها.
@@ -227,7 +246,7 @@ export function buildContainer(env: Env): Container {
       audit,
     },
     // ⚠ واليومية بتاخد الفروع عشان صاحب المحل يختار،
-    // وما بتاخدش المبيعات ولا الخزينة: اللقطة كلها بتتبني جوّه
+    // وما بتاخدش المبيعات ولا الخزنة: اللقطة كلها بتتبني جوّه
     // قاعدة البيانات في نداء واحد. لو بنيناها هنا، كنا هنقرا
     // المبيعات في رحلة والحركات في رحلة تانية — وأي بيعة
     // بتتسجّل بينهم بتقع في الشق.
