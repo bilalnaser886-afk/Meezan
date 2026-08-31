@@ -310,6 +310,23 @@ export function clearAuthCookies(c: Context): void {
  * تسريبها بيدّي المهاجم خريطة نظامك.
  */
 export function errorResponse(c: Context, error: unknown): Response {
+  // ══ ⚠ قناة تشخيص بمفتاح — مقفولة افتراضيًا ══
+  //
+  // لما عطل يحصل على موبايل في المحل، مفيش لوق ومفيش أدوات
+  // مطوّر. والرسالة الموحّدة ("حدث خطأ غير متوقّع") بتحمي
+  // النظام وبتخلّيك أعمى في نفس الوقت.
+  //
+  // المفتاح ده بيخلّي التفاصيل تنزل **في الرد نفسه**، فتقراها
+  // من الموبايل مباشرةً.
+  //
+  // ⚠⚠ وهو مقفول إلا لو حطّيت DEBUG_ERRORS=1 في إعدادات
+  // كلاودفلير. حطّه في بيئة **المعاينة** بس، واقفله بعد ما
+  // تلاقي السبب.
+  //
+  // ⚠ لو سبته مفتوح في الإنتاج، أي زائر يقدر يشوف أسماء جداولك
+  // ونصوص استعلاماتك — وده بيدّي المهاجم خريطة نظامك.
+  const debug = (c.env as Env | undefined)?.DEBUG_ERRORS === '1';
+
   if (error instanceof AppError) {
     if (error.httpStatus >= 500) console.error('[error]', error.code, error.internalDetail);
 
@@ -325,7 +342,15 @@ export function errorResponse(c: Context, error: unknown): Response {
     }
 
     return c.json(
-      { ok: false, error: { code: error.code, message: error.userMessage, ...error.meta } },
+      {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.userMessage,
+          ...error.meta,
+          ...(debug && error.internalDetail ? { detail: error.internalDetail } : {}),
+        },
+      },
       error.httpStatus as 400,
     );
   }
@@ -333,7 +358,18 @@ export function errorResponse(c: Context, error: unknown): Response {
   console.error('[error] خطأ غير متوقّع:', error);
   const fallback = Errors.internal();
   return c.json(
-    { ok: false, error: { code: fallback.code, message: fallback.userMessage } },
+    {
+      ok: false,
+      error: {
+        code: fallback.code,
+        message: fallback.userMessage,
+        // ⚠ الرسالة الأصلية بالإنجليزي زي ما هي — مش مترجمة.
+        // ترجمتها كانت هتخفي نص الخطأ اللي بندوّر عليه.
+        ...(debug
+          ? { detail: error instanceof Error ? error.message : String(error) }
+          : {}),
+      },
+    },
     500,
   );
 }
