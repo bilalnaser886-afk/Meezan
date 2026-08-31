@@ -1705,6 +1705,48 @@ const TIME_JS = `
 
 /** سكربت القائمة: قفلها لما تدوس بره + أزرار القفل والخروج */
 const MENU_JS = `
+// ══════════ الأرقام إنجليزي في النظام كله ══════════
+//
+// ══ المشكلة ══
+// لوحة المفاتيح العربية على الموبايل بتكتب ٠١٢٣ افتراضيًا.
+// والخادم بيطبّعها في دالة الفلوس، بس المستخدم بيفضل
+// شايف رقم عربي في الخانة — فمش عارف إيه اللي هيتحفظ.
+//
+// ⚠ وأوحش من كده: الحقول اللي مش بتعدّي على دالة الفلوس
+// (السريال · الموديل · التليفون) بتتحفظ **بالعربي زي ما هي**،
+// فبيبقى عندك سريال "١٢٣" وسريال "123" وهما نفس الجهاز.
+//
+// ══ الحل ══
+// التحويل بيحصل **وقت الكتابة** في كل خانة في النظام. اللي
+// بتشوفه هو اللي هيتحفظ.
+//
+// ⚠ وبيحافظ على مكان المؤشر. من غير كده، الكتابة في نص النص
+// كانت بترمي المؤشر لآخر الخانة بعد كل حرف.
+(function () {
+  var AR = /[\u0660-\u0669\u06F0-\u06F9]/;
+
+  function toLatin(text) {
+    return String(text)
+      .replace(/[\u0660-\u0669]/g, function (d) {
+        return String(d.charCodeAt(0) - 0x0660);
+      })
+      .replace(/[\u06F0-\u06F9]/g, function (d) {
+        return String(d.charCodeAt(0) - 0x06F0);
+      });
+  }
+
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+    if (typeof el.value !== 'string' || !AR.test(el.value)) return;
+
+    // ⚠ الطول ما بيتغيّرش (رقم برقم)، فمكان المؤشر بيفضل صحيح.
+    var at = el.selectionStart;
+    el.value = toLatin(el.value);
+    try { el.setSelectionRange(at, at); } catch (err) { /* حقل ما بيدعمش التحديد */ }
+  });
+})();
+
 (function () {
   var menu = document.getElementById('menu');
   if (!menu) return;
@@ -5773,7 +5815,18 @@ export function productsPage(data: ProductsPageData): Html {
               <input class="field-input" id="np-name" type="text" maxlength="80">
             </div>
 
-            <div class="field" id="np-serial-field" hidden>
+                        <div class="field">
+              <label class="field-label" for="np-model">الموديل</label>
+              <select class="field-input" id="np-model"></select>
+              <p class="field-hint" id="np-model-hint">
+                مش موجود؟ اختر «إضافة موديل» من آخر القائمة.
+              </p>
+            </div>
+
+            <!-- ══ اللون ══
+                 ⚠ للنوعين. الجراب الأحمر غير الأزرق، ودي أشيع
+                 حاجة الزبون بيسأل عنها على الكاونتر. -->
+<div class="field" id="np-serial-field" hidden>
               <label class="field-label" for="np-serial">الرقم التسلسلي</label>
               <input class="field-input" id="np-serial" type="text" dir="ltr"
                 autocomplete="off" maxlength="64">
@@ -5856,32 +5909,17 @@ export function productsPage(data: ProductsPageData): Html {
                  ⚠ والقايمة بتتفلتر بنوع الجهاز المختار فوق،
                  فموديلات سامسونج ما بتظهرش وإنت بتسجّل آيفون. -->
             <div class="field">
-              <label class="field-label" for="np-model">الموديل</label>
-              <input class="field-input" id="np-model" type="text" list="np-model-list"
-                autocomplete="off" placeholder="اكتب أول حروف الموديل">
-              <datalist id="np-model-list"></datalist>
-              <button class="btn-mini" type="button" id="np-model-add">+ إضافة موديل</button>
-              <p class="field-hint" id="np-model-hint">
-                اكتب الاسم أو افتح القائمة. مش موجود؟ أضِفه من الزر.
-              </p>
-            </div>
-
-            <!-- ══ اللون ══
-                 ⚠ للنوعين. الجراب الأحمر غير الأزرق، ودي أشيع
-                 حاجة الزبون بيسأل عنها على الكاونتر. -->
-            <div class="field">
               <label class="field-label" for="np-color">اللون</label>
               <select class="field-input" id="np-color">
                 <option value="">— بدون لون —</option>
                 ${data.colors.map(
                   (c) => html`<option value="${c.id}">${c.name}</option>`,
                 )}
+                <!-- ⚠ الإضافة آخر خيار **جوّه** القايمة مش زرار
+                     تحتها. الزرار المستقل كان بياخد سطر كامل في
+                     شاشة فيها اتناشر حقل، والعين بتعدّي عليه. -->
+                <option value="__add__">+ إضافة لون</option>
               </select>
-              <!-- ⚠ زرار جنب القايمة مش خانة كتابة.
-                   لو خلّينا اللون يتكتب، هيبقى عندنا "أسود"
-                   و"اسود" و"black" — نفس غلطة عمود المصدر بالحرف.
-                   الإضافة فعل واعي، والاختيار هو الافتراضي. -->
-              <button class="btn-mini" type="button" id="np-color-add">+ إضافة لون</button>
             </div>
 
             <!-- ══ مواصفات الجهاز ══
@@ -5930,15 +5968,6 @@ export function productsPage(data: ProductsPageData): Html {
                    ما يكتب في كل إضافة — والنتيجة "05" لو نسي. -->
               <input class="field-input" id="np-qty" type="text" inputmode="numeric"
                 dir="ltr" placeholder="0">
-            </div>
-
-            <div class="field">
-              <label class="field-label" for="np-price">سعر البيع (اختياري)</label>
-              <input class="field-input" id="np-price" type="text" inputmode="decimal"
-                dir="ltr" autocomplete="off">
-              <p class="field-hint">
-                اتركه فارغًا إن لم يتحدّد بعد. يطلبه النظام عند البيع.
-              </p>
             </div>
 
             <div class="field">
@@ -6005,19 +6034,26 @@ export function productsPage(data: ProductsPageData): Html {
                 ${data.suppliers.map(
                   (sp) => html`<option value="${sp.id}">${sp.name}</option>`,
                 )}
-              </select>
-              <!-- ⚠ الزرار بيظهر لمن يملك صلاحية إدارة الموردين بس.
-                   إنشاء المورّد بيتم على مسار الموردين، والمندوب
-                   مالوش الصلاحية دي — فالزرار كان هيرفض عنده
-                   بلا سبب ظاهر.
+                <!-- ⚠ الخيار بيظهر لمن يملك صلاحية إدارة الموردين
+                     بس. إنشاء المورّد على مسار الموردين، والمندوب
+                     مالوش الصلاحية — فالخيار كان هيرفض عنده بلا
+                     سبب ظاهر.
 
-                   ⚠ وإخفاؤه مش حماية، هو **صدق في الواجهة**.
-                   الحراسة الحقيقية على المسار زي ما هي. -->
-              ${data.canManageSuppliers
-                ? html`<button class="btn-mini" type="button" id="np-supplier-add">
-                    + إضافة مورّد
-                  </button>`
-                : ''}
+                     ⚠ وإخفاؤه مش حماية، هو **صدق في الواجهة**.
+                     الحراسة الحقيقية على المسار زي ما هي. -->
+                ${data.canManageSuppliers
+                  ? html`<option value="__add__">+ إضافة مورّد</option>`
+                  : ''}
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="np-price">سعر البيع (اختياري)</label>
+              <input class="field-input" id="np-price" type="text" inputmode="decimal"
+                dir="ltr" autocomplete="off">
+              <p class="field-hint">
+                اتركه فارغًا إن لم يتحدّد بعد. يطلبه النظام عند البيع.
+              </p>
             </div>
 
             <div class="field">
@@ -6556,40 +6592,41 @@ ${MENU_JS}
    * عيلة واحدة كان هيمنعك تسجّل نص بضاعتك. أما الجهاز نفسه
    * فبينتمي لعيلة واحدة بالتعريف.
    */
+  /**
+   * بناء قايمة الموديلات.
+   *
+   * ⚠ بتتبني بالجافاسكربت مش في القالب، لأنها بتتغيّر لما
+   * تبدّل بين آيفون وأندرويد.
+   *
+   * ⚠ وغير المصنّف بيظهر للإكسسوار بس. لو ظهر في درج الآيفون،
+   * بتسجّل جهاز على موديل إحنا مش متأكدين إنه آيفون — والعدّ
+   * في الدرج بيبقى كذب.
+   *
+   * ⚠ والاختيار الحالي بيتحافظ عليه لو لسه في القايمة. من غير
+   * كده، أي تغيير في نوع الجهاز كان بيصفّر الموديل بصمت.
+   */
   function paintModelList() {
-    var list = document.getElementById('np-model-list');
-    if (!list) return;
+    var sel = document.getElementById('np-model');
+    if (!sel) return;
 
+    var keep = sel.value;
     var isDevice = typeEl && typeEl.value === 'device';
     var famEl = document.getElementById('np-family');
     var want = isDevice && famEl ? famEl.value : '';
 
-    var html = '';
+    var out = '<option value="">— بدون موديل —</option>';
+    var found = false;
     for (var i = 0; i < ALL_MODELS.length; i++) {
       var m = ALL_MODELS[i];
-      // ⚠ غير المصنّف بيظهر للإكسسوار بس. لو ظهر في درج
-      // الآيفون، بتسجّل جهاز على موديل إحنا مش متأكدين إنه
-      // آيفون — والعدّ في الدرج بيبقى كذب.
       if (want && m.family !== want) continue;
       var label = m.brand ? m.brand + ' — ' + m.name : m.name;
-      html += '<option value="' + label + '"></option>';
+      out += '<option value="' + m.id + '">' + label + '</option>';
+      if (m.id === keep) found = true;
     }
-    list.innerHTML = html;
-  }
+    out += '<option value="__add__">+ إضافة موديل</option>';
 
-  /** الاسم المعروض ← معرّف الموديل. بيرجّع '' لو مفيش تطابق. */
-  function modelIdFromText(text) {
-    var wanted = String(text || '').trim().toLowerCase();
-    if (!wanted) return '';
-    for (var i = 0; i < ALL_MODELS.length; i++) {
-      var m = ALL_MODELS[i];
-      var label = (m.brand ? m.brand + ' — ' + m.name : m.name).toLowerCase();
-      // ⚠ بنقبل الاسم لوحده كمان: الموظّف بيكتب "12 برو ماكس"
-      // مش "آيفون — 12 برو ماكس"، والإجبار على الشكل الكامل
-      // كان هيخلّيه يفتح القايمة في كل مرة.
-      if (label === wanted || m.name.toLowerCase() === wanted) return m.id;
-    }
-    return '';
+    sel.innerHTML = out;
+    if (found) sel.value = keep;
   }
 
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
@@ -6660,58 +6697,57 @@ ${MENU_JS}
     }
   }
 
-  var modelAddBtn = document.getElementById('np-model-add');
-  if (modelAddBtn) {
-    modelAddBtn.addEventListener('click', async function () {
-      // ⚠ بنبدأ باللي مكتوب في الخانة. الموظّف كتب الاسم
-      // وملقاهوش، فإعادة كتابته في نافذة تانية شغل مكرر.
-      var pre = modelInputValue();
-      var name = prompt('اسم الموديل الجديد؟', pre || '');
-      if (name === null) return;
-      name = name.trim();
-      if (!name) return;
+  // ══════════ خيار «الإضافة» جوّه القوايم ══════════
+  //
+  // ⚠ التلاتة (موديل · لون · مورّد) بقوا **آخر خيار في القايمة**
+  // بدل زرار مستقل تحت الخانة.
+  //
+  // السبب إن كل زرار كان بياخد سطر كامل في شاشة فيها اتناشر
+  // حقل، والعين بتعدّي عليه. وجوّه القايمة بيظهر لما تفتحها
+  // بس — يعني وقت ما تكون بتدوّر فعلاً.
+  //
+  // ⚠ والقايمة بترجع لاختيارها القديم لو ألغيت الإضافة. من غير
+  // كده، الإلغاء كان بيسيبها على "+ إضافة" وهي مش قيمة صالحة.
+  var lastPick = {};
 
-      // ⚠ العيلة بتتاخد من نوع الجهاز المختار فوق. إنت واقف
-      // في "آيفون" وبتضيف موديل — السؤال هنا تكرار لحاجة
-      // الشاشة عارفاها.
-      var fam = null;
-      if (typeEl && typeEl.value === 'device' && familyEl) fam = familyEl.value;
+  document.addEventListener('change', async function (e) {
+    var sel = e.target;
+    if (!sel || !sel.id) return;
+    if (sel.id !== 'np-model' && sel.id !== 'np-color' && sel.id !== 'np-supplier') return;
 
-      await addToRegistry('/api/products/models', { name: name, family: fam }, 'الموديل');
-    });
-  }
+    if (sel.value !== '__add__') { lastPick[sel.id] = sel.value; return; }
+    sel.value = lastPick[sel.id] || '';
 
-  function modelInputValue() {
-    var el = document.getElementById('np-model');
-    return el ? el.value.trim() : '';
-  }
+    if (sel.id === 'np-color') {
+      var cname = prompt('اسم اللون؟');
+      if (cname === null || !cname.trim()) return;
+      await addToRegistry('/api/products/colors', { name: cname.trim() }, 'اللون');
+      return;
+    }
 
-  var colorAddBtn = document.getElementById('np-color-add');
-  if (colorAddBtn) {
-    colorAddBtn.addEventListener('click', async function () {
-      var name = prompt('اسم اللون؟');
-      if (name === null) return;
-      name = name.trim();
-      if (!name) return;
-      await addToRegistry('/api/products/colors', { name: name }, 'اللون');
-    });
-  }
-
-  var supplierAddBtn = document.getElementById('np-supplier-add');
-  if (supplierAddBtn) {
-    supplierAddBtn.addEventListener('click', async function () {
-      var name = prompt('اسم المورّد؟');
-      if (name === null) return;
-      name = name.trim();
-      if (!name) return;
-      var phone = prompt('رقم التليفون؟ (اختياري)');
+    if (sel.id === 'np-supplier') {
+      var sname = prompt('اسم المورّد؟');
+      if (sname === null || !sname.trim()) return;
+      var sphone = prompt('رقم التليفون؟ (اختياري)');
+      if (sphone === null) return;
       await addToRegistry(
         '/api/suppliers',
-        { name: name, phone: (phone || '').trim() || null },
+        { name: sname.trim(), phone: sphone.trim() || null },
         'المورّد'
       );
-    });
-  }
+      return;
+    }
+
+    var mname = prompt('اسم الموديل الجديد؟');
+    if (mname === null || !mname.trim()) return;
+
+    // ⚠ العيلة من نوع الجهاز المختار فوق — السؤال هنا تكرار
+    // لحاجة الشاشة عارفاها.
+    var fam = null;
+    if (typeEl && typeEl.value === 'device' && familyEl) fam = familyEl.value;
+
+    await addToRegistry('/api/products/models', { name: mname.trim(), family: fam }, 'الموديل');
+  });
 
   // ══════════ فحص رقم الـIMEI ══════════
   //
@@ -6816,31 +6852,22 @@ ${MENU_JS}
       var branch = document.getElementById('np-branch');
       var isDevice = typeEl && typeEl.value === 'device';
 
-      // ══ ⚠ الموديل: من نص لمعرّف ══
+      // ══ الموديل ══
       //
-      // الخانة بتقبل كتابة، فممكن يكتب حاجة مش في السجل. بنحوّل
-      // النص لمعرّف؛ ولو ملقناش، بنوقف ونقوله يضيفه.
-      //
-      // ⚠ والوقوف هنا مقصود بدل ما نبعت الاسم كنص للخادم:
-      // ده كان هيخلق موديل شبح مش في السجل، ومش هيظهر في أي درج.
+      // ⚠ القيمة بقت **معرّف** مباشرةً من القايمة، مش نص محتاج
+      // تطابق. الاقتراحات القديمة كانت بتفشل على أي حرف ناقص
+      // والموديل قدّامك في القايمة.
       var modelInput = document.getElementById('np-model');
-      var modelText = modelInput ? modelInput.value.trim() : '';
-      var modelId = modelIdFromText(modelText);
-      var modelName = '';
-      if (modelId) {
-        for (var mi = 0; mi < ALL_MODELS.length; mi++) {
-          if (ALL_MODELS[mi].id === modelId) { modelName = ALL_MODELS[mi].name; break; }
-        }
-      }
+      var modelId = modelInput ? modelInput.value : '';
+      if (modelId === '__add__') modelId = '';
 
-      if (modelText && !modelId) {
-        say('الموديل ده مش في السجل. اختره من القائمة أو أضِفه بالزر.', false);
-        if (modelInput) modelInput.focus();
-        return;
+      var modelName = '';
+      for (var mi = 0; mi < ALL_MODELS.length; mi++) {
+        if (ALL_MODELS[mi].id === modelId) { modelName = ALL_MODELS[mi].name; break; }
       }
 
       // ⚠ الموديل إلزامي للجهاز، لأن اسم الجهاز بيتولد منه.
-      // من غيره الجهاز بيتسجّل بلا اسم — وما يظهرش في أي بحث.
+      // من غيره الجهاز بيتسجّل بلا اسم وما يظهرش في أي بحث.
       if (isDevice && !modelId) {
         say('اختر الموديل — اسم الجهاز بيتولّد منه.', false);
         if (modelInput) modelInput.focus();
