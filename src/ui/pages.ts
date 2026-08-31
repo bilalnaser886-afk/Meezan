@@ -30,7 +30,7 @@ import {
 
 
 /**
- * كود الخمول وقفل الشاشة — مشترك بين لوحة التحكم والخزينة.
+ * كود الخمول وقفل الشاشة — مشترك بين لوحة التحكم والخزنة.
  *
  * ليه مستخرج؟ لأنه كان هيتكرر في صفحتين. ولو اتكرر، أول تعديل
  * على واحدة وهنسيان التانية بيعمل سلوك مختلف بين شاشتين في نفس
@@ -1487,7 +1487,7 @@ function receiptEdge(): string {
  *
  * ══ ليه ميزان مرسوم مش حرف أو أيقونة جاهزة؟ ══
  * اسم النظام "ميزان"، ووظيفته الحقيقية إن الأرقام تتوازن: المخزون
- * مع المبيعات، الخزينة مع الحركات، الراتب مع السُلف. الرمز نفسه
+ * مع المبيعات، الخزنة مع الحركات، الراتب مع السُلف. الرمز نفسه
  * هو الوعد اللي النظام بيقدّمه.
  *
  * ══ الحركة ══
@@ -1536,7 +1536,7 @@ function brandGlyph(): string {
  * ختم الصانع.
  *
  * ══ ليه موجود أصلاً؟ ══
- * الشركات اللي بتبني منتجات لغيرها بتسيب توقيعها **جوّه** المنتج،
+ * الشركات اللي بتبني بضاعة لغيرها بتسيب توقيعها **جوّه** المنتج،
  * مش على البوّابة بس. العميل بيشوف اسم محله فوق وبيشوف مين بنى
  * النظام في القدم — والاتنين ما بيتنافسوش لأنهم في مكانين
  * مختلفين وبخطّين مختلفين.
@@ -1664,12 +1664,12 @@ function tabBar(active: 'app' | 'pos' | 'products' | 'treasury', access: NavAcce
     : ''}
   ${access.showProducts
     ? html`<a href="/products" ${active === 'products' ? raw('aria-current="page"') : ''}>
-        <span class="tabbar-icon" aria-hidden="true">▦</span>المنتجات
+        <span class="tabbar-icon" aria-hidden="true">▦</span>البضاعة
       </a>`
     : ''}
   ${access.showTreasury
     ? html`<a href="/treasury" ${active === 'treasury' ? raw('aria-current="page"') : ''}>
-        <span class="tabbar-icon" aria-hidden="true">₤</span>الخزينة
+        <span class="tabbar-icon" aria-hidden="true">₤</span>الخزنة
       </a>`
     : ''}
   <div class="rail-stamp">${raw(makerStamp())}</div>
@@ -2431,7 +2431,7 @@ export function dashboardPage(data: DashboardData): Html {
 
   // ── البلاطات: اللي تقدر تعمله، بكلام مفهوم مش أكواد نظام ──
   //
-  // ══ ⚠ البيع والمنتجات والخزينة **مش هنا** عن قصد ══
+  // ══ ⚠ البيع والبضاعة والخزنة **مش هنا** عن قصد ══
   // التلاتة دول في الشريط السفلي على الموبايل وفي الكعب على
   // الكمبيوتر، وكانوا مكررين هنا كمان.
   //
@@ -2446,7 +2446,7 @@ export function dashboardPage(data: DashboardData): Html {
   // فاللوحة دي بقت للوجهات اللي **مالهاش** تبويب وبس.
   const tiles: Html[] = [];
 
-  // ⚠ التقرير بعد الخزينة عن قصد: الخزينة بتتفتح كل يوم،
+  // ⚠ التقرير بعد الخزنة عن قصد: الخزنة بتتفتح كل يوم،
   // والتقرير مرة في الأسبوع أو الشهر. الترتيب بيتبع الاستخدام.
   if (data.canViewReport) {
     tiles.push(html`<a class="tile" data-wide href="/report">
@@ -2476,7 +2476,15 @@ export function dashboardPage(data: DashboardData): Html {
   if (data.canManageSuppliers) {
     tiles.push(html`<a class="tile" href="/suppliers">
       <span class="tile-label">الموردين</span>
-      <span class="tile-note">ديون وسداد</span>
+      <span class="tile-note">ديون عليك</span>
+    </a>`);
+
+    // ⚠ جنب الموردين مباشرةً، والوصف بيفرّق بينهم بكلمة واحدة:
+    // "عليك" و"ليك". الاتنين دفتر ديون، والخلط بينهم بيخلّي
+    // الواحد يفتح الشاشة الغلط ويفتكر الأرقام بتاعته.
+    tiles.push(html`<a class="tile" href="/shops">
+      <span class="tile-label">حساب المحلات</span>
+      <span class="tile-note">ديون ليك</span>
     </a>`);
   }
 
@@ -2506,7 +2514,7 @@ export function dashboardPage(data: DashboardData): Html {
     <div class="empty">
       <p class="empty-title">يبدأ يومك من شاشة البيع</p>
       <p class="empty-note">
-        اختر المنتجات، وحدّد الخزينة، وأتمم الفاتورة.<br>
+        اختر البضاعة، وحدّد الخزنة، وأتمم الفاتورة.<br>
         تُتاح المرتجعات وتسجيل العملاء في تحديث قادم.
       </p>
     </div>
@@ -2851,7 +2859,7 @@ ${MENU_JS}
       if (countEl) countEl.textContent = String(data.totalCount);
 
       // أول تنبيهين بالاسم، والباقي عدد. القايمة الكاملة في
-      // شاشة المنتجات — الشريط تنبيه مش تقرير.
+      // شاشة البضاعة — الشريط تنبيه مش تقرير.
       var names = data.rows.slice(0, 2).map(function (r) { return r.title; }).join(' · ');
       var extra = data.totalCount > 2 ? ' وغيرهم' : '';
 
@@ -2871,7 +2879,7 @@ ${MENU_JS}
 `;
 }
 
-// ═══════════════════ 5) الخزينة ═══════════════════
+// ═══════════════════ 5) الخزنة ═══════════════════
 
 export interface TreasuryPageData {
   currentUserId: string;
@@ -2940,7 +2948,7 @@ export interface TreasuryPageData {
     createdByName: string | null;
   }>;
 
-  /** صاحب المحل — بيضيف خزائن ويختار الفرع */
+  /** صاحب المحل — بيضيف خزن ويختار الفرع */
   isOwner: boolean;
   /** expense.approve — نفس صلاحية الإيداع والسحب */
   canTransfer: boolean;
@@ -3047,7 +3055,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
   const balancesHtml =
     data.summary.rows.length === 0
-      ? html`<p class="muted">لا توجد خزائن بعد.</p>`
+      ? html`<p class="muted">لا توجد خزن بعد.</p>`
       : html`<div class="balances">
           ${data.summary.rows.map(
             (b) => html`<div class="bal-card">
@@ -3071,7 +3079,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
    * الصفوف. الزاوية بتتغيّر، الرقم لأ.
    *
    *   بالنوع  → نقدي كام، محافظ كام، فيزا كام
-   *   بالفرع  → كل فرع فيه كام، ومقسّمة على خزائنه
+   *   بالفرع  → كل فرع فيه كام، ومقسّمة على خزنه
    *   الإجمالي → المجموع
    */
   const summaryHtml = html`
@@ -3079,7 +3087,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
       ${data.summary.byType.map(
         (t) => html`<div class="bal-card">
           <span class="bal-name">${t.label}</span>
-          <span class="bal-meta">${t.count} خزينة</span>
+          <span class="bal-meta">${t.count} خزنة</span>
           <span class="bal-amount" data-negative="${t.totalPiastres < 0 ? 'true' : 'false'}">
             ${formatPiastres(t.totalPiastres)}<span class="bal-cur">ج.م</span>
           </span>
@@ -3106,7 +3114,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
   `;
 
   return shell({
-    title: 'الخزينة',
+    title: 'الخزنة',
     tenantName: data.tenantName,
     script: treasuryScript(data.idleTimeoutSeconds, data.idleWarningSeconds, data.idleAction),
     body: html`${appBar({
@@ -3136,14 +3144,14 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
     ${data.canTransfer
       ? html`<details class="panel">
-          <summary>تحويل بين الخزائن</summary>
+          <summary>تحويل بين الخزن</summary>
           <div class="panel-body">
             <p class="muted">
               اكتب المبلغ الذي خرج والمبلغ الذي وصل. الفرق بينهما يُحسب عمولة تلقائيًا.
             </p>
 
             <div class="field">
-              <label class="field-label" for="tr-from">من خزينة</label>
+              <label class="field-label" for="tr-from">من خزنة</label>
               <select class="field-input" id="tr-from">
                 ${data.summary.rows
                   .filter((r) => r.isActive)
@@ -3152,13 +3160,13 @@ export function treasuryPage(data: TreasuryPageData): Html {
             </div>
 
             <div class="field">
-              <label class="field-label" for="tr-to">إلى خزينة</label>
+              <label class="field-label" for="tr-to">إلى خزنة</label>
               <select class="field-input" id="tr-to">
                 ${data.summary.rows
                   .filter((r) => r.isActive)
                   .map((r) => html`<option value="${r.treasuryId}">${treasuryLabel(r)}</option>`)}
               </select>
-              <p class="field-hint">لا بد أن تكون الخزينتان في نفس الفرع.</p>
+              <p class="field-hint">لا بد أن تكون الخزنتان في نفس الفرع.</p>
             </div>
 
             <div class="field">
@@ -3203,10 +3211,10 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
     ${data.isOwner
       ? html`<details class="panel">
-          <summary>إضافة خزينة</summary>
+          <summary>إضافة خزنة</summary>
           <div class="panel-body">
             <p class="muted">
-              كل وسيلة دفع خزينة مستقلة. يمكن إنشاء أكثر من واحدة من النوع نفسه —
+              كل وسيلة دفع خزنة مستقلة. يمكن إنشاء أكثر من واحدة من النوع نفسه —
               فيزا الأهلي وفيزا CIB، أو محفظتين تحت فودافون.
             </p>
 
@@ -3228,7 +3236,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
             </div>
 
             <div class="field">
-              <label class="field-label" for="tz-name">اسم الخزينة</label>
+              <label class="field-label" for="tz-name">اسم الخزنة</label>
               <input class="field-input" id="tz-name" type="text" maxlength="60"
                 placeholder="مثال: محفظة فودافون — الكاشير">
             </div>
@@ -3264,10 +3272,10 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
            ⚠ نفس عطل شاشة البيع بالظبط، ونفس الحلّ.
 
-           صاحب المحل بيشوف خزائن **كل فروعه** في قايمة واحدة،
+           صاحب المحل بيشوف خزن **كل فروعه** في قايمة واحدة،
            وكلها اسمها "نقدي" بعد توحيد التسمية. فبيسجّل مصروف
-           فرع على خزينة فرع تاني — والحركة بتعدي عادي، لأن
-           صاحب المحل من حقه فعلاً يصرف من أي خزينة.
+           فرع على خزنة فرع تاني — والحركة بتعدي عادي، لأن
+           صاحب المحل من حقه فعلاً يصرف من أي خزنة.
 
            ⚠ وده اللي بيخلّي العطل ده **أوحش** من بتاع البيع:
            هناك القاعدة بترفض وتزعّق. هنا مفيش حاجة بترفض —
@@ -3281,16 +3289,16 @@ export function treasuryPage(data: TreasuryPageData): Html {
             <select class="field-input" id="mv-branch">
               ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
             </select>
-            <p class="field-hint">تظهر لك خزائن هذا الفرع وحدها.</p>
+            <p class="field-hint">تظهر لك خزن هذا الفرع وحدها.</p>
           </div>`
         : ''}
 
       <div class="field">
-        <label class="field-label" for="mv-treasury">الخزينة</label>
+        <label class="field-label" for="mv-treasury">الخزنة</label>
         <select class="field-input" id="mv-treasury" required>
           ${data.balances.map((b) => {
             // ⚠ الفرع بيتقرا من `summary.rows` مش من `balances`.
-            // الاتنين بيوصفوا نفس الخزائن، بس الملخّص وحده اللي
+            // الاتنين بيوصفوا نفس الخزن، بس الملخّص وحده اللي
             // شايل الفرع — فمفيش داعي نغيّر `app.ts` عشان حقل
             // موجود أصلاً في الصفحة.
             const branchId =
@@ -3358,8 +3366,8 @@ export function treasuryPage(data: TreasuryPageData): Html {
       <div class="field" id="mv-dir-field" hidden>
         <label class="field-label" for="mv-dir">اتجاه التسوية</label>
         <select class="field-input" id="mv-dir">
-          <option value="IN">زيادة في الخزينة</option>
-          <option value="OUT">نقص في الخزينة</option>
+          <option value="IN">زيادة في الخزنة</option>
+          <option value="OUT">نقص في الخزنة</option>
         </select>
       </div>
 
@@ -3395,7 +3403,7 @@ export function treasuryPage(data: TreasuryPageData): Html {
 
       <p class="field-hint" id="mv-purchase-note" hidden>
         ⚠ هذا يسجّل خروج المال ويكتب بيانه. لا يضيف الصنف إلى المخزون —
-        التوريد يتم من شاشة المنتجات.
+        التوريد يتم من شاشة البضاعة.
       </p>
 
       <button class="btn-primary" id="mvbtn" type="submit">تسجيل الحركة</button>
@@ -3459,7 +3467,7 @@ ${MENU_JS}
   /**
    * أسماء الموردين — بتتحمّل **أول مرة** يختار شراء بس.
    *
-   * ⚠ مش مع الصفحة: أغلب فتحات شاشة الخزينة مصروف أو سُلفة،
+   * ⚠ مش مع الصفحة: أغلب فتحات شاشة الخزنة مصروف أو سُلفة،
    * فتحميل القائمة في كل مرة = رحلة ضايعة على شبكة موبايل.
    */
   async function loadSuppliers() {
@@ -3536,7 +3544,7 @@ ${MENU_JS}
 
         // ⚠ بنضيف الخيار ونختاره على طول بدل تحديث الصفحة.
         //
-        // المستخدم واقف في نص تسجيل حركة: المبلغ مكتوب والخزينة
+        // المستخدم واقف في نص تسجيل حركة: المبلغ مكتوب والخزنة
         // متختارة. التحديث كان هيمسح شغله عشان يضيف سبب.
         var opt = document.createElement('option');
         opt.value = data.id;
@@ -3552,10 +3560,10 @@ ${MENU_JS}
     });
   })();
 
-  // ── الفرع يضيّق قايمة الخزائن ──
+  // ── الفرع يضيّق قايمة الخزن ──
   //
-  // ⚠ الخزائن بتتشال من القايمة مش بتتخبّى بس. «hidden» على
-  // «option» مش مضمون في كل المتصفحات، وخزينة شكلها مختارة وهي
+  // ⚠ الخزن بتتشال من القايمة مش بتتخبّى بس. «hidden» على
+  // «option» مش مضمون في كل المتصفحات، وخزنة شكلها مختارة وهي
   // من فرع تاني بتخلّي الحركة تتسجّل في المكان الغلط.
   (function () {
     var branchEl = document.getElementById('mv-branch');
@@ -3574,7 +3582,7 @@ ${MENU_JS}
         if (same && first === null) first = i;
       }
 
-      // لو المختار بقى من فرع تاني، ننقل لأول خزينة صالحة
+      // لو المختار بقى من فرع تاني، ننقل لأول خزنة صالحة
       if (treasuryEl.selectedIndex < 0 || opts[treasuryEl.selectedIndex].disabled) {
         treasuryEl.selectedIndex = first === null ? -1 : first;
       }
@@ -3596,7 +3604,7 @@ ${MENU_JS}
     btn.textContent = 'جارٍ التسجيل…';
 
     // ⚠ الشرا ليه مسار مختلف لأنه بيكتب **صفّين** في معاملة
-    // واحدة: حركة الخزينة وبيانها. لو بعتناه لمسار الحركات
+    // واحدة: حركة الخزنة وبيانها. لو بعتناه لمسار الحركات
     // العادي، البيان كان هيضيع والمصروف يتسجّل أعمى.
     var url = t === 'PURCHASE' ? '/api/purchases' : '/api/treasury/movements';
     var payload = t === 'PURCHASE'
@@ -3702,7 +3710,7 @@ ${MENU_JS}
     txt.textContent = message;
   }
 
-  // ══════════ التحويل بين الخزائن ══════════
+  // ══════════ التحويل بين الخزن ══════════
   //
   // ⚠ مفيش خانة للعمولة — هي الفرق بين اللي خرج واللي وصل،
   // وبتتعرض لحظيًا وإنت بتكتب.
@@ -3751,7 +3759,7 @@ ${MENU_JS}
       // الحارس ده قدّام الرد من الخادم: السبب المحدد أنفع من
       // رسالة عامة بعد رحلة شبكة
       if (from.value === to.value) {
-        say('اختر خزينتين مختلفتين.', false);
+        say('اختر خزنتين مختلفتين.', false);
         return;
       }
 
@@ -3787,7 +3795,7 @@ ${MENU_JS}
     });
   }
 
-  // ══════════ إضافة خزينة ══════════
+  // ══════════ إضافة خزنة ══════════
   var tzType = document.getElementById('tz-type');
   var tzProv = document.getElementById('tz-prov-field');
 
@@ -3807,7 +3815,7 @@ ${MENU_JS}
 
       if (!branch.value) { say('اختر الفرع.', false); return; }
       if (String(name.value || '').trim().length < 2) {
-        say('اكتب اسم الخزينة.', false);
+        say('اكتب اسم الخزنة.', false);
         return;
       }
 
@@ -3885,6 +3893,15 @@ export interface PosPageData {
     /** بيتحسب على الخادم: صاحب الفاتورة أو المالك */
     canEditExit: boolean;
   }>;
+  /**
+   * حسابات المحلات — لخروج البضاعة أجل.
+   *
+   * ⚠ الاسم والمعرّف بس، بلا أرصدة. الشاشة دي بتخرّج بضاعة،
+   * مش بتعرض ديون — والرصيد معلومة مالية مالهاش لزوم هنا.
+   */
+  shopAccounts: Array<{ id: string; name: string }>;
+  /** supplier.manage — بيتحكم في ظهور قسم الخروج أجل */
+  canConsign: boolean;
   /** تاريخ النهاردة بتوقيت القاهرة — افتراضي حقل تاريخ الخروج */
   today: string;
   /**
@@ -3909,7 +3926,7 @@ export interface PosPageData {
  *   والزبون بيسأل "بقى كام؟" وهو واقف. لو تحت، هيحتاج يسكرول
  *   في كل مرة.
  *
- * • المنتجات مربّعات كبيرة مش قايمة: الضغط بالإبهام على شاشة
+ * • البضاعة مربّعات كبيرة مش قايمة: الضغط بالإبهام على شاشة
  *   لمس قدّام طابور، مش بالماوس على مكتب.
  *
  * • الكمية المتاحة مكتوبة على كل منتج: أحسن من إنه يضغط ويلاقي
@@ -3927,10 +3944,10 @@ export function posPage(data: PosPageData): Html {
 
   const productsHtml = !hasProducts
     ? html`<div class="empty">
-        <p class="empty-title">لا توجد منتجات متاحة</p>
+        <p class="empty-title">لا توجد بضاعة متاحة</p>
         <p class="empty-note">
-          إمّا أن المنتجات لم تُضَف بعد، أو أن الكميات نفدت.<br>
-          يضيفها المدير ويورّدها من شاشة المنتجات.
+          إمّا أن البضاعة لم تُضَف بعد، أو أن الكميات نفدت.<br>
+          يضيفها المدير ويورّدها من شاشة البضاعة.
         </p>
       </div>`
     : html`<div class="prod-grid" id="prod-grid">
@@ -3991,8 +4008,60 @@ export function posPage(data: PosPageData): Html {
 
   ${!hasTreasury
     ? html`<div class="alert-box"><span>
-        لا توجد خزينة متاحة لفرعك، ولا يمكن إتمام فاتورة من دونها. راجع المالك لإضافة خزينة للفرع.
+        لا توجد خزنة متاحة لفرعك، ولا يمكن إتمام فاتورة من دونها. راجع المالك لإضافة خزنة للفرع.
       </span></div>`
+    : ''}
+
+  ${data.canConsign
+    ? html`<!-- ══ ⚠ خروج بضاعة أجل — دفتر مستقل عن البيع ══
+
+         البضاعة بتخرج من المخزون، والدين بيتسجّل على المحل،
+         و**قائمة الدخل ما بتشوفش حاجة**.
+
+         يعني بضاعة بمية ألف تخرج النهاردة وتقرير الشهر بيقول
+         إنك ما بعتش. الربح بيظهر لما المحل يسدّد.
+
+         ⚠ وبين الخروج والسداد، البضاعة مش في المخزون ومش في
+         الإيراد — هي في المكان التالت. وشاشة حساب المحلات هي
+         المكان ده. لو اتسابت شهر، البضاعة بتضيع من الحسبة.
+
+         ⚠ وقبل إتمام البيع عن قصد: الاتنين بياخدوا من نفس
+         السلة، والخروج قرار مختلف عن البيع — فلازم يبان
+         قبل ما الإيد تمتد لزرار "تم البيع". -->
+      <details class="panel">
+        <summary>خروج بضاعة أجل</summary>
+        <div class="panel-body">
+          <p class="field-hint">
+            البضاعة تخرج من المخزون ويُفتح بها دين على المحل.
+            لا تدخل المبيعات ولا الأرباح — تظهر في «حساب المحلات».
+          </p>
+
+          <div class="field">
+            <label class="field-label" for="cg-shop">المحل</label>
+            <select class="field-input" id="cg-shop">
+              <option value="">— اختر المحل —</option>
+              ${data.shopAccounts.map(
+                (sh) => html`<option value="${sh.id}">${sh.name}</option>`,
+              )}
+            </select>
+            <button class="btn-mini" type="button" id="cg-shop-add">+ محل جديد</button>
+          </div>
+
+          <!-- ⚠ السلة نفسها هي سلة البيع.
+               سلّتين منفصلتين معناهم إن الموظّف يحطّ في وحدة
+               ويضغط زرار التانية — والشاشة تقول "السلة فاضية"
+               وهو شايفها مليانة. -->
+          <p class="field-hint" id="cg-cart">السلة فاضية — أضِف أصناف من القائمة تحت.</p>
+
+          <div class="field">
+            <label class="field-label" for="cg-note">ملاحظة (اختياري)</label>
+            <input class="field-input" id="cg-note" type="text" maxlength="500"
+              autocomplete="off" placeholder="اتفاق أو ميعاد سداد">
+          </div>
+
+          <button class="btn-mini" type="button" id="cg-go">خروج</button>
+        </div>
+      </details>`
     : ''}
 
   <details class="panel" open>
@@ -4002,16 +4071,16 @@ export function posPage(data: PosPageData): Html {
 
            ⚠ الخانة دي بتحلّ عطل حقيقي، مش تحسين شكل.
 
-           صاحب المحل بيشوف منتجات **كل فروعه** في شاشة واحدة،
-           وخزائن كل فروعه. فكان بيحطّ منتج من فرع ويختار خزينة
+           صاحب المحل بيشوف بضاعة **كل فروعه** في شاشة واحدة،
+           وخزن كل فروعه. فكان بيحطّ منتج من فرع ويختار خزنة
            فرع تاني — ودالة قاعدة البيانات بترفض بحق.
 
-           كان فيه ملاحظة مكتوبة تحت الخزينة بتقوله "اختر خزينة
+           كان فيه ملاحظة مكتوبة تحت الخزنة بتقوله "اختر خزنة
            نفس الفرع". والملاحظة مش حاجز: مفيش حد بيقرا سطر
            رمادي وهو ماسك سلة قدّام زبون.
 
            دلوقتي الفرع بيتقفل من فوق، والشاشة كلها بتضيق عليه —
-           منتجاته وخزائنه. الغلطة بقت **مش ممكنة** بدل ما تكون
+           بضاعةه وخزنه. الغلطة بقت **مش ممكنة** بدل ما تكون
            مكتوب عنها تحذير.
 
            ⚠ ولسه ده **راحة مش حماية**. الحارس في دالة القاعدة
@@ -4023,20 +4092,20 @@ export function posPage(data: PosPageData): Html {
               ${data.branches.map((b) => html`<option value="${b.id}">${b.name}</option>`)}
             </select>
             <p class="field-hint">
-              تظهر لك منتجات هذا الفرع وخزائنه وحدها. تغيير الفرع يفرّغ السلة.
+              تظهر لك بضاعة هذا الفرع وخزنه وحدها. تغيير الفرع يفرّغ السلة.
             </p>
           </div>`
         : ''}
 
       <div class="field">
-        <label class="field-label" for="pos-treasury">الخزينة</label>
+        <label class="field-label" for="pos-treasury">الخزنة</label>
         <select class="field-input" id="pos-treasury" ${hasTreasury ? '' : raw('disabled')}>
           ${data.treasuries.map(
             (t) => html`<option value="${t.treasuryId}" data-branch="${t.branchId}">${t.name}</option>`,
           )}
         </select>
         <p class="field-hint">
-          تُقرأ وسيلة الدفع من الخزينة نفسها — نقدي، فيزا، إنستاباي.
+          تُقرأ وسيلة الدفع من الخزنة نفسها — نقدي، فيزا، إنستاباي.
         </p>
       </div>
 
@@ -4072,12 +4141,28 @@ export function posPage(data: PosPageData): Html {
         </p>
       </div>
 
+      <!-- ══ ملاحظة الفاتورة ══
+           ⚠ الكلام اللي بيتقال على الكاونتر ومالوش خانة:
+           "اتفقنا يرجع يغيّر اللون" · "فيه خربوشة ووافق".
+
+           بيضيع دلوقتي، وأول خلاف بعد شهر مفيش حاجة مكتوبة —
+           والموظّف اللي باع يمكن يكون مشي.
+
+           ⚠ وما تكتبش فيها فلوس. "دفع 500 والباقي بكرة" ملاحظة
+           مفيدة، بس الرقم ده مش داخل أي حساب. -->
+      <div class="field">
+        <label class="field-label" for="pos-note">ملاحظات (اختياري)</label>
+        <input class="field-input" id="pos-note" type="text" maxlength="500"
+          autocomplete="off" placeholder="اتفاق أو حالة الجهاز">
+        <p class="field-hint">تتسجّل على الفاتورة. مش مكان للمبالغ.</p>
+      </div>
+
       <button class="btn-primary" id="pos-submit" type="button" disabled>تم البيع</button>
     </div>
   </details>
 
   <details class="panel" open>
-    <summary>المنتجات</summary>
+    <summary>البضاعة</summary>
     <div class="panel-body">
       ${hasProducts
         ? html`<div class="field">
@@ -4140,7 +4225,7 @@ export function posPage(data: PosPageData): Html {
                       </div>
                       <p class="field-hint" id="ret-fee-${s.id}"></p>
 
-                      <label class="field-label" for="ret-tre-${s.id}">الخزينة</label>
+                      <label class="field-label" for="ret-tre-${s.id}">الخزنة</label>
                       <select class="field-input" id="ret-tre-${s.id}">
                         ${data.treasuries.map(
                           (t) => html`<option value="${t.treasuryId}">${t.name}</option>`,
@@ -4245,6 +4330,23 @@ ${TIME_JS}
   }
   var textEl = document.getElementById('posmsg-text');
 
+  /**
+   * رسالة في شريط الإشعار.
+   *
+   * ⚠ الشاشة كانت بتكتب في العنصر مباشرةً في أربع أماكن،
+   * وكل مرة بتضبط الإخفاء واللون بإيدها. الدالة دي
+   * بتوحّدهم — من غيرها أي مكان جديد بينسى واحدة منهم،
+   * والرسالة بتظهر بلون النجاح وهي فشل.
+   */
+  function posSay(message, ok) {
+    if (!boxEl || !textEl) return;
+    boxEl.hidden = false;
+    if (ok) boxEl.setAttribute('data-tone', 'ok');
+    else boxEl.removeAttribute('data-tone');
+    textEl.textContent = message;
+    boxEl.scrollIntoView({ block: 'nearest' });
+  }
+
   // نفس منطق formatPiastres في الخادم بالظبط — القسمة على 100
   // بتحصل وقت العرض بس. كل الحسابات فوق بالقرش كأرقام صحيحة.
   function money(piastres) {
@@ -4294,6 +4396,10 @@ ${TIME_JS}
   }
 
   function render() {
+    // ⚠ ملخّص لوحة الخروج بيتحدّث مع كل رسم للسلة.
+    // لو حدّثناه في مكان واحد بس، الموظّف يشيل صنف ويلاقي
+    // اللوحة لسه بتقول الإجمالي القديم.
+    if (typeof paintConsignCart === 'function') paintConsignCart();
     var ids = Object.keys(cart);
     linesEl.innerHTML = '';
 
@@ -4510,9 +4616,9 @@ ${TIME_JS}
     }
   }
 
-  // ⚠ خزائن الفروع التانية بتتشال من القايمة مش بتتخبّى بس.
+  // ⚠ خزن الفروع التانية بتتشال من القايمة مش بتتخبّى بس.
   // «hidden» على «<option>» مش مضمون في كل المتصفحات، والخانة
-  // المعطّلة اللي شكلها مختارة بتخلّي الموظّف يبعت خزينة غلط.
+  // المعطّلة اللي شكلها مختارة بتخلّي الموظّف يبعت خزنة غلط.
   function syncTreasuries() {
     if (!treasuryEl || !branchEl) return;
     var branch = branchEl.value;
@@ -4526,7 +4632,7 @@ ${TIME_JS}
       if (same && firstVisible === null) firstVisible = i;
     }
 
-    // لو المختار دلوقتي بقى من فرع تاني، ننقل لأول خزينة صالحة
+    // لو المختار دلوقتي بقى من فرع تاني، ننقل لأول خزنة صالحة
     if (treasuryEl.selectedIndex < 0 || opts[treasuryEl.selectedIndex].disabled) {
       treasuryEl.selectedIndex = firstVisible === null ? -1 : firstVisible;
     }
@@ -4539,7 +4645,7 @@ ${TIME_JS}
       // ⚠ السلة بتتفضّى مع تغيير الفرع، وده مقصود.
       //
       // السلة المخلوطة هي **نفس العطل** اللي الخانة دي اتعملت
-      // عشانه: منتج من فرع وخزينة من فرع تاني، والقاعدة بترفض
+      // عشانه: منتج من فرع وخزنة من فرع تاني، والقاعدة بترفض
       // بعد ما الزبون يكون واقف مستني.
       //
       // ⚠ والتأكيد بيظهر **لو فيه حاجة في السلة بس**. سؤال
@@ -4564,6 +4670,119 @@ ${TIME_JS}
 
   applyFilters();
 
+  // ══════════ خروج بضاعة أجل ══════════
+  //
+  // ⚠ بيقرا من **نفس السلة** بتاعة البيع.
+  //
+  // سلّتين منفصلتين كانوا هيخلّوا الموظّف يحطّ في وحدة ويضغط
+  // زرار التانية — والشاشة تقول "السلة فاضية" وهو شايفها مليانة.
+  var cgGo = document.getElementById('cg-go');
+  var cgCart = document.getElementById('cg-cart');
+
+  /** ملخّص السلة جوّه لوحة الخروج — بيتحدّث مع كل تغيير */
+  function paintConsignCart() {
+    if (!cgCart) return;
+    var ids = Object.keys(cart);
+    if (ids.length === 0) {
+      cgCart.textContent = 'السلة فاضية — أضِف أصناف من القائمة تحت.';
+      return;
+    }
+    var total = 0, count = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var l = cart[ids[i]];
+      // ⚠ السعر اليدوي بيتحسب هنا كمان. المنتج اللي مالوش سعر
+      // مسجّل بيخرج بالسعر اللي الموظّف كتبه — زي البيع بالظبط.
+      var unit = l.price === null ? Number(String(l.manual || '0').replace(/[^0-9.]/g, '')) * 100 : l.price;
+      total += unit * l.qty;
+      count += l.qty;
+    }
+    cgCart.textContent = count + ' قطعة · الإجمالي ' + money(total) + ' ج.م';
+  }
+
+  if (cgGo) {
+    cgGo.addEventListener('click', async function () {
+      var shopEl = document.getElementById('cg-shop');
+      if (!shopEl || !shopEl.value) { posSay('اختر المحل.', false); return; }
+
+      var ids = Object.keys(cart);
+      if (ids.length === 0) { posSay('السلة فاضية.', false); return; }
+
+      var lines = [];
+      for (var i = 0; i < ids.length; i++) {
+        var line = cart[ids[i]];
+        // ⚠ السعر لازم يتبعت كنص زي البيع — دالة الفلوس في
+        // الخادم بتقبل الأرقام العربية وبترفض السالب.
+        var priceText = line.price === null
+          ? String(line.manual || '')
+          : String(line.price / 100);
+        if (!priceText || priceText === '0') {
+          posSay('فيه صنف بلا سعر. اكتب السعر قبل الخروج.', false);
+          return;
+        }
+        lines.push({ productId: ids[i], quantity: line.qty, unitPrice: priceText });
+      }
+
+      cgGo.disabled = true;
+      cgGo.textContent = 'جارٍ التسجيل…';
+      try {
+        var res = await fetch(
+          '/api/shops/' + encodeURIComponent(shopEl.value) + '/consign',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+              items: lines,
+              note: document.getElementById('cg-note').value || null
+            })
+          }
+        );
+        var out = await res.json().catch(function () { return null; });
+        if (!res.ok || !out || !out.ok) {
+          posSay((out && out.error && out.error.message) || 'تعذّر تسجيل الخروج.', false);
+          return;
+        }
+        posSay('خرجت البضاعة — رصيد المحل الآن ' + money(out.newBalance) + ' ج.م.', true);
+        setTimeout(function () { window.location.reload(); }, 1200);
+      } catch (err) {
+        posSay('تعذّر الاتصال بالخادم.', false);
+      } finally {
+        cgGo.disabled = false;
+        cgGo.textContent = 'خروج';
+      }
+    });
+  }
+
+  var cgAdd = document.getElementById('cg-shop-add');
+  if (cgAdd) {
+    cgAdd.addEventListener('click', async function () {
+      var name = prompt('اسم المحل؟');
+      if (name === null) return;
+      if (name.trim().length < 2) { posSay('اسم المحل قصير.', false); return; }
+      var phone = prompt('رقم المسؤول؟ (اختياري)');
+      if (phone === null) return;
+
+      try {
+        var res = await fetch('/api/shops', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ name: name.trim(), phone: phone.trim() || null })
+        });
+        var out = await res.json().catch(function () { return null; });
+        if (!res.ok || !out || !out.ok) {
+          posSay((out && out.error && out.error.message) || 'تعذّر إضافة المحل.', false);
+          return;
+        }
+        // ⚠ تحديث كامل: المحل الجديد لازم يظهر في القائمة هنا
+        // وفي شاشة حساب المحلات مع بعض.
+        window.location.reload();
+      } catch (err) {
+        posSay('تعذّر الاتصال بالخادم.', false);
+      }
+    });
+  }
+
   // ── إتمام البيع ──
   submitEl.addEventListener('click', async function () {
     var ids = Object.keys(cart);
@@ -4573,7 +4792,7 @@ ${TIME_JS}
     for (var i = 0; i < ids.length; i++) {
       var line = cart[ids[i]];
       var entry = { productId: ids[i], quantity: line.qty };
-      // السعر اليدوي بيتبعت للمنتجات اللي مالهاش سعر بس.
+      // السعر اليدوي بيتبعت للبضاعة اللي مالهاش سعر بس.
       // الخادم بيتجاهله لو المنتج له سعر مسجّل.
       if (line.price === null) entry.unitPrice = line.manual;
       items.push(entry);
@@ -4596,7 +4815,8 @@ ${TIME_JS}
           // ⚠ الخانة الفاضية بتتبعت null صراحةً = بلا ضمان.
           // لو بعتناها '' كان الخادم هيقراها صفر — و"بلا ضمان"
           // كانت هتبقى "ضمان صفر يوم".
-          warrantyDays: warrantyValue()
+          warrantyDays: warrantyValue(),
+          note: document.getElementById('pos-note').value || null
         })
       });
       var data = await res.json().catch(function () { return null; });
@@ -4958,7 +5178,7 @@ ${TIME_JS}
     if (items.length === 0) { retSay(id, 'اختر بندًا واحدًا على الأقل.', false); return; }
 
     var tre = document.getElementById('ret-tre-' + id);
-    if (!tre || !tre.value) { retSay(id, 'اختر الخزينة.', false); return; }
+    if (!tre || !tre.value) { retSay(id, 'اختر الخزنة.', false); return; }
 
     // ⚠ الحارس ده قدّام الرسالة العامة عن قصد: السبب المحدّد
     // أنفع من "فشل الاسترجاع" اللي بيرجع من الخادم بعد رحلة.
@@ -4978,7 +5198,7 @@ ${TIME_JS}
 
     var ask = outside
       ? 'استرجاع خارج الضمان — يُسجَّل باسمك في سجل التدقيق. تأكيد؟'
-      : 'تأكيد الاسترجاع؟ الفلوس هتطلع من الخزينة والبضاعة هتروح لرفّ المراجعة.';
+      : 'تأكيد الاسترجاع؟ الفلوس هتطلع من الخزنة والبضاعة هتروح لرفّ المراجعة.';
     if (!confirm(ask)) return;
 
     var why = document.getElementById('ret-why-' + id);
@@ -5091,7 +5311,7 @@ ${TIME_JS}
 }
 
 
-// ═══════════════════ 6) شاشة المنتجات ═══════════════════
+// ═══════════════════ 6) شاشة البضاعة ═══════════════════
 
 export interface ProductsPageData {
   fullName: string;
@@ -5108,7 +5328,7 @@ export interface ProductsPageData {
   canSell: boolean;
   canUseTreasury: boolean;
   /**
-   * أدراج المنتجات — شجرة على مستويين.
+   * أدراج البضاعة — شجرة على مستويين.
    *
    * `parentId` فاضي = قسم رئيسي (إكسسوار · مكملات)
    * `parentId` موجود = درج جوّاه (جرابات · شواحن)
@@ -5138,6 +5358,13 @@ export interface ProductsPageData {
     id: string;
     name: string;
     brand: string | null;
+    /**
+     * عيلة الجهاز. null = غير مصنّف.
+     *
+     * ⚠ دي اللي بتحدّد الموديل يظهر في أنهي درج. والموديل
+     * بيفضل **صف واحد** — الجهاز وجرابه بيشاوروا عليه سوا.
+     */
+    family: 'IPHONE' | 'ANDROID' | null;
     sortOrder: number;
     deviceCount: number;
     accessoryCount: number;
@@ -5189,6 +5416,22 @@ export interface ProductsPageData {
     /** لون المنتج. null = غير محدّد. */
     colorId: string | null;
   }>;
+  /**
+   * سجل الموردين — لقايمة مصدر الشراء.
+   *
+   * ⚠ أسماء بس بلا أي رقم مالي. المندوب بيختار المورّد من غير
+   * ما يشوف إنت مديون له بكام — نفس الفصل اللي في `suppliers.ts`.
+   */
+  suppliers: Array<{ id: string; name: string }>;
+  /** supplier.manage — بيتحكم في ظهور زرار إضافة مورّد بس */
+  canManageSuppliers: boolean;
+  /**
+   * خزن الفرع — للسداد وقت الإضافة.
+   *
+   * ⚠ الاسم والمعرّف بس، بلا أرصدة. الرصيد معلومة مالية
+   * والمندوب مش محتاجها عشان يقول "دفعت من الدرج".
+   */
+  treasuries: Array<{ id: string; name: string }>;
   /** فروع المحل الأخرى — للتحويل. فاضية = مفيش فرع تاني */
   transferTargets: Array<{ id: string; name: string }>;
   /** maintenance.manage — إرسال جهاز المحل للورشة */
@@ -5203,7 +5446,7 @@ export interface ProductsPageData {
 }
 
 /**
- * شاشة المنتجات.
+ * شاشة البضاعة.
  *
  * ══ ملاحظة على التكلفة ══
  * لو الحقل `costPiastres` مش موجود في الكائن، يبقى اللي بيتفرّج
@@ -5217,11 +5460,11 @@ export function productsPage(data: ProductsPageData): Html {
   const rows =
     data.products.length === 0
       ? html`<div class="empty">
-          <p class="empty-title">لا توجد منتجات بعد</p>
+          <p class="empty-title">لا توجد بضاعة بعد</p>
           <p class="empty-note">
             ${data.canEdit
               ? 'ابدأ بإضافة أول منتج من القسم أعلاه.'
-              : 'يضيف المديرُ المنتجاتِ.'}
+              : 'يضيف المديرُ البضاعةِ.'}
           </p>
         </div>`
       : html`${data.products.map((p) => {
@@ -5502,17 +5745,32 @@ export function productsPage(data: ProductsPageData): Html {
             <div class="field">
               <label class="field-label" for="np-type">نوع المنتج</label>
               <select class="field-input" id="np-type">
-                <option value="accessory">إكسسوار — صنف بكمية</option>
-                <option value="device">جهاز — قطعة برقم تسلسلي</option>
+                <option value="accessory">إكسسوار ومكملات</option>
+                <option value="device">جهاز</option>
               </select>
-              <p class="field-hint">
-                الجهاز قطعة واحدة لها رقم تسلسلي. كل وحدة تُضاف على حدة حتى لو كانت الطراز نفسه.
-              </p>
             </div>
 
-            <div class="field">
+            <!-- ══ نوع الجهاز — للأجهزة بس ══
+                 ⚠ ده اللي بيحدّد الدرج **وبيفلتر الموديلات**
+                 في نفس اللحظة. الجهاز بيروح لدرجه من غير خطوة
+                 تانية، ولا قايمة موديلات مخلوطة. -->
+            <div class="field" id="np-family-field" hidden>
+              <label class="field-label" for="np-family">نوع الجهاز</label>
+              <select class="field-input" id="np-family">
+                <option value="IPHONE">آيفون</option>
+                <option value="ANDROID">أندرويد</option>
+              </select>
+            </div>
+
+            <!-- ══ اسم المنتج — للإكسسوار بس ══
+                 ⚠ اتشال من الأجهزة عن قصد.
+                 اسم الجهاز بقى **اسم الموديل** تلقائيًا، وكتابته
+                 بإيد كان بيدّي نفس الجهاز اسمين مختلفين حسب مين
+                 سجّله — و"12 برو ماكس" و"ايفون ١٢ برومكس" بيبقوا
+                 صنفين في أي تجميع. -->
+            <div class="field" id="np-name-field">
               <label class="field-label" for="np-name">اسم المنتج</label>
-              <input class="field-input" id="np-name" type="text" maxlength="80" required>
+              <input class="field-input" id="np-name" type="text" maxlength="80">
             </div>
 
             <div class="field" id="np-serial-field" hidden>
@@ -5586,18 +5844,25 @@ export function productsPage(data: ProductsPageData): Html {
                  الجهاز موديله هو. والإكسسوار موديله الجهاز اللي
                  بيركب عليه — جراب ١٢ برو ماكس ما ينفعش على ١٣،
                  والزبون بيسأل بالموديل مش بالصنف. -->
+            <!-- ══ ⚠ خانة كتابة مع قايمة اقتراحات، مش قايمة منسدلة ══
+
+                 السبب إن سجل الموديلات بيكبر. قايمة فيها ستين
+                 موديل على موبايل = تمرير طويل في كل إضافة.
+
+                 دلوقتي بتكتب أول حرف أو رقم والقايمة بتضيق.
+                 ولو كتبت غلط، مفيش اقتراحات — فتفتح القايمة
+                 وتدوّر زي الأول. مفيش طريق مسدود.
+
+                 ⚠ والقايمة بتتفلتر بنوع الجهاز المختار فوق،
+                 فموديلات سامسونج ما بتظهرش وإنت بتسجّل آيفون. -->
             <div class="field">
               <label class="field-label" for="np-model">الموديل</label>
-              <select class="field-input" id="np-model">
-                <option value="">— بدون موديل —</option>
-                ${data.models.map(
-                  (m) => html`<option value="${m.id}">
-                    ${m.brand ? `${m.brand} — ${m.name}` : m.name}
-                  </option>`,
-                )}
-              </select>
-              <p class="field-hint">
-                موديل جديد؟ أضِفه من شرائط الموديلات فوق قائمة المخزون.
+              <input class="field-input" id="np-model" type="text" list="np-model-list"
+                autocomplete="off" placeholder="اكتب أول حروف الموديل">
+              <datalist id="np-model-list"></datalist>
+              <button class="btn-mini" type="button" id="np-model-add">+ إضافة موديل</button>
+              <p class="field-hint" id="np-model-hint">
+                اكتب الاسم أو افتح القائمة. مش موجود؟ أضِفه من الزر.
               </p>
             </div>
 
@@ -5612,6 +5877,11 @@ export function productsPage(data: ProductsPageData): Html {
                   (c) => html`<option value="${c.id}">${c.name}</option>`,
                 )}
               </select>
+              <!-- ⚠ زرار جنب القايمة مش خانة كتابة.
+                   لو خلّينا اللون يتكتب، هيبقى عندنا "أسود"
+                   و"اسود" و"black" — نفس غلطة عمود المصدر بالحرف.
+                   الإضافة فعل واعي، والاختيار هو الافتراضي. -->
+              <button class="btn-mini" type="button" id="np-color-add">+ إضافة لون</button>
             </div>
 
             <!-- ══ مواصفات الجهاز ══
@@ -5655,8 +5925,11 @@ export function productsPage(data: ProductsPageData): Html {
 
             <div class="field" id="np-qty-field">
               <label class="field-label" for="np-qty">الكمية الحالية</label>
+              <!-- ⚠ فاضية مش صفر.
+                   الصفر المكتوب مسبقًا بيخلّي الموظّف يمسحه قبل
+                   ما يكتب في كل إضافة — والنتيجة "05" لو نسي. -->
               <input class="field-input" id="np-qty" type="text" inputmode="numeric"
-                dir="ltr" value="0">
+                dir="ltr" placeholder="0">
             </div>
 
             <div class="field">
@@ -5674,10 +5947,77 @@ export function productsPage(data: ProductsPageData): Html {
                 dir="ltr" autocomplete="off">
             </div>
 
+            <!-- ══ ⚠ تسوية التكلفة — بتظهر لما تكتب رقم بس ══
+
+                 السبب إن السؤال ده مالوش معنى بلا تكلفة، وخانة
+                 ظاهرة ومالهاش معنى بتتساب على قيمتها الافتراضية
+                 من غير ما حد يقراها.
+
+                 ⚠ والاختيار ده **بيحرّك فلوس فعلاً**:
+                   مدفوعة → بتطلع من الخزنة اللي تختارها
+                   على الحساب → بتتسجّل دين على المورّد
+
+                 والاتنين بيتكتبوا مع المنتج في معاملة واحدة جوّه
+                 قاعدة البيانات. لو اتفصلوا، بيبقى عندك جهاز بلا
+                 دين أو دين بلا جهاز — والاتنين بيبانوا كأنهم نجاح. -->
+            <div id="np-settle-box" hidden>
+              <div class="field">
+                <label class="field-label" for="np-settle">التكلفة دي</label>
+                <select class="field-input" id="np-settle">
+                  <option value="NONE">— تسجيل مخزون بس، بلا حركة فلوس —</option>
+                  <option value="PAID">اتدفعت من الخزنة</option>
+                  <option value="CREDIT">على حساب المورّد (دين)</option>
+                </select>
+              </div>
+
+              <div class="field" id="np-treasury-field" hidden>
+                <label class="field-label" for="np-treasury">الخزنة</label>
+                <select class="field-input" id="np-treasury">
+                  ${data.treasuries.map(
+                    (t) => html`<option value="${t.id}">${t.name}</option>`,
+                  )}
+                </select>
+                <p class="field-hint">
+                  المبلغ = التكلفة × الكمية، وبيخرج من الخزنة دي فورًا.
+                </p>
+              </div>
+
+              <p class="field-hint" id="np-settle-hint" hidden>
+                هيتسجّل دين على المورّد المختار فوق بقيمة التكلفة × الكمية.
+              </p>
+            </div>
+
+            <!-- ══ ⚠ مصدر الشراء بقى مورّد مسجّل، مش نص حر ══
+
+                 كان خانة كتابة. يعني "أحمد للموبايلات" و"احمد
+                 للموبايلات" مصدرين مختلفين في أي تجميع — والسؤال
+                 "إيه اللي جه من أحمد؟" ما بيتجاوبش.
+
+                 ⚠ ودي **نفس الغلطة** اللي ملف ٢٢ اتكتب عشانها
+                 وحلّها للديون، وفضلت موجودة على البضاعة.
+
+                 والزرار بيضيف المورّد **في السجل** على طول، فبيظهر
+                 في شاشة الموردين وحساباتهم من غير أي خطوة تانية. -->
             <div class="field">
-              <label class="field-label" for="np-source">مصدر الشراء (اختياري)</label>
-              <input class="field-input" id="np-source" type="text" maxlength="80">
-              <p class="field-hint">اسم التاجر أو المحل.</p>
+              <label class="field-label" for="np-supplier">مصدر الشراء (اختياري)</label>
+              <select class="field-input" id="np-supplier">
+                <option value="">— غير محدّد —</option>
+                ${data.suppliers.map(
+                  (sp) => html`<option value="${sp.id}">${sp.name}</option>`,
+                )}
+              </select>
+              <!-- ⚠ الزرار بيظهر لمن يملك صلاحية إدارة الموردين بس.
+                   إنشاء المورّد بيتم على مسار الموردين، والمندوب
+                   مالوش الصلاحية دي — فالزرار كان هيرفض عنده
+                   بلا سبب ظاهر.
+
+                   ⚠ وإخفاؤه مش حماية، هو **صدق في الواجهة**.
+                   الحراسة الحقيقية على المسار زي ما هي. -->
+              ${data.canManageSuppliers
+                ? html`<button class="btn-mini" type="button" id="np-supplier-add">
+                    + إضافة مورّد
+                  </button>`
+                : ''}
             </div>
 
             <div class="field">
@@ -5692,13 +6032,19 @@ export function productsPage(data: ProductsPageData): Html {
       </details>`;
 
   return shell({
-    title: 'المنتجات',
+    title: 'البضاعة',
     tenantName: data.tenantName,
     script: productsScript(
       data.idleTimeoutSeconds,
       data.idleWarningSeconds,
       data.idleAction,
       data.tenantName,
+      data.models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        brand: m.brand,
+        family: m.family,
+      })),
     ),
     body: html`${appBar({
       fullName: data.fullName,
@@ -5763,8 +6109,19 @@ export function productsPage(data: ProductsPageData): Html {
         <button class="tool" type="button" data-tool="cat">
           درج الإكسسوار والمكملات
         </button>
-        <button class="tool" type="button" data-tool="dev">
-          درج الأجهزة
+        <!-- ══ ⚠ درجين للأجهزة مش واحد ══
+             الدرجين بيفلتروا **بعيلة الموديل** مش بحاجة على
+             المنتج نفسه. يعني الجهاز بيقع في الدرج بتاع موديله.
+
+             ⚠ والجهاز اللي موديله غير مصنّف (أو مالوش موديل)
+             ما بيظهرش في الدرجين — بيظهر في «الكل». وده مقصود:
+             الدرج بيقول "دول الآيفونات"، وحطّ فيه حاجة مش
+             متأكدين منها بيخلّي العدّ كذب. -->
+        <button class="tool" type="button" data-tool="iph">
+          درج الآيفون
+        </button>
+        <button class="tool" type="button" data-tool="and">
+          درج الأندرويد
         </button>
         <button class="tool" type="button" data-tool="flt">فلتر</button>
       </div>
@@ -5816,7 +6173,8 @@ export function productsPage(data: ProductsPageData): Html {
         <div class="drawers" id="models">
           <button class="drawer" type="button" data-model="" data-on>الكل</button>
           ${data.models.map(
-            (m) => html`<button class="drawer" type="button" data-model="${m.id}">
+            (m) => html`<button class="drawer" type="button" data-model="${m.id}"
+              data-family="${m.family ?? '__none__'}">
               ${m.name}
               <!-- ⚠ رقمين منفصلين: أجهزة · إكسسوار. رقم مجمّع
                    كان هيقول "٧" ومش هتعرف سبع أجهزة ولا سبع جرابات. -->
@@ -5907,6 +6265,7 @@ ${MENU_JS}
 
 (function () {
   var SHOP_NAME = ${JSON.stringify(shopName)};
+  var ALL_MODELS = ${JSON.stringify(models)};
 
   var box = document.getElementById('prodmsg');
   var text = document.getElementById('prodmsg-text');
@@ -5966,7 +6325,7 @@ ${MENU_JS}
   });
 
   // ── سجل الأسعار: بيتجاب عند فتح اللوحة بس ──
-  // لو جبناه لكل المنتجات مع الصفحة، هتبقى عشرين نداء زيادة
+  // لو جبناه لكل البضاعة مع الصفحة، هتبقى عشرين نداء زيادة
   // عشان معلومة الموظّف غالبًا مش هيفتحها.
   var loaded = {};
   async function loadHistory(id) {
@@ -6164,10 +6523,187 @@ ${MENU_JS}
     // مالوش بطارية ولا مساحة، والخادم بيصفّرهم برضه لو وصلوا.
     if (deviceFields) deviceFields.hidden = !isDevice;
     // ⚠ والدرج بالعكس: للإكسسوار والمكملات مش للأجهزة.
-    // الجهاز هيتجمّع بموديله في مرحلة تانية.
+    // الجهاز درجه بيتحدّد من عيلة موديله.
     if (catField) catField.hidden = isDevice;
+
+    // ══ نوع الجهاز والاسم — واحد بيظهر والتاني بيختفي ══
+    //
+    // ⚠ اسم الجهاز بقى **اسم الموديل** تلقائيًا. وكتابته بإيد
+    // كانت بتدّي نفس الجهاز اسمين مختلفين حسب مين سجّله، و"12
+    // برو ماكس" و"ايفون ١٢ برومكس" بيبقوا صنفين في أي تجميع.
+    var famField = document.getElementById('np-family-field');
+    var nameField = document.getElementById('np-name-field');
+    if (famField) famField.hidden = !isDevice;
+    if (nameField) nameField.hidden = isDevice;
+
+    paintModelList();
   }
+
+  /**
+   * قايمة اقتراحات الموديلات.
+   *
+   * ⚠ بتتفلتر بنوع الجهاز للأجهزة، وبتوري **الكل** للإكسسوار.
+   *
+   * السبب إن الجراب ممكن يكون لآيفون أو لسامسونج — فحصره في
+   * عيلة واحدة كان هيمنعك تسجّل نص بضاعتك. أما الجهاز نفسه
+   * فبينتمي لعيلة واحدة بالتعريف.
+   */
+  function paintModelList() {
+    var list = document.getElementById('np-model-list');
+    if (!list) return;
+
+    var isDevice = typeEl && typeEl.value === 'device';
+    var famEl = document.getElementById('np-family');
+    var want = isDevice && famEl ? famEl.value : '';
+
+    var html = '';
+    for (var i = 0; i < ALL_MODELS.length; i++) {
+      var m = ALL_MODELS[i];
+      // ⚠ غير المصنّف بيظهر للإكسسوار بس. لو ظهر في درج
+      // الآيفون، بتسجّل جهاز على موديل إحنا مش متأكدين إنه
+      // آيفون — والعدّ في الدرج بيبقى كذب.
+      if (want && m.family !== want) continue;
+      var label = m.brand ? m.brand + ' — ' + m.name : m.name;
+      html += '<option value="' + label + '"></option>';
+    }
+    list.innerHTML = html;
+  }
+
+  /** الاسم المعروض ← معرّف الموديل. بيرجّع '' لو مفيش تطابق. */
+  function modelIdFromText(text) {
+    var wanted = String(text || '').trim().toLowerCase();
+    if (!wanted) return '';
+    for (var i = 0; i < ALL_MODELS.length; i++) {
+      var m = ALL_MODELS[i];
+      var label = (m.brand ? m.brand + ' — ' + m.name : m.name).toLowerCase();
+      // ⚠ بنقبل الاسم لوحده كمان: الموظّف بيكتب "12 برو ماكس"
+      // مش "آيفون — 12 برو ماكس"، والإجبار على الشكل الكامل
+      // كان هيخلّيه يفتح القايمة في كل مرة.
+      if (label === wanted || m.name.toLowerCase() === wanted) return m.id;
+    }
+    return '';
+  }
+
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
+
+  var familyEl = document.getElementById('np-family');
+  if (familyEl) familyEl.addEventListener('change', paintModelList);
+
+  // ══════════ تسوية التكلفة ══════════
+  //
+  // ⚠ الصندوق بيظهر لما تكتب تكلفة بس. السؤال مالوش معنى بلا
+  // رقم، والخانة الظاهرة بلا معنى بتتساب على قيمتها الافتراضية
+  // من غير ما حد يقراها.
+  var costEl = document.getElementById('np-cost');
+  var settleBox = document.getElementById('np-settle-box');
+  var settleEl = document.getElementById('np-settle');
+  var treasuryField = document.getElementById('np-treasury-field');
+  var settleHint = document.getElementById('np-settle-hint');
+
+  function syncSettle() {
+    if (!costEl || !settleBox) return;
+    var hasCost = costEl.value.trim() !== '' && costEl.value.trim() !== '0';
+    settleBox.hidden = !hasCost;
+
+    // ⚠ إخفاء الصندوق بيرجّع الاختيار للحياد كمان.
+    // لو سبناه على "اتدفعت" وهو مخفي، الموظّف يمسح التكلفة
+    // ويفتكر إنه ألغى السداد — والحركة بتتسجّل برضه.
+    if (!hasCost && settleEl) settleEl.value = 'NONE';
+
+    var mode = settleEl ? settleEl.value : 'NONE';
+    if (treasuryField) treasuryField.hidden = mode !== 'PAID';
+    if (settleHint) settleHint.hidden = mode !== 'CREDIT';
+  }
+
+  if (costEl) costEl.addEventListener('input', syncSettle);
+  if (settleEl) settleEl.addEventListener('change', syncSettle);
+  syncSettle();
+
+  // ══════════ أزرار الإضافة جوّه النموذج ══════════
+  //
+  // ⚠ التلاتة بيضيفوا في **السجل** مش في النموذج بس.
+  //
+  // يعني المورّد اللي بتضيفه هنا بيظهر في شاشة الموردين
+  // وحساباتهم فورًا، والموديل بيظهر في شرايط الفلترة. لو
+  // كانوا بيتضافوا في القايمة المحلية بس، كنّا هنبقى عندنا
+  // بيانات موجودة في شاشة ومش موجودة في اللي جنبها.
+  //
+  // ⚠ وكلهم بيعملوا تحديث للصفحة بعد النجاح. التحديث مزعج،
+  // بس البديل إننا نحقن الخيار في مكان واحد وننسى الشرايط
+  // والقوايم التانية — وده بيسيب الشاشة بتقول حاجتين.
+  async function addToRegistry(url, body, label) {
+    try {
+      var res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) {
+        say((data.error && data.error.message) || ('تعذّر إضافة ' + label + '.'), false);
+        return false;
+      }
+      window.location.reload();
+      return true;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return false;
+    }
+  }
+
+  var modelAddBtn = document.getElementById('np-model-add');
+  if (modelAddBtn) {
+    modelAddBtn.addEventListener('click', async function () {
+      // ⚠ بنبدأ باللي مكتوب في الخانة. الموظّف كتب الاسم
+      // وملقاهوش، فإعادة كتابته في نافذة تانية شغل مكرر.
+      var pre = modelInputValue();
+      var name = prompt('اسم الموديل الجديد؟', pre || '');
+      if (name === null) return;
+      name = name.trim();
+      if (!name) return;
+
+      // ⚠ العيلة بتتاخد من نوع الجهاز المختار فوق. إنت واقف
+      // في "آيفون" وبتضيف موديل — السؤال هنا تكرار لحاجة
+      // الشاشة عارفاها.
+      var fam = null;
+      if (typeEl && typeEl.value === 'device' && familyEl) fam = familyEl.value;
+
+      await addToRegistry('/api/products/models', { name: name, family: fam }, 'الموديل');
+    });
+  }
+
+  function modelInputValue() {
+    var el = document.getElementById('np-model');
+    return el ? el.value.trim() : '';
+  }
+
+  var colorAddBtn = document.getElementById('np-color-add');
+  if (colorAddBtn) {
+    colorAddBtn.addEventListener('click', async function () {
+      var name = prompt('اسم اللون؟');
+      if (name === null) return;
+      name = name.trim();
+      if (!name) return;
+      await addToRegistry('/api/products/colors', { name: name }, 'اللون');
+    });
+  }
+
+  var supplierAddBtn = document.getElementById('np-supplier-add');
+  if (supplierAddBtn) {
+    supplierAddBtn.addEventListener('click', async function () {
+      var name = prompt('اسم المورّد؟');
+      if (name === null) return;
+      name = name.trim();
+      if (!name) return;
+      var phone = prompt('رقم التليفون؟ (اختياري)');
+      await addToRegistry(
+        '/api/suppliers',
+        { name: name, phone: (phone || '').trim() || null },
+        'المورّد'
+      );
+    });
+  }
 
   // ══════════ فحص رقم الـIMEI ══════════
   //
@@ -6272,6 +6808,37 @@ ${MENU_JS}
       var branch = document.getElementById('np-branch');
       var isDevice = typeEl && typeEl.value === 'device';
 
+      // ══ ⚠ الموديل: من نص لمعرّف ══
+      //
+      // الخانة بتقبل كتابة، فممكن يكتب حاجة مش في السجل. بنحوّل
+      // النص لمعرّف؛ ولو ملقناش، بنوقف ونقوله يضيفه.
+      //
+      // ⚠ والوقوف هنا مقصود بدل ما نبعت الاسم كنص للخادم:
+      // ده كان هيخلق موديل شبح مش في السجل، ومش هيظهر في أي درج.
+      var modelInput = document.getElementById('np-model');
+      var modelText = modelInput ? modelInput.value.trim() : '';
+      var modelId = modelIdFromText(modelText);
+      var modelName = '';
+      if (modelId) {
+        for (var mi = 0; mi < ALL_MODELS.length; mi++) {
+          if (ALL_MODELS[mi].id === modelId) { modelName = ALL_MODELS[mi].name; break; }
+        }
+      }
+
+      if (modelText && !modelId) {
+        say('الموديل ده مش في السجل. اختره من القائمة أو أضِفه بالزر.', false);
+        if (modelInput) modelInput.focus();
+        return;
+      }
+
+      // ⚠ الموديل إلزامي للجهاز، لأن اسم الجهاز بيتولد منه.
+      // من غيره الجهاز بيتسجّل بلا اسم — وما يظهرش في أي بحث.
+      if (isDevice && !modelId) {
+        say('اختر الموديل — اسم الجهاز بيتولّد منه.', false);
+        if (modelInput) modelInput.focus();
+        return;
+      }
+
       // ══ ⚠ فحص الرقم قبل الإرسال ══
       //
       // بيشتغل على أي سريال ١٥ رقم مهما جه منين: مكتوب بإيدك،
@@ -6303,7 +6870,8 @@ ${MENU_JS}
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
           body: JSON.stringify({
-            name: document.getElementById('np-name').value,
+            // ⚠ اسم الجهاز = اسم الموديل. للإكسسوار بيتكتب بإيد.
+            name: isDevice ? modelName : document.getElementById('np-name').value,
             productType: typeEl ? typeEl.value : 'accessory',
             serialNumber: isDevice && !(noSnEl && noSnEl.checked)
               ? document.getElementById('np-serial').value
@@ -6311,7 +6879,17 @@ ${MENU_JS}
             // ⚠ بتتبعت للجهاز بس. الإكسسوار مالوش سريال أصلاً،
             // فـ"غير متاح" عليه جملة بلا معنى — والخادم بيرفضها.
             serialUnavailable: isDevice && !!(noSnEl && noSnEl.checked),
-            source: document.getElementById('np-source').value,
+            // ⚠ المورّد بمعرّفه، مش باسمه كنص.
+            // الاسم بيتقرا من السجل وقت العرض — فلو التاجر
+            // غيّر اسمه، كل بضاعةه بتتحدّث لوحدها.
+            supplierId: document.getElementById('np-supplier').value || null,
+            // ⚠ التسوية بتتبعت مع نفس الطلب مش في نداء تاني.
+            // نداءين معناهم إن الفشل بين الاتنين بيسيب جهاز
+            // بلا دين أو دين بلا جهاز.
+            settle: settleEl ? settleEl.value : 'NONE',
+            treasuryId: (settleEl && settleEl.value === 'PAID')
+              ? document.getElementById('np-treasury').value
+              : null,
             entryDate: document.getElementById('np-entry').value || null,
             price: document.getElementById('np-price').value,
             cost: document.getElementById('np-cost').value,
@@ -6340,7 +6918,7 @@ ${MENU_JS}
               : (document.getElementById('np-category').value || null),
             // ⚠ للنوعين — الجهاز موديله هو، والإكسسوار موديل
             // الجهاز اللي بيركب عليه.
-            modelId: document.getElementById('np-model').value || null,
+            modelId: modelId || null,
             colorId: document.getElementById('np-color').value || null
           })
         });
@@ -6382,7 +6960,7 @@ ${MENU_JS}
             if (wantLabel) {
               window.printHtml(labelHtml({
                 id: newId,
-                name: document.getElementById('np-name').value,
+                name: isDevice ? modelName : document.getElementById('np-name').value,
                 // ⚠ فاضي لو "غير متاح" — والملصق بيطلع بالرمز
                 // من غير سطر السريال. الرمز نفسه موجود دايمًا،
                 // فالجهاز بيتمسح عادي حتى وهو بلا رقم.
@@ -6506,7 +7084,7 @@ ${MENU_JS}
         qrRows.appendChild(row);
       }
     } catch (err) {
-      // فشل قراءة الرفّ ما يصحّش يعطّل شاشة المنتجات كلها
+      // فشل قراءة الرفّ ما يصحّش يعطّل شاشة البضاعة كلها
     }
   }
 
@@ -6668,7 +7246,7 @@ ${MENU_JS}
         trRows.appendChild(row);
       }
     } catch (err) {
-      // فشل القراءة ما يصحّش يعطّل شاشة المنتجات
+      // فشل القراءة ما يصحّش يعطّل شاشة البضاعة
     }
   }
 
@@ -6696,7 +7274,7 @@ ${MENU_JS}
 
   // ══════════ البحث ══════════
   //
-  // ⚠ الفلترة في المتصفح مش على الخادم. الصفحة محمّلة المنتجات
+  // ⚠ الفلترة في المتصفح مش على الخادم. الصفحة محمّلة البضاعة
   // أصلاً، فالفلترة فورية بلا رحلة شبكة — وده اللي بيخلّي
   // الماسح مفيد: يمسح، السطر يظهر في نفس اللحظة.
   //
@@ -6719,7 +7297,29 @@ ${MENU_JS}
   var activeColor = '';
   // '' = الكل · 'accessory' = درج الإكسسوار · 'device' = درج الأجهزة
   var activeMode = '';
+  // '' = كل العيلات · 'IPHONE' · 'ANDROID'
+  var activeFamily = '';
   var activeStorage = '';
+
+  /**
+   * إخفاء شرايح الموديلات اللي مش من العيلة المفتوحة.
+   *
+   * ⚠ إخفاء مش تعطيل. الشريحة المعطّلة بتفضل واخدة مكان في
+   * شريط ضيق أصلاً، والمستخدم بيفضل يمرّر على حاجات ما يقدرش
+   * يضغطها.
+   *
+   * ⚠ و«بلا موديل» بيفضل ظاهر دايمًا: الأجهزة اللي لسه ما
+   * اتصنّفتش لازم يبقى ليها طريق توصلها بيه.
+   */
+  function paintFamilyChips() {
+    var box = document.getElementById('models');
+    if (!box) return;
+    var chips = box.querySelectorAll('[data-family]');
+    for (var i = 0; i < chips.length; i++) {
+      var fam = chips[i].getAttribute('data-family');
+      chips[i].hidden = !!activeFamily && fam !== activeFamily;
+    }
+  }
   var activeCustoms = '';
 
   function runSearch() {
@@ -6749,10 +7349,37 @@ ${MENU_JS}
       // قايمة مش درج.
       var okMode = !activeMode || row.getAttribute('data-type') === activeMode;
 
-      // ⚠ الخمسة كلهم بـ"و". كل شريط بيضيّق اللي قبله، فـ
+      // ══ ⚠ العيلة بتتقرا من **الموديل** مش من المنتج ══
+      //
+      // المنتج مالوش عمود عيلة، وموديله هو اللي معلّم. فبنجيب
+      // موديل الصفّ وندوّر على عيلته في الشريط.
+      //
+      // ⚠ ودي مش لفّة زيادة — دي اللي بتخلّي تصنيف موديل واحد
+      // ينقل **كل** أجهزته وإكسسواراته للدرج الصح في نفس
+      // اللحظة. لو العيلة كانت متخزّنة على المنتج، كنّا هنحتاج
+      // نعدّي على كل صف كل مرة تصنّف موديل.
+      var okFamily = true;
+      if (activeFamily) {
+        var rowModel = row.getAttribute('data-model') || '';
+        var chip = rowModel
+          ? document.querySelector('#models [data-model="' + rowModel + '"]')
+          : null;
+        okFamily = !!chip && chip.getAttribute('data-family') === activeFamily;
+      }
+
+      // ══ ⚠ المخزون مقفول لحد ما تفتح درج ══
+      //
+      // قايمة بكل البضاعة من غير أي درج مفتوح مش قايمة —
+      // دي كومة. والموظّف بيمرّر فيها بدل ما يختار.
+      //
+      // ⚠ والبحث بيفتحها: لو كتبت حاجة في خانة البحث، إنت
+      // عارف بتدوّر على إيه — فالكومة بتبقى نتيجة مش كومة.
+      var browsing = !!activeMode || !!activeDrawer || !!q;
+
+      // ⚠ الستة كلهم بـ"و". كل شريط بيضيّق اللي قبله، فـ
       // "جرابات" + "١٢ برو ماكس" + "أسود" = الجراب الأسود
       // للـ١٢ برو ماكس بالظبط.
-      var match = okText && okMode && okDrawer && okModel
+      var match = browsing && okText && okMode && okFamily && okDrawer && okModel
         && okColor && okStorage && okCustoms;
       row.hidden = !match;
 
@@ -6769,7 +7396,7 @@ ${MENU_JS}
     // يفتكر إن باقي البضاعة اتمسحت.
     if (searchNote) {
       var anyFilter = q || activeMode || activeDrawer || activeModel
-        || activeColor || activeStorage || activeCustoms;
+        || activeColor || activeStorage || activeCustoms || activeFamily;
       searchNote.textContent = anyFilter ? shown + ' نتيجة' : DEFAULT_NOTE;
     }
   }
@@ -6933,12 +7560,35 @@ ${MENU_JS}
         var brand = prompt('الماركة؟ (اختياري — آيفون · سامسونج)');
         if (brand === null) brand = '';
 
+        // ══ ⚠ العيلة: بتتاخد من الدرج المفتوح لو فيه واحد ══
+        //
+        // إنت واقف في درج الآيفون وبتضيف موديل — يبقى بديهي
+        // إنه آيفون. السؤال هنا كان هيبقى تكرار لحاجة الشاشة
+        // عارفاها.
+        //
+        // ⚠ ولو مفيش درج مفتوح (إنت في «الكل» أو في درج
+        // الإكسسوار)، بنسأل — لأن ساعتها مفيش أي دليل، والتخمين
+        // بيحطّ الموديل في درج غلط وهو شكله سليم.
+        var family = activeFamily;
+        if (!family) {
+          var pick = prompt('العيلة؟ اكتب 1 للآيفون · 2 للأندرويد · سيبها فاضية لو مش متأكد');
+          if (pick === null) return;
+          pick = pick.trim();
+          if (pick === '1') family = 'IPHONE';
+          else if (pick === '2') family = 'ANDROID';
+          else family = null;
+        }
+
         try {
           var res = await fetch('/api/products/models', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify({ name: name, brand: brand.trim() || null })
+            body: JSON.stringify({
+              name: name,
+              brand: brand.trim() || null,
+              family: family
+            })
           });
           var data = await res.json();
           if (!res.ok || !data.ok) {
@@ -7122,26 +7772,46 @@ ${MENU_JS}
         return;
       }
 
-      // ─── الدرجين ───
+      // ─── التلات أدراج ───
       var mode = key === 'cat' ? 'accessory' : 'device';
+      // ⚠ العيلة بتتحدّد من الزرار. درج الإكسسوار مالوش عيلة
+      // لأن الجراب ممكن يكون لآيفون أو لأندرويد — فبيشوف الكل.
+      var family = key === 'iph' ? 'IPHONE' : (key === 'and' ? 'ANDROID' : '');
 
-      if (activeMode === mode) {
+      if (activeMode === mode && activeFamily === family) {
         // ضغطة تانية = رجوع للكل
         activeMode = '';
+        activeFamily = '';
         showRow('');
       } else {
         activeMode = mode;
-        showRow(key);
-        // ⚠ فلاتر النوع التاني بتتصفّى مع تغيير الدرج.
-        // "مساحة 256" شغّالة وإنت في درج الجرابات بتخلّي الشاشة
-        // فاضية بلا سبب ظاهر.
+        activeFamily = family;
+        // ⚠ الدرجين بيفتحوا **نفس الشريط** (شريط الموديلات)،
+        // والفرق إن الشرايح بتتفلتر بالعيلة. شريطين منفصلين
+        // كانوا هيبقوا نسختين من نفس القايمة — ونسختين معناهم
+        // إن العلامة على الاتنين ممكن تختلف.
+        showRow(mode === 'accessory' ? 'cat' : 'model');
+        paintFamilyChips();
+
         if (mode === 'accessory') {
+          // ⚠ فلاتر النوع التاني بتتصفّى مع تغيير الدرج.
+          // "مساحة 256" شغّالة وإنت في درج الجرابات بتخلّي
+          // الشاشة فاضية بلا سبب ظاهر.
           activeStorage = ''; activeCustoms = '';
           clearRow('storages', 'data-storage');
           clearRow('customs', 'data-customs');
         } else {
           activeDrawer = '';
           clearRow('drawers', 'data-drawer');
+          // ⚠ والموديل المختار بيتصفّى كمان لو مش من نفس
+          // العيلة — وإلا بتفتح درج الآيفون وموديل سامسونج
+          // لسه مختار، والنتيجة صفر بلا سبب ظاهر.
+          if (activeModel) {
+            var still = document.querySelector(
+              '#models [data-model="' + activeModel + '"][data-family="' + family + '"]',
+            );
+            if (!still) { activeModel = ''; clearRow('models', 'data-model'); }
+          }
         }
       }
 
@@ -7909,7 +8579,7 @@ export interface PlatformPageData {
  * شاشة إدارة المحلات.
  *
  * ══ لاحظ اللي **مش** موجود هنا ══
- * مفيش مبيعات، مفيش أرباح، مفيش أرصدة خزينة، مفيش مخزون.
+ * مفيش مبيعات، مفيش أرباح، مفيش أرصدة خزنة، مفيش مخزون.
  * الشاشة بتوري حجم الاستخدام بس: كام فرع وكام مستخدم.
  *
  * ده مش نقص في الشاشة — ده حدّ مرسوم عن قصد في تلات طبقات:
@@ -7993,7 +8663,7 @@ export function platformPage(data: PlatformPageData): Html {
                           placeholder="${t.code}">
                         <p class="field-hint">
                           هذا الإجراء لا يمكن التراجع عنه. تُمحى الفروع والحسابات
-                          والمنتجات والعملاء والفواتير وحركات الخزينة نهائيًا.
+                          والبضاعة والعملاء والفواتير وحركات الخزنة نهائيًا.
                         </p>
 
                         <button class="btn-mini" data-danger="true" type="button"
@@ -8085,7 +8755,7 @@ export function platformPage(data: PlatformPageData): Html {
             <button class="btn-mini" type="button" id="add-branch">+ فرع</button>
           </div>
           <div id="branch-rows"></div>
-          <p class="field-hint">كل فرع يحصل على خزينة نقدية تلقائيًا — بدونها لا يمكن إتمام بيع.</p>
+          <p class="field-hint">كل فرع يحصل على خزنة نقدية تلقائيًا — بدونها لا يمكن إتمام بيع.</p>
         </div>
 
         <!-- ═══ الحسابات ═══ -->
@@ -8350,7 +9020,7 @@ ${MENU_JS}
         'سيُمحى: ' + c.branchCount + ' فرع · ' + c.userCount + ' حساب · ' +
         c.productCount + ' منتج · ' + c.customerCount + ' عميل · ' +
         c.saleCount + ' فاتورة بإجمالي ' + money(c.salesTotalPiastres) + ' ج.م · ' +
-        c.movementCount + ' حركة خزينة · ' + c.auditCount + ' سطر تدقيق.';
+        c.movementCount + ' حركة خزنة · ' + c.auditCount + ' سطر تدقيق.';
 
       panel.hidden = false;
       btn.textContent = 'إخفاء';
@@ -9241,7 +9911,7 @@ export function reportPage(data: ReportPageData): Html {
 
   ${data.canSeeCost
     ? html`<p class="field-hint">
-        رصيد الخزينة يقول كم مالًا لديك الآن. هذه القائمة تقول كم ربحت.
+        رصيد الخزنة يقول كم مالًا لديك الآن. هذه القائمة تقول كم ربحت.
         الرقمان مختلفان: قد يكون الدرج ممتلئًا وأنت خاسر، إن كانت البضاعة
         المباعة أغلى مما قبضته.
       </p>`
@@ -9528,6 +10198,36 @@ export function suppliersPage(data: SuppliersPageData): Html {
 <main class="shell">
   <div class="alert-box" id="supmsg" role="alert" hidden><span id="supmsg-text"></span></div>
 
+  <!-- ══ ⚠ السداد السريع فوق كل حاجة ══
+       ده الفعل اللي بيتعمل كل يوم: التاجر جه، دفعتله، خلاص.
+       وقبل كده كان محتاج تفتح كارت المورّد وتختار النوع وتظبط
+       الخزنة — أربع خطوات لفعل واحد.
+
+       ⚠ والأزرار التانية (دين قديم · خصم) فضلت جوّه الكارت،
+       لأنها بتحصل مرة كل شهور. المكان الأعلى للأكثر تكرارًا. -->
+  <div class="panel">
+    <div class="panel-body">
+      <label class="field-label" for="pay-sup">سداد سريع</label>
+      <select class="field-input" id="pay-sup">
+        <option value="">— اختر المورّد —</option>
+      </select>
+
+      <label class="field-label" for="pay-amount">المبلغ</label>
+      <input class="field-input" id="pay-amount" type="text" inputmode="decimal"
+        dir="ltr" placeholder="1500.00" autocomplete="off">
+
+      <label class="field-label" for="pay-treasury">الخزنة</label>
+      <select class="field-input" id="pay-treasury">
+        ${data.treasuries.map(
+          (t) => html`<option value="${t.treasuryId}">${t.name}</option>`,
+        )}
+      </select>
+
+      <button class="btn-mini" type="button" id="pay-go">سداد</button>
+      <p class="field-hint">المبلغ يخرج من الخزنة فورًا وينزل من حساب المورّد.</p>
+    </div>
+  </div>
+
   <details class="panel">
     <summary>إضافة مورّد</summary>
     <div class="panel-body">
@@ -9550,9 +10250,15 @@ export function suppliersPage(data: SuppliersPageData): Html {
     <div class="panel-body">
       <p class="field-hint">
         الدين محسوب من الحركات: ما استلمته بالأجل ناقص ما سدّدته.
-        السداد يخرج من الخزينة فورًا، ولا يُحتسب مصروفًا في قائمة الدخل —
+        السداد يخرج من الخزنة فورًا، ولا يُحتسب مصروفًا في قائمة الدخل —
         تكلفة البضاعة تُحتسب عند بيعها.
       </p>
+      <!-- ⚠ البحث بيفلتر الصفوف المعروضة، مش بيطلب من الخادم.
+           القايمة كلها موجودة أصلاً في الصفحة، ورحلة شبكة لكل
+           حرف كانت هتبطّئ الكتابة بلا فايدة. -->
+      <input class="field-input" id="sup-search" type="search"
+        placeholder="ابحث باسم المورّد" autocomplete="off">
+
       <div id="sup-rows"><p class="field-hint">جارٍ التحميل…</p></div>
     </div>
   </details>
@@ -9588,6 +10294,8 @@ ${MENU_JS}
   var text = document.getElementById('supmsg-text');
   var rows = document.getElementById('sup-rows');
   var countEl = document.getElementById('sup-count');
+  /** آخر قايمة اتحمّلت — بيستخدمها التصدير */
+  var LAST_LIST = [];
 
   function say(msg, ok) {
     box.hidden = false;
@@ -9634,6 +10342,22 @@ ${MENU_JS}
       }
 
       var list = data.suppliers || [];
+      // ⚠ نسخة محفوظة للتصدير.
+      // التصدير محتاج أرقام المورّد كاملة، وقراءتها من الشاشة
+      // كانت هتخلّينا نحلّل نص متنسّق — وأول تغيير في شكل
+      // العرض بيكسر الملف بصمت.
+      LAST_LIST = list;
+
+      // ملء قايمة السداد السريع
+      var paySel = document.getElementById('pay-sup');
+      if (paySel) {
+        var opts = '<option value="">— اختر المورّد —</option>';
+        for (var pi = 0; pi < list.length; pi++) {
+          opts += '<option value="' + list[pi].supplierId + '">' +
+            list[pi].name + ' — ' + money(list[pi].balancePiastres) + '</option>';
+        }
+        paySel.innerHTML = opts;
+      }
       if (countEl) countEl.textContent = '(' + list.length + ')';
       rows.textContent = '';
 
@@ -9677,10 +10401,17 @@ ${MENU_JS}
         bal.textContent = money(sp.balancePiastres);
         row.appendChild(bal);
 
+        // ⚠ الاسم والتليفون على الصفّ نفسه.
+        // البحث والتعديل بيقروا منهم بدل ما يطلبوا من الخادم
+        // تاني — البيانات موجودة قدامنا أصلاً.
+        row.setAttribute('data-sup-id', sp.supplierId);
+        row.setAttribute('data-sup-name', sp.name || '');
+        row.setAttribute('data-sup-phone', sp.phone || '');
+
         var btn = document.createElement('button');
         btn.className = 'btn-mini';
         btn.type = 'button';
-        btn.textContent = 'حركة';
+        btn.textContent = 'إجراءات';
         btn.setAttribute('data-sup-open', sp.supplierId);
         row.appendChild(btn);
 
@@ -9690,28 +10421,34 @@ ${MENU_JS}
         panel.className = 'exit-edit';
         panel.id = 'supp-' + sp.supplierId;
         panel.hidden = true;
+        // ══ ⚠ الكارت بقى أزرار أفعال، مش نموذج حركة عام ══
+        //
+        // كان فيه قايمة "النوع" وخانة مبلغ وزرار تسجيل واحد.
+        // والمشكلة إن الأنواع دي بتحصل بأزمنة مختلفة تمامًا:
+        // السداد كل أسبوع، والدين القديم مرة واحدة في العمر.
+        //
+        // نموذج واحد لكل حاجة معناه إنك بتختار من قايمة في كل
+        // مرة — وأول اختيار غلط بيسجّل دين مكان سداد، والرصيد
+        // بيتحرّك في الاتجاه المعاكس.
+        //
+        // ⚠ والسداد اتشال من هنا خالص. مكانه فوق في الشريط
+        // السريع، لأنه الفعل اليومي.
         panel.innerHTML =
-          '<label class="field-label">النوع</label>' +
-          '<select class="field-input" id="supk-' + sp.supplierId + '">' +
-            '<option value="DEBT">استلمت بضاعة بالأجل (دين)</option>' +
-            '<option value="PAYMENT">سدّدت له (يخرج من الخزينة)</option>' +
-          '</select>' +
-          '<label class="field-label">المبلغ</label>' +
-          '<input class="field-input" id="supa-' + sp.supplierId + '" type="text" ' +
-            'inputmode="decimal" dir="ltr" placeholder="1500.00">' +
-          '<div id="supt-wrap-' + sp.supplierId + '" hidden>' +
-            '<label class="field-label">الخزينة</label>' +
-            '<select class="field-input" id="supt-' + sp.supplierId + '">' +
-              ${JSON.stringify(
-                treasuries
-                  .map((t) => `<option value="${t.treasuryId}">${t.name}</option>`)
-                  .join(''),
-              )} +
-            '</select>' +
+          '<div class="tools">' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sup-act="DEBT" data-sup-id="' + sp.supplierId + '">دين قديم</button>' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sup-act="DISCOUNT" data-sup-id="' + sp.supplierId + '">خصم</button>' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sup-edit="' + sp.supplierId + '">تعديل البيانات</button>' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sup-csv="' + sp.supplierId + '">تصدير إكسل</button>' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sup-pdf="' + sp.supplierId + '">تصدير PDF</button>' +
           '</div>' +
-          '<label class="field-label">ملاحظة</label>' +
-          '<input class="field-input" id="supn-' + sp.supplierId + '" type="text" maxlength="500">' +
-          '<button class="btn-mini" type="button" data-sup-go="' + sp.supplierId + '">تسجيل</button>';
+          '<p class="field-hint">' +
+            'الرصيد ناتج جمع الحركات، مش رقم مخزّن. تعديله بيتم بدين أو خصم.' +
+          '</p>';
 
         rows.appendChild(panel);
       }
@@ -9728,40 +10465,163 @@ ${MENU_JS}
     if (panel) panel.hidden = !panel.hidden;
   });
 
-  // ⚠ خانة الخزينة بتظهر للسداد بس. الدين ما بيمسّش الدرج،
-  // فعرض خزينة معاه كان هيوحي إن فيه فلوس هتتحرّك.
-  document.addEventListener('change', function (e) {
-    var el = e.target;
-    if (!el || !el.id || el.id.indexOf('supk-') !== 0) return;
-    var id = el.id.slice(5);
-    var wrap = document.getElementById('supt-wrap-' + id);
-    if (wrap) wrap.hidden = el.value !== 'PAYMENT';
-  });
+  // ══════════ البحث ══════════
+  //
+  // ⚠ بيفلتر المعروض، ومش بيطلب من الخادم. القايمة كلها موجودة
+  // في الصفحة أصلاً، ورحلة شبكة لكل حرف كانت هتبطّئ الكتابة.
+  var searchEl = document.getElementById('sup-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', function () {
+      var q = searchEl.value.trim().toLowerCase();
+      var all = rows.querySelectorAll('[data-sup-name]');
+      for (var i = 0; i < all.length; i++) {
+        var name = (all[i].getAttribute('data-sup-name') || '').toLowerCase();
+        var hit = !q || name.indexOf(q) !== -1;
+        all[i].hidden = !hit;
+        // ⚠ اللوحة المفتوحة بتتخفي مع صفّها.
+        // من غير ده بتفضل معلّقة تحت صفّ مختفي.
+        var panel = document.getElementById('supp-' + all[i].getAttribute('data-sup-id'));
+        if (panel && !hit) panel.hidden = true;
+      }
+    });
+  }
 
+  // ══════════ السداد السريع ══════════
+  var payBtn = document.getElementById('pay-go');
+  if (payBtn) {
+    payBtn.addEventListener('click', async function () {
+      var sup = document.getElementById('pay-sup');
+      var amt = document.getElementById('pay-amount');
+      var tre = document.getElementById('pay-treasury');
+
+      if (!sup || !sup.value) { say('اختر المورّد.', false); return; }
+      if (!amt || !amt.value.trim()) { say('اكتب المبلغ.', false); return; }
+      if (!tre || !tre.value) { say('اختر الخزنة.', false); return; }
+
+      var result = await send(
+        '/api/suppliers/' + encodeURIComponent(sup.value) + '/movement',
+        { kind: 'PAYMENT', amount: amt.value, treasuryId: tre.value, note: null },
+        payBtn, 'جارٍ السداد…'
+      );
+      if (result) {
+        say('تم السداد — الرصيد الآن ' + money(result.newBalance) + '.', true);
+        setTimeout(function () { window.location.reload(); }, 1000);
+      }
+    });
+  }
+
+  // ══════════ الدين القديم والخصم ══════════
+  //
+  // ⚠ الاتنين بيطلبوا المبلغ في نافذة. والخصم **بيطلب السبب
+  // كمان وبيرفض من غيره** — رقم بينقص بلا أثر مادي محتاج سبب
+  // مكتوب، وإلا مفيش طريقة تفرّق بين خصم وغلطة بعد شهرين.
   document.addEventListener('click', async function (e) {
-    var btn = e.target.closest ? e.target.closest('[data-sup-go]') : null;
+    var btn = e.target.closest ? e.target.closest('[data-sup-act]') : null;
     if (!btn) return;
 
-    var id = btn.getAttribute('data-sup-go');
-    var kind = (document.getElementById('supk-' + id) || {}).value;
-    var amount = (document.getElementById('supa-' + id) || {}).value;
-    var note = (document.getElementById('supn-' + id) || {}).value;
+    var kind = btn.getAttribute('data-sup-act');
+    var id = btn.getAttribute('data-sup-id');
+    var isDiscount = kind === 'DISCOUNT';
 
-    if (!amount || !amount.trim()) { say('اكتب المبلغ.', false); return; }
+    var amount = prompt(isDiscount ? 'مبلغ الخصم؟' : 'إجمالي الدين القديم؟');
+    if (amount === null) return;
+    if (!amount.trim()) { say('اكتب المبلغ.', false); return; }
 
-    var body = { kind: kind, amount: amount, note: note };
-    if (kind === 'PAYMENT') {
-      var tre = document.getElementById('supt-' + id);
-      if (!tre || !tre.value) { say('اختر الخزينة.', false); return; }
-      body.treasuryId = tre.value;
-    }
+    var note = prompt(isDiscount ? 'سبب الخصم؟ (إلزامي)' : 'ملاحظة؟ (اختياري)');
+    if (note === null) return;
+    if (isDiscount && !note.trim()) { say('اكتب سبب الخصم.', false); return; }
 
     var result = await send('/api/suppliers/' + encodeURIComponent(id) + '/movement',
-      body, btn, '…');
+      { kind: kind, amount: amount, note: note.trim() || null }, btn, '…');
     if (result) {
       say('تم التسجيل — الرصيد الآن ' + money(result.newBalance) + '.', true);
       setTimeout(function () { window.location.reload(); }, 1000);
     }
+  });
+
+  // ══════════ تعديل بيانات المورّد ══════════
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-sup-edit]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-sup-edit');
+    var row = rows.querySelector('[data-sup-id="' + id + '"]');
+    var current = row ? row.getAttribute('data-sup-name') : '';
+
+    var name = prompt('اسم المورّد؟', current || '');
+    if (name === null) return;
+    if (name.trim().length < 2) { say('اسم المورّد قصير.', false); return; }
+
+    var phone = prompt('رقم التليفون؟ (اختياري)', row ? (row.getAttribute('data-sup-phone') || '') : '');
+    if (phone === null) return;
+
+    var result = await send('/api/suppliers/' + encodeURIComponent(id),
+      { name: name.trim(), phone: phone.trim() || null }, btn, '…', 'PATCH');
+    if (result) {
+      say('اتحفظ.', true);
+      setTimeout(function () { window.location.reload(); }, 800);
+    }
+  });
+
+  // ══════════ التصدير ══════════
+  //
+  // ⚠ الاتنين محليّين بالكامل — مفيش مكتبة ومفيش طلب شبكة.
+  //
+  // الإكسل ملف CSV. إكسل بيفتحه عادي، وبناء ملف xlsx حقيقي
+  // كان محتاج مكتبة تتحمّل من الإنترنت عشان جدول من خمس أعمدة.
+  //
+  // ⚠ وعلامة الترتيب في أوله مش زينة: من غيرها إكسل بيقرا
+  // العربي كرموز مبعثرة على ويندوز العربي.
+  function exportCsv(sp) {
+    var lines = [
+      'المورّد,' + (sp.name || ''),
+      'الرصيد,' + (sp.balancePiastres / 100),
+      'إجمالي الدين,' + (sp.totalDebtPiastres / 100),
+      'إجمالي السداد,' + (sp.totalPaidPiastres / 100),
+      ''
+    ];
+    var csv = '\\uFEFF' + lines.join('\\r\\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'حساب-' + (sp.name || 'مورّد') + '.csv';
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // ⚠ الـPDF بيتعمل بحوار الطباعة بتاع المتصفح ("طباعة كـPDF").
+  // نفس آلية الفاتورة والملصق — مفيش محرّك PDF جديد يتصان.
+  function exportPdf(sp) {
+    if (typeof window.printHtml !== 'function') {
+      say('الطباعة غير متاحة على هذا المتصفح.', false);
+      return;
+    }
+    window.printHtml(
+      '<div class="pr-doc">' +
+        '<h3>حساب المورّد</h3>' +
+        '<p>' + (sp.name || '') + '</p>' +
+        '<p>الرصيد: ' + money(sp.balancePiastres) + ' ج.م</p>' +
+        '<p>إجمالي الدين: ' + money(sp.totalDebtPiastres) + ' ج.م</p>' +
+        '<p>إجمالي السداد: ' + money(sp.totalPaidPiastres) + ' ج.م</p>' +
+      '</div>'
+    );
+  }
+
+  document.addEventListener('click', function (e) {
+    var csvBtn = e.target.closest ? e.target.closest('[data-sup-csv]') : null;
+    var pdfBtn = e.target.closest ? e.target.closest('[data-sup-pdf]') : null;
+    if (!csvBtn && !pdfBtn) return;
+
+    var id = (csvBtn || pdfBtn).getAttribute(csvBtn ? 'data-sup-csv' : 'data-sup-pdf');
+    var sp = null;
+    for (var i = 0; i < LAST_LIST.length; i++) {
+      if (LAST_LIST[i].supplierId === id) { sp = LAST_LIST[i]; break; }
+    }
+    if (!sp) { say('تعذّر تجهيز الملف.', false); return; }
+
+    if (csvBtn) exportCsv(sp);
+    else exportPdf(sp);
   });
 
   document.getElementById('sup-add').addEventListener('click', async function () {
@@ -9785,6 +10645,411 @@ ${MENU_JS}
 `;
 }
 
+
+// ═══════════════════ شاشة حساب المحلات ═══════════════════
+//
+// ⚠ المرآة المقلوبة لشاشة الموردين:
+//     الموردين  →  دين **عليك**
+//     المحلات   →  دين **ليك**
+//
+// نفس الشكل ونفس الأزرار عن قصد. اللي فهم شاشة الموردين
+// بيفهم دي من غير شرح، والفرق الوحيد اتجاه الفلوس.
+
+export interface ShopsPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  tenantName: string;
+  roleKey: string;
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
+  treasuries: Array<{ treasuryId: string; name: string }>;
+  today: string;
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+export function shopsPage(data: ShopsPageData): Html {
+  return shell({
+    title: 'حساب المحلات',
+    tenantName: data.tenantName,
+    script: shopsScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.treasuries,
+    ),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <div class="alert-box" id="shopmsg" role="alert" hidden><span id="shopmsg-text"></span></div>
+
+  <!-- ⚠ التحصيل السريع فوق: ده الفعل اليومي. المحل بيجي يدفع،
+       تختاره وتكتب المبلغ وخلاص. -->
+  <div class="panel">
+    <div class="panel-body">
+      <label class="field-label" for="sh-pay-shop">تحصيل سريع</label>
+      <select class="field-input" id="sh-pay-shop">
+        <option value="">— اختر المحل —</option>
+      </select>
+
+      <label class="field-label" for="sh-pay-amount">المبلغ</label>
+      <input class="field-input" id="sh-pay-amount" type="text" inputmode="decimal"
+        dir="ltr" placeholder="1500.00" autocomplete="off">
+
+      <label class="field-label" for="sh-pay-treasury">الخزنة</label>
+      <select class="field-input" id="sh-pay-treasury">
+        ${data.treasuries.map(
+          (t) => html`<option value="${t.treasuryId}">${t.name}</option>`,
+        )}
+      </select>
+
+      <button class="btn-mini" type="button" id="sh-pay-go">تحصيل</button>
+      <p class="field-hint">المبلغ يدخل الخزنة فورًا وينزل من حساب المحل.</p>
+    </div>
+  </div>
+
+  <details class="panel">
+    <summary>إضافة محل</summary>
+    <div class="panel-body">
+      <label class="field-label" for="sh-name">اسم المحل</label>
+      <input class="field-input" id="sh-name" type="text" maxlength="80" autocomplete="off">
+
+      <label class="field-label" for="sh-contact">اسم المسؤول</label>
+      <input class="field-input" id="sh-contact" type="text" maxlength="80" autocomplete="off">
+
+      <label class="field-label" for="sh-phone">الهاتف</label>
+      <input class="field-input" id="sh-phone" type="text" dir="ltr" maxlength="32"
+        autocomplete="off">
+
+      <button class="btn-mini" type="button" id="sh-add">إضافة</button>
+    </div>
+  </details>
+
+  <details class="panel" open>
+    <summary>المحلات <span id="sh-count"></span></summary>
+    <div class="panel-body">
+      <!-- ⚠ الرصيد الموجب معناه المحل **مديون لك** — عكس شاشة
+           الموردين بالظبط. السطر ده موجود عشان محدش يقرا الرقم
+           بالمعنى الغلط. -->
+      <p class="field-hint">
+        الرصيد محسوب من الحركات: ما خرج بالأجل ناقص ما حصّلته.
+        الرقم الموجب معناه المحل مدين لك.
+      </p>
+
+      <input class="field-input" id="sh-search" type="search"
+        placeholder="ابحث باسم المحل" autocomplete="off">
+
+      <div id="sh-rows"><p class="field-hint">جارٍ التحميل…</p></div>
+    </div>
+  </details>
+</main>
+`,
+  });
+}
+
+function shopsScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  treasuries: Array<{ treasuryId: string; name: string }>,
+): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+
+(function () {
+  var box = document.getElementById('shopmsg');
+  var text = document.getElementById('shopmsg-text');
+  var rows = document.getElementById('sh-rows');
+  var countEl = document.getElementById('sh-count');
+  /** آخر قايمة اتحمّلت — بيستخدمها التصدير */
+  var LAST = [];
+
+  function say(message, ok) {
+    box.hidden = false;
+    if (ok) box.setAttribute('data-tone', 'ok');
+    else box.removeAttribute('data-tone');
+    text.textContent = message;
+    box.scrollIntoView({ block: 'nearest' });
+  }
+
+  function money(piastres) {
+    var neg = piastres < 0;
+    var abs = Math.abs(Math.trunc(piastres));
+    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
+      '.' + String(abs % 100).padStart(2, '0');
+  }
+
+  async function send(url, body, btn, busy, method) {
+    var original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = busy; }
+    try {
+      var res = await fetch(url, {
+        method: method || 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        say((data && data.error && data.error.message) || 'تعذّر التنفيذ.', false);
+        return null;
+      }
+      return data;
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+      return null;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
+
+  async function load() {
+    try {
+      var res = await fetch('/api/shops', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) {
+        rows.innerHTML = '<p class="field-hint">تعذّر التحميل.</p>';
+        return;
+      }
+
+      var list = data.shops || [];
+      LAST = list;
+      countEl.textContent = '(' + list.length + ')';
+
+      var paySel = document.getElementById('sh-pay-shop');
+      if (paySel) {
+        var opts = '<option value="">— اختر المحل —</option>';
+        for (var pi = 0; pi < list.length; pi++) {
+          opts += '<option value="' + list[pi].shopId + '">' +
+            list[pi].name + ' — ' + money(list[pi].balancePiastres) + '</option>';
+        }
+        paySel.innerHTML = opts;
+      }
+
+      rows.innerHTML = '';
+      if (list.length === 0) {
+        rows.innerHTML = '<p class="field-hint">مفيش محلات لسه.</p>';
+        return;
+      }
+
+      for (var i = 0; i < list.length; i++) {
+        var sh = list[i];
+
+        var row = document.createElement('div');
+        row.className = 'mv-row';
+        row.setAttribute('data-sh-id', sh.shopId);
+        row.setAttribute('data-sh-name', sh.name || '');
+        row.setAttribute('data-sh-phone', sh.phone || '');
+
+        var main = document.createElement('div');
+        main.className = 'mv-main';
+        var title = document.createElement('span');
+        title.className = 'mv-title';
+        title.textContent = sh.name;
+        main.appendChild(title);
+
+        var sub = document.createElement('span');
+        sub.className = 'mv-sub';
+        sub.textContent = (sh.contactName ? sh.contactName + ' · ' : '') +
+          (sh.phone || '') + (sh.lastMovement ? ' · آخر حركة ' + sh.lastMovement : '');
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        // ⚠ الموجب هنا معناه **ليك** — فبنعرضه بلون الوارد،
+        // عكس شاشة الموردين بالظبط. اللون هو اللي بيخلّي العين
+        // تفرّق من غير ما تقرا.
+        var bal = document.createElement('span');
+        bal.className = 'mv-amount';
+        bal.setAttribute('data-dir', sh.balancePiastres > 0 ? 'IN' : 'OUT');
+        bal.textContent = money(sh.balancePiastres);
+        row.appendChild(bal);
+
+        var btn = document.createElement('button');
+        btn.className = 'btn-mini';
+        btn.type = 'button';
+        btn.textContent = 'إجراءات';
+        btn.setAttribute('data-sh-open', sh.shopId);
+        row.appendChild(btn);
+
+        rows.appendChild(row);
+
+        var panel = document.createElement('div');
+        panel.className = 'exit-edit';
+        panel.id = 'shp-' + sh.shopId;
+        panel.hidden = true;
+        panel.innerHTML =
+          '<div class="tools">' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sh-edit="' + sh.shopId + '">تعديل البيانات</button>' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sh-csv="' + sh.shopId + '">تصدير إكسل</button>' +
+            '<button class="btn-mini" type="button" ' +
+              'data-sh-pdf="' + sh.shopId + '">تصدير PDF</button>' +
+          '</div>' +
+          '<p class="field-hint">' +
+            'خروج البضاعة بيتعمل من شاشة البيع، مش من هنا. ' +
+            'الرصيد ناتج جمع الحركات مش رقم مخزّن.' +
+          '</p>';
+
+        rows.appendChild(panel);
+      }
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-sh-open]') : null;
+    if (!btn) return;
+    var panel = document.getElementById('shp-' + btn.getAttribute('data-sh-open'));
+    if (panel) panel.hidden = !panel.hidden;
+  });
+
+  var searchEl = document.getElementById('sh-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', function () {
+      var q = searchEl.value.trim().toLowerCase();
+      var all = rows.querySelectorAll('[data-sh-name]');
+      for (var i = 0; i < all.length; i++) {
+        var name = (all[i].getAttribute('data-sh-name') || '').toLowerCase();
+        var hit = !q || name.indexOf(q) !== -1;
+        all[i].hidden = !hit;
+        var panel = document.getElementById('shp-' + all[i].getAttribute('data-sh-id'));
+        if (panel && !hit) panel.hidden = true;
+      }
+    });
+  }
+
+  var payBtn = document.getElementById('sh-pay-go');
+  if (payBtn) {
+    payBtn.addEventListener('click', async function () {
+      var shop = document.getElementById('sh-pay-shop');
+      var amt = document.getElementById('sh-pay-amount');
+      var tre = document.getElementById('sh-pay-treasury');
+
+      if (!shop || !shop.value) { say('اختر المحل.', false); return; }
+      if (!amt || !amt.value.trim()) { say('اكتب المبلغ.', false); return; }
+      if (!tre || !tre.value) { say('اختر الخزنة.', false); return; }
+
+      var result = await send(
+        '/api/shops/' + encodeURIComponent(shop.value) + '/payment',
+        { amount: amt.value, treasuryId: tre.value, note: null },
+        payBtn, 'جارٍ التحصيل…'
+      );
+      if (result) {
+        say('تم التحصيل — الرصيد الآن ' + money(result.newBalance) + '.', true);
+        setTimeout(function () { window.location.reload(); }, 1000);
+      }
+    });
+  }
+
+  document.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-sh-edit]') : null;
+    if (!btn) return;
+
+    var id = btn.getAttribute('data-sh-edit');
+    var row = rows.querySelector('[data-sh-id="' + id + '"]');
+
+    var name = prompt('اسم المحل؟', row ? (row.getAttribute('data-sh-name') || '') : '');
+    if (name === null) return;
+    if (name.trim().length < 2) { say('الاسم قصير.', false); return; }
+
+    var phone = prompt('الهاتف؟', row ? (row.getAttribute('data-sh-phone') || '') : '');
+    if (phone === null) return;
+
+    var result = await send('/api/shops/' + encodeURIComponent(id),
+      { name: name.trim(), phone: phone.trim() || null }, btn, '…', 'PATCH');
+    if (result) {
+      say('اتحفظ.', true);
+      setTimeout(function () { window.location.reload(); }, 800);
+    }
+  });
+
+  // ══ التصدير ══
+  //
+  // ⚠ الاتنين محليّين: الإكسل ملف CSV بعلامة ترتيب (من غيرها
+  // العربي بيطلع رموز مبعثرة في إكسل)، والـPDF بحوار الطباعة.
+  // مفيش مكتبة ومفيش طلب شبكة.
+  document.addEventListener('click', function (e) {
+    var csvBtn = e.target.closest ? e.target.closest('[data-sh-csv]') : null;
+    var pdfBtn = e.target.closest ? e.target.closest('[data-sh-pdf]') : null;
+    if (!csvBtn && !pdfBtn) return;
+
+    var id = (csvBtn || pdfBtn).getAttribute(csvBtn ? 'data-sh-csv' : 'data-sh-pdf');
+    var sh = null;
+    for (var i = 0; i < LAST.length; i++) {
+      if (LAST[i].shopId === id) { sh = LAST[i]; break; }
+    }
+    if (!sh) { say('تعذّر تجهيز الملف.', false); return; }
+
+    if (csvBtn) {
+      var lines = [
+        'المحل,' + (sh.name || ''),
+        'خرج بالأجل,' + (sh.totalOut / 100),
+        'المحصّل,' + (sh.totalPaid / 100),
+        'الباقي,' + (sh.balancePiastres / 100),
+        ''
+      ];
+      var blob = new Blob(['\\uFEFF' + lines.join('\\r\\n')],
+        { type: 'text/csv;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'حساب-' + (sh.name || 'محل') + '.csv';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      return;
+    }
+
+    if (typeof window.printHtml !== 'function') {
+      say('الطباعة غير متاحة على هذا المتصفح.', false);
+      return;
+    }
+    window.printHtml(
+      '<div class="pr-doc">' +
+        '<h3>حساب محل</h3>' +
+        '<p>' + (sh.name || '') + '</p>' +
+        '<p>خرج بالأجل: ' + money(sh.totalOut) + ' ج.م</p>' +
+        '<p>المحصّل: ' + money(sh.totalPaid) + ' ج.م</p>' +
+        '<p>الباقي: ' + money(sh.balancePiastres) + ' ج.م</p>' +
+      '</div>'
+    );
+  });
+
+  document.getElementById('sh-add').addEventListener('click', async function () {
+    var name = document.getElementById('sh-name').value;
+    if (!name || name.trim().length < 2) { say('اكتب اسم المحل.', false); return; }
+
+    var result = await send('/api/shops', {
+      name: name,
+      contactName: document.getElementById('sh-contact').value,
+      phone: document.getElementById('sh-phone').value
+    }, this, 'جارٍ الإضافة…');
+
+    if (result) {
+      say('تمت الإضافة.', true);
+      setTimeout(function () { window.location.reload(); }, 800);
+    }
+  });
+
+  load();
+})();
+`;
+}
 
 // ═══════════════════ شاشة الصيانة ═══════════════════
 
@@ -9954,7 +11219,7 @@ export function maintenancePage(data: MaintenancePageData): Html {
     <div class="panel-body">
       <p class="field-hint">
         الجهاز المُرسَل تُخصم كميته من المخزون — لا يصحّ أن يُباع وهو في الورشة.
-        الإرسال يتم من شاشة المنتجات.
+        الإرسال يتم من شاشة البضاعة.
       </p>
       <div id="mr-rows"></div>
     </div>
@@ -10984,7 +12249,7 @@ ${TIME_JS}
       row(previewEl, 'فواتير', String(d.salesCount));
       row(previewEl, 'مبيعات', money(d.salesPiastres), 'IN');
       row(previewEl, 'مرتجعات', String(d.returnsCount));
-      row(previewEl, 'حركات خزينة', String(d.movementsCount));
+      row(previewEl, 'حركات خزنة', String(d.movementsCount));
 
       if (d.canClose) {
         var btn = document.createElement('button');
@@ -11247,8 +12512,8 @@ ${TIME_JS}
       salesBody.appendChild(r);
     }
 
-    // ── الخزينة ──
-    var mvBody = panel('حركات الخزينة (' + (cl.movements || []).length + ')');
+    // ── الخزنة ──
+    var mvBody = panel('حركات الخزنة (' + (cl.movements || []).length + ')');
     if ((cl.movements || []).length === 0) {
       var e2 = document.createElement('p');
       e2.className = 'field-hint';
