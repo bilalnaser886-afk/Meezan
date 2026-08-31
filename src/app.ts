@@ -489,11 +489,23 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     //
     // ⚠ ومش بنبلع الخطأ ونرجّع قايمة فاضية — القايمة الفاضية
     // شكلها زي "مفيش بضاعة" بالظبط، وده أوحش من رسالة خطأ.
+    // ⚠⚠⚠ تشخيص مؤقت — شيله بعد ما تلاقي السبب ⚠⚠⚠
+    //
+    // بنرمي خطأ **تحقّق** بدل خطأ داخلي، عشان الرسالة تتعرض
+    // للمستخدم بدل ما تتخبّى. ده بيوفّر إعداد المتغيّر كله.
+    //
+    // ⚠ وده **تسريب مقصود ومؤقت**: نص خطأ قاعدة البيانات
+    // بيوصل للمتصفح، وفيه أسماء أعمدة وجداول. مقبول على
+    // الاستينج لدقايق، ممنوع في الإنتاج.
+    //
+    // بعد ما تعرف السبب، رجّعه لـ:
+    //     throw Errors.internal(`listProducts: ${...}`);
     listProducts(container.products, user).catch((err) => {
       console.error('[products] تعذّر جلب البضاعة:', err);
-      throw Errors.internal(
-        `listProducts: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      const raw = err instanceof AppError
+        ? (err.internalDetail ?? err.userMessage)
+        : err instanceof Error ? err.message : String(err);
+      throw Errors.validation(`تشخيص مؤقت · البضاعة: ${raw}`);
     }),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
@@ -506,11 +518,13 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     canEdit
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
+    // ⚠⚠⚠ تشخيص مؤقت — شيله مع اللي فوق ⚠⚠⚠
     branchLabelFor(container, user).catch((err) => {
       console.error('[products] تعذّر جلب اسم الفرع:', err);
-      throw Errors.internal(
-        `branchLabel: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      const raw = err instanceof AppError
+        ? (err.internalDetail ?? err.userMessage)
+        : err instanceof Error ? err.message : String(err);
+      throw Errors.validation(`تشخيص مؤقت · الفرع: ${raw}`);
     }),
     // ⚠ الأدراج بتتجاب لكل من يشوف المخزون، مش للمعدّل بس.
     // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
