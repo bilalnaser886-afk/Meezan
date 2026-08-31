@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import { SESSION_POLICY, assertEnv, idleRuleFor, type Env } from './domain/config';
 import { todayInCairo } from './domain/dates';
-import { AppError } from './domain/errors';
+import { AppError, Errors } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
 import {
   announcementRoutes,
@@ -482,7 +482,19 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     products, branches, allBranches, branchLabel,
     categories, models, colors, suppliers, treasuryList,
   ] = await Promise.all([
-    listProducts(container.products, user),
+    // ⚠ الفشل هنا بيسمّي نفسه بدل ما يطلع "خطأ غير متوقّع".
+    //
+    // الرسالة الموحّدة بتحمي النظام، بس لما الصفحة كلها تقع
+    // بيها إنت مش عارف وقعت من فين: البضاعة؟ الفروع؟ الأدراج؟
+    //
+    // ⚠ ومش بنبلع الخطأ ونرجّع قايمة فاضية — القايمة الفاضية
+    // شكلها زي "مفيش بضاعة" بالظبط، وده أوحش من رسالة خطأ.
+    listProducts(container.products, user).catch((err) => {
+      console.error('[products] تعذّر جلب البضاعة:', err);
+      throw Errors.internal(
+        `listProducts: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
     user.roleKey === 'SUPER_ADMIN' && canEdit
@@ -494,7 +506,12 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     canEdit
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
-    branchLabelFor(container, user),
+    branchLabelFor(container, user).catch((err) => {
+      console.error('[products] تعذّر جلب اسم الفرع:', err);
+      throw Errors.internal(
+        `branchLabel: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }),
     // ⚠ الأدراج بتتجاب لكل من يشوف المخزون، مش للمعدّل بس.
     // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
     // شايفين أدراج مش بيشوف نفس المحل.
