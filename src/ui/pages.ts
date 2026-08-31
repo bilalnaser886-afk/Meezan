@@ -6254,6 +6254,14 @@ function productsScript(
   action: 'LOGOUT' | 'LOCK',
   /** بيتطبع على الملصق — لازم يتمرّر صراحةً */
   shopName: string,
+  /**
+   * سجل الموديلات — عشان قايمة الاقتراحات تتفلتر بنوع الجهاز.
+   *
+   * ⚠ بيتمرّر للسكربت مش بيتقرا من الـDOM. قراءة الشرايط كانت
+   * هتربط النموذج بشريط الفلترة — وأول ما شريط يتخفي أو يتغيّر
+   * ترتيبه، النموذج بيقع معاه.
+   */
+  models: Array<{ id: string; name: string; brand: string | null; family: string | null }>,
 ): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
