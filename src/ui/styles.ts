@@ -826,7 +826,7 @@ select.field-input{appearance:none;
   line-height:1;font-variant-numeric:tabular-nums;direction:ltr}
 .cart-total-num .bal-cur{color:rgba(255,255,255,.5)}
 
-/* ═══ مربّعات المنتجات ═══
+/* ═══ مربّعات البضاعة ═══
    مربّعات كبيرة مش قايمة: الضغط بالإبهام على شاشة لمس. */
 .prod-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
 .prod-btn{display:flex;flex-direction:column;align-items:flex-start;gap:5px;
@@ -841,7 +841,7 @@ select.field-input{appearance:none;
 .prod-btn-qty{font-family:var(--font-mono);font-size:var(--fs-1);color:var(--ink-faint);
   direction:rtl}
 
-/* ═══ صفوف شاشة المنتجات ═══
+/* ═══ صفوف شاشة البضاعة ═══
    flex-wrap مش حساب عرض يدوي: لوحة التعديل بتنزل سطر كامل تحت
    لوحدها، والسطر بيتظبط مهما طال الاسم. */
 .prod-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;
@@ -906,7 +906,7 @@ select.field-input{appearance:none;
 .price-log-who{color:var(--ink-faint);font-size:var(--fs-1)}
 
 /* ═══ السعر اليدوي في السلة ═══
-   بيظهر بس للمنتجات اللي مالهاش سعر مسجّل. */
+   بيظهر بس للبضاعة اللي مالهاش سعر مسجّل. */
 .cart-price{display:flex;align-items:center;gap:6px;margin-top:6px}
 .cart-price-input{width:104px;height:38px;padding:0 9px;font-family:var(--font-mono);
   font-size:var(--fs-input);direction:ltr;text-align:center;color:var(--ink);
