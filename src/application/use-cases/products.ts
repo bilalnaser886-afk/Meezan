@@ -1,5 +1,5 @@
 /**
- * المنتجات
+ * البضاعة
  *
  * ══ المبدأ اللي بيحكم الملف كله ══
  * التكلفة سرّ. السعر مش سرّ.
@@ -38,6 +38,7 @@ import type {
   Clock,
   ColorRepository,
   DeviceModel,
+  ModelFamily,
   ModelRepository,
   ProductCategory,
   ProductColor,
@@ -51,7 +52,7 @@ import type {
 
 export interface ProductDeps {
   products: ProductRepository;
-  /** أدراج المنتجات — التنظيم فوق النوع مش بدلاً منه */
+  /** أدراج البضاعة — التنظيم فوق النوع مش بدلاً منه */
   categories: CategoryRepository;
   /** سجل موديلات الموبايل — البُعد التاني جنب الدرج */
   models: ModelRepository;
@@ -84,6 +85,17 @@ export interface CreateProductRequest {
    */
   serialUnavailable?: boolean;
   source?: string | null;
+  /** مورّد من السجل. بديل `source` النص الحر. */
+  supplierId?: string | null;
+  /**
+   * تسوية التكلفة.
+   *
+   * ⚠ 'PAID' بتطلّع فلوس من الخزنة، و'CREDIT' بتزوّد دين
+   * المورّد. الافتراضي 'NONE' — يعني تسجيل مخزون وبس، زي ما
+   * كان النظام شغّال قبل كده.
+   */
+  settle?: 'NONE' | 'PAID' | 'CREDIT';
+  treasuryId?: string | null;
   entryDate?: string | null;
   /** null = المنتج دخل من غير ما يتسعّر بعد */
   pricePiastres: number | null;
@@ -234,7 +246,7 @@ export async function listSellableProducts(
 // ═══════════════════ الأدراج ═══════════════════
 
 /**
- * أدراج المنتجات.
+ * أدراج البضاعة.
  *
  * ══ إيه اللي بتحلّه ══
  * كل حاجة مش جهاز كانت في كومة واحدة: جرابات وشواحن وسماعات
@@ -341,7 +353,7 @@ export async function createCategory(
  *
  * ⚠ المزروع **بيتسمّى عادي**. القفل على الحذف بس — تقدر تسمّي
  * "مكملات" باسم تاني يناسب محلّك، وما تقدرش تمسحها وتسيب
- * منتجاتها بلا مكان.
+ * بضاعةها بلا مكان.
  */
 export async function renameCategory(
   deps: ProductDeps,
@@ -389,7 +401,7 @@ export async function deleteCategory(
   if (!existing) throw Errors.notFound('الدرج');
 
   // 2) المزروع محصّن.
-  //    القسم الرئيسي لو اتمسح، كل أدراجه ومنتجاتها تبقى بلا مكان
+  //    القسم الرئيسي لو اتمسح، كل أدراجه وبضاعةها تبقى بلا مكان
   //    ومفيش طريق رجوع من الشاشة. ده باب مسدود مش مخاطرة.
   if (existing.isSystem) {
     throw Errors.validation('الأدراج الأساسية لا تُحذف. يمكنك إعادة تسميتها.');
@@ -432,7 +444,7 @@ export async function deleteCategory(
  *
  * ⚠ والدرج لازم يكون **درج** مش قسم رئيسي: "إكسسوار" مكان
  * تجميع، والمنتج بيتحطّ في "جرابات". لو سمحنا بالقسم، هتلاقي
- * نص المنتجات في الجذر ونصها في الأدراج.
+ * نص البضاعة في الجذر ونصها في الأدراج.
  */
 async function resolveCategory(
   deps: ProductDeps,
@@ -507,10 +519,28 @@ function readBrand(raw: unknown): string | null {
  * في المالك معناه إن الموظّف هيسيب الموديل فاضي ويكمّل شغله،
  * والسجل يفضل فاضي للأبد.
  */
+/**
+ * قراءة عيلة الموديل.
+ *
+ * ⚠ بنرفض أي قيمة مش معروفة بدل ما نتجاهلها بصمت — نفس قاعدة
+ * `readRoles` في تقفيل اليومية.
+ *
+ * التجاهل الصامت كان هيخلّي المستخدم يختار عيلة، ويحفظ، ويلاقي
+ * الموديل مش ظاهر في أي درج — ومفيش رسالة تقوله ليه.
+ */
+function readFamily(raw: unknown): ModelFamily {
+  const value = String(raw ?? '').trim().toUpperCase();
+  if (!value) return null;
+  if (value !== 'IPHONE' && value !== 'ANDROID') {
+    throw Errors.validation('العيلة: آيفون أو أندرويد.');
+  }
+  return value;
+}
+
 export async function createModel(
   deps: ProductDeps,
   actor: AuthenticatedUser,
-  input: { name: string; brand?: string | null },
+  input: { name: string; brand?: string | null; family?: unknown },
 ): Promise<{ id: string }> {
   if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
     throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
@@ -518,15 +548,18 @@ export async function createModel(
 
   const name = readModelName(input.name);
   const brand = readBrand(input.brand);
+  // ⚠ فاضية مسموحة: الموظّف اللي بيسجّل جهاز على السريع مش
+  // لازم يعرف يصنّفه. التصنيف بيتعمل بعدين من الشريط.
+  const family = readFamily(input.family);
 
-  const created = await deps.models.create({ tenantId: actor.tenantId, name, brand });
+  const created = await deps.models.create({ tenantId: actor.tenantId, name, brand, family });
 
   await deps.audit.record({
     actorId: actor.id,
     action: 'model.create',
     entity: 'DeviceModel',
     entityId: created.id,
-    metadata: { name, brand, tenantId: actor.tenantId },
+    metadata: { name, brand, family, tenantId: actor.tenantId },
   });
 
   return created;
@@ -536,7 +569,7 @@ export async function updateModel(
   deps: ProductDeps,
   actor: AuthenticatedUser,
   modelId: string,
-  input: { name?: unknown; brand?: unknown },
+  input: { name?: unknown; brand?: unknown; family?: unknown },
 ): Promise<void> {
   if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
     throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
@@ -546,9 +579,10 @@ export async function updateModel(
   // موديل محل تاني = غير موجود بالنسبة لك
   if (!existing) throw Errors.notFound('الموديل');
 
-  const patch: { name?: string; brand?: string | null } = {};
+  const patch: { name?: string; brand?: string | null; family?: ModelFamily } = {};
   if (input.name !== undefined) patch.name = readModelName(input.name);
   if (input.brand !== undefined) patch.brand = readBrand(input.brand);
+  if (input.family !== undefined) patch.family = readFamily(input.family);
   if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
 
   await deps.models.update(modelId, actor.tenantId, patch);
@@ -610,7 +644,7 @@ export async function deleteModel(
  * قراءة الموديل من طلب المنتج.
  *
  * ⚠ للنوعين — على عكس الدرج اللي للإكسسوار وحده.
- * وفاضي مسموح: منتجاتك القديمة مالهاش موديل.
+ * وفاضي مسموح: بضاعةك القديمة مالهاش موديل.
  */
 async function resolveModel(
   deps: ProductDeps,
@@ -775,7 +809,7 @@ async function resolveColor(
   return colorId;
 }
 
-// ═══════════════════ المنتجات ═══════════════════
+// ═══════════════════ البضاعة ═══════════════════
 
 // ─────────── الكتابة ───────────
 
@@ -854,6 +888,31 @@ export async function createProduct(
   assertCost(input.costPiastres);
 
   const source = trimOrNull(input.source, 80, 'اسم المصدر طويل جدًا.');
+
+  // ══ تسوية التكلفة ══
+  //
+  // ⚠ الفحوصات هنا رسايل عربية واضحة. الحراسة الحقيقية
+  // (الخزنة تبع المحل · صلاحية الاعتماد · المورّد موجود)
+  // جوّه دوال قاعدة البيانات جنب البيانات.
+  const rawSettle = String(input.settle ?? 'NONE').trim().toUpperCase();
+  if (rawSettle !== 'NONE' && rawSettle !== 'PAID' && rawSettle !== 'CREDIT') {
+    throw Errors.validation('نوع تسوية التكلفة غير معروف.');
+  }
+  const settle = rawSettle as 'NONE' | 'PAID' | 'CREDIT';
+  const treasuryId = String(input.treasuryId ?? '').trim() || null;
+  const supplierId = String(input.supplierId ?? '').trim() || null;
+
+  // ⚠ تسوية بلا تكلفة جملة بلا معنى — ومبلغ الحركة هيبقى صفر.
+  if (settle !== 'NONE' && input.costPiastres <= 0) {
+    throw Errors.validation('اكتب التكلفة قبل تحديد طريقة السداد.');
+  }
+  if (settle === 'PAID' && !treasuryId) {
+    throw Errors.validation('اختر الخزنة اللي التكلفة اتدفعت منها.');
+  }
+  // ⚠ دين على مجهول رقم في دفتر مالوش صاحب — وما بيقفلش أبدًا.
+  if (settle === 'CREDIT' && !supplierId) {
+    throw Errors.validation('اختر المورّد قبل التحويل على حسابه.');
+  }
   const entryDate = readDate(input.entryDate);
 
   // ─── مواصفات الجهاز ───
@@ -881,6 +940,9 @@ export async function createProduct(
     serialNumber,
     serialUnavailable,
     source,
+    supplierId,
+    settle,
+    treasuryId: settle === 'PAID' ? treasuryId : null,
     entryDate,
     pricePiastres: input.pricePiastres,
     costPiastres: input.costPiastres,
@@ -905,6 +967,11 @@ export async function createProduct(
       branchId: targetBranchId,
       hasSerial: serialNumber !== null,
       serialUnavailable,
+      // ⚠ التسوية في السجل كمان. "منتج اتضاف" من غير "واتدفع
+      // إزاي" بيخلّي أي مراجعة للفلوس ناقصة نصّها.
+      settle,
+      supplierId,
+      treasuryId: settle === 'PAID' ? treasuryId : null,
       hasPrice: input.pricePiastres !== null,
       quantityOnHand,
       customsCleared,
@@ -1182,7 +1249,7 @@ export async function updateProduct(
  * سجل أسعار المنتج — كان كام وبقى كام ومين غيّره.
  *
  * السجل نفسه بتكتبه قاعدة البيانات بمشغّل، مش الكود ده. الدالة
- * بتقراه وبتركّب الأسماء فوق المعرّفات، نفس نمط حركات الخزينة.
+ * بتقراه وبتركّب الأسماء فوق المعرّفات، نفس نمط حركات الخزنة.
  */
 export async function getPriceHistory(
   deps: ProductDeps,
