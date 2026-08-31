@@ -29,6 +29,7 @@
 
 import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
+import { normalizeDigits } from '../../domain/money';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
   AuditLogger,
@@ -497,9 +498,19 @@ export async function listModels(
 const MODEL_NAME_MAX = 60;
 
 function readModelName(raw: unknown): string {
-  const name = String(raw ?? '').trim();
-  if (name.length < 2 || name.length > MODEL_NAME_MAX) {
-    throw Errors.validation(`اسم الموديل من حرفين إلى ${MODEL_NAME_MAX} حرفًا.`);
+  // ⚠ الأرقام العربية بتتحوّل قبل أي فحص.
+  //
+  // موديل اسمه "١٢ برو ماكس" و"12 برو ماكس" لازم يبقوا واحد،
+  // وإلا هيبقى عندنا نسختين حسب لوحة مفاتيح اللي سجّل — نفس
+  // غلطة عمود المصدر النص الحر.
+  const name = normalizeDigits(String(raw ?? '')).trim();
+
+  // ⚠ حرف واحد مسموح.
+  //
+  // كان الحد حرفين، والموديل اللي اسمه رقم واحد ("8" · "X")
+  // كان بيترفض بلا سبب مفهوم — والاسم ده شائع في الأجهزة.
+  if (name.length < 1 || name.length > MODEL_NAME_MAX) {
+    throw Errors.validation(`اسم الموديل من حرف إلى ${MODEL_NAME_MAX} حرفًا.`);
   }
   return name;
 }
