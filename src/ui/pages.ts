@@ -4766,13 +4766,36 @@ ${TIME_JS}
       var pRow = priceBtn.closest('.cart-line');
       var pIn = pRow ? pRow.querySelector('[data-price-for]') : null;
 
-      if (pIn && cart[pid]) {
-        cart[pid].manual = pIn.value;
-        // ⚠ إعادة بناء كاملة هنا مقبولة، على عكس الكتابة:
-        // الكاشير خلص كتابة وضغط، فضياع التركيز مش مشكلة —
-        // بالعكس، ده اللي بيأكّدله إن الرقم اتسجّل.
-        render();
+      // ══ ⚠ كل خروج هنا بيتكلّم — ولا واحد بيسكت ══
+      //
+      // النسخة اللي فاتت كانت بتخرج في صمت لو الصنف مش في
+      // السلة أو الخانة مش موجودة. والصمت ده خلّانا نخمّن
+      // تلات مرات من غير ما نعرف أي فرع بالظبط بيفشل.
+      //
+      // ⚠ ودي قاعدة المشروع نفسها: الفشل الصامت أخطر من
+      // الصريح. الرسايل دي بتفضل حتى بعد ما نلاقي السبب —
+      // زرار بيتضغط وما بيعملش حاجة لازم يقول ليه.
+      if (!pRow) { posSay('عطل: الزرار مش جوّه سطر سلة.', false); return; }
+      if (!pIn) { posSay('عطل: خانة السعر مش موجودة في السطر.', false); return; }
+      if (!pid) { posSay('عطل: الزرار مالوش معرّف صنف.', false); return; }
+      if (!cart[pid]) {
+        posSay('عطل: الصنف مش في السلة — المعرّف ' + pid, false);
+        return;
       }
+
+      var rawTyped = pIn.value;
+      var parsedNow = manualPrice(rawTyped);
+      if (parsedNow === null) {
+        posSay('الرقم "' + rawTyped + '" مش مقروء. اكتب رقم زي 4000 أو 4000.50', false);
+        return;
+      }
+
+      cart[pid].manual = rawTyped;
+      // ⚠ إعادة بناء كاملة هنا مقبولة، على عكس الكتابة:
+      // الكاشير خلص كتابة وضغط، فضياع التركيز مش مشكلة —
+      // بالعكس، ده اللي بيأكّدله إن الرقم اتسجّل.
+      render();
+      posSay('اتسجّل: ' + money(parsedNow) + ' ج.م', true);
       return;
     }
 
@@ -4815,7 +4838,15 @@ ${TIME_JS}
     if (!input || !input.getAttribute) return;
 
     var id = input.getAttribute('data-price-for');
-    if (!id || !cart[id]) return;
+    if (!id) return;
+
+    // ⚠ ده الفرع اللي كان بيسكت. لو المفتاح مش في السلة،
+    // الكتابة كانت بتضيع بلا أي أثر — والزرار كان بيسكت
+    // بنفس الطريقة، فالاتنين بانوا كأن الرقم مش بيتقرا.
+    if (!cart[id]) {
+      posSay('عطل: الصنف مش في السلة — المعرّف ' + id, false);
+      return;
+    }
 
     cart[id].manual = input.value;
 
