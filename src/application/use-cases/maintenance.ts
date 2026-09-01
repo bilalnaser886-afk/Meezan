@@ -276,6 +276,16 @@ export interface TicketInput {
   repairShopId?: string | null;
   cost?: string | null;
   promisedDate?: string | null;
+  /**
+   * تاريخ استلام الجهاز.
+   *
+   * ⚠ فاضي = النهاردة (افتراضي الجدول). والتعديل مسموح لأن
+   * الجهاز بيتسلّم على الكاونتر وبيتسجّل بعدين — والموظّف
+   * اللي بيسجّل الصبح جهاز دخل امبارح لازم يقدر يقول كده.
+   *
+   * ⚠ والمستقبل مرفوض: جهاز ما بيدخلش الورشة بكرة.
+   */
+  receivedDate?: string | null;
   /** لو موجود، دي زيارة تانية لنفس الجهاز */
   parentTicketId?: string | null;
   /** مطلوب من صاحب المحل بس — غيره مقفول على فرعه */
@@ -374,6 +384,39 @@ export async function createTicket(
     throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
   }
 
+  // ══ تاريخ الاستلام ══
+  //
+  // ⚠ `parseDateInput` هي نفسها المستخدمة في البيع والمرتجع
+  // والموردين: بتقبل الأرقام العربية، وبترفض المستقبل، وبترجّع
+  // null للفاضي — والـnull هنا معناه "سيب افتراضي الجدول
+  // (تاريخ القاهرة) يشتغل".
+  let receivedDate: string | null;
+  try {
+    receivedDate = parseDateInput(input.receivedDate);
+  } catch (error) {
+    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
+  }
+
+  // ══ ⚠ المرتجع لازم يكون على جهاز **اتسلّم** ══
+  //
+  // الشاشة بتخبّي زرار «رجع تاني» لغير المسلَّم، لكن الإخفاء
+  // لافتة مش قفل: أي طلب معدّل بإيد كان بيقدر يربط زيارة
+  // جديدة بتذكرة لسه مفتوحة.
+  //
+  // ⚠ والنتيجة مش شكلية: تذكرتين مفتوحتين لنفس الجهاز في نفس
+  // الوقت، وشاشة المرتجعات بتعدّ إصلاح ما فشلش أصلاً — لأنه
+  // ما خلصش لسه.
+  const parentTicketId = String(input.parentTicketId ?? '').trim() || null;
+  if (parentTicketId) {
+    const parent = await deps.maintenance.findTicket(parentTicketId);
+    if (!parent || parent.tenantId !== actor.tenantId) {
+      throw Errors.notFound('الزيارة السابقة');
+    }
+    if (parent.status !== 'DELIVERED') {
+      throw Errors.validation('المرتجع بيتفتح على جهاز اتسلّم للعميل بس.');
+    }
+  }
+
   const created = await deps.maintenance.createTicket({
     tenant_id: actor.tenantId,
     branch_id: targetBranchId,
@@ -389,7 +432,11 @@ export async function createTicket(
     repair_shop_id: input.repairShopId || null,
     cost_piastres: money(input.cost),
     promised_date: promisedDate,
-    parent_ticket_id: input.parentTicketId || null,
+    // ⚠ بنشيل المفتاح خالص لو فاضي، مش بنبعت null.
+    // العمود له افتراضي في الجدول (تاريخ القاهرة)، و`null`
+    // الصريح بيدهس على الافتراضي ده.
+    ...(receivedDate ? { received_date: receivedDate } : {}),
+    parent_ticket_id: parentTicketId,
     created_by_id: actor.id,
   });
 
@@ -404,7 +451,8 @@ export async function createTicket(
       customerName,
       deviceName,
       hasUnlock: unlockKind !== 'NONE',
-      isRevisit: Boolean(input.parentTicketId),
+      isRevisit: Boolean(parentTicketId),
+      receivedDate,
     },
   });
 
