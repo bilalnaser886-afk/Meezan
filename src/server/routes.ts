@@ -99,6 +99,7 @@ import {
 } from '../application/use-cases/maintenance';
 import {
   createSupplier,
+  listSupplierMovements,
   listSuppliers,
   recordSupplierDebt,
   recordSupplierDiscount,
@@ -1753,6 +1754,27 @@ supplierRoutes.get(
     const container = buildContainer(c.env);
     const suppliers = await listSuppliers(container.suppliers, c.get('user'));
     return c.json({ ok: true, suppliers });
+  },
+);
+
+/**
+ * دفتر المورّد — الحركات سطر سطر.
+ *
+ * ⚠ `touchActivity: false` زي قايمة الموردين بالظبط.
+ *
+ * الدفتر بيتفتح مع فتح كارت المورّد، يعني بينادى من غير ما
+ * المستخدم يعمل حاجة. لو حدّثنا ختم النشاط منه، الموظّف اللي
+ * سايب الشاشة مفتوحة هيفضل "نشط" وهو رايح — ومهلة الخمول
+ * بتبقى بلا معنى.
+ */
+supplierRoutes.get(
+  '/:id/movements',
+  requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    const container = buildContainer(c.env);
+    const movements = await listSupplierMovements(container.suppliers, c.get('user'), id);
+    return c.json({ ok: true, movements });
   },
 );
 
