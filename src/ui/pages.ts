@@ -5815,11 +5815,24 @@ export function productsPage(data: ProductsPageData): Html {
               <input class="field-input" id="np-name" type="text" maxlength="80">
             </div>
 
-                        <div class="field">
-              <label class="field-label" for="np-model">الموديل</label>
-              <select class="field-input" id="np-model"></select>
+            <!-- ══ الموديل — بحث بدل قايمة ══
+                 ⚠ القايمة المنسدلة بقت ٤٤ موديل بعد بذرة
+                 الآيفون، والنزول فيها كل مرة أطول من كتابة
+                 الرقم نفسه.
+                 دلوقتي بتكتب «13» فبيتصفّى لأربع شرايط وتدوس
+                 على واحدة.
+                 ⚠ والخانة المخفية تحت هي اللي بتتبعت فعلاً:
+                 المعرّف مش النص. فمستحيل تسجّل جهاز بموديل
+                 مكتوب بإيدك ومش في السجل. -->
+            <div class="field">
+              <label class="field-label" for="np-model-q">الموديل</label>
+              <input class="field-input" id="np-model-q" type="text"
+                autocomplete="off" maxlength="40"
+                placeholder="اكتب جزء من الاسم — مثال: 13">
+              <input type="hidden" id="np-model">
+              <div class="drawers" id="np-model-picks"></div>
               <p class="field-hint" id="np-model-hint">
-                مش موجود؟ اختر «إضافة موديل» من آخر القائمة.
+                اختر من الشرايط. مش موجود؟ اضغط «+ موديل جديد».
               </p>
             </div>
 
@@ -6605,34 +6618,166 @@ ${MENU_JS}
    * ⚠ والاختيار الحالي بيتحافظ عليه لو لسه في القايمة. من غير
    * كده، أي تغيير في نوع الجهاز كان بيصفّر الموديل بصمت.
    */
-  function paintModelList() {
-    var sel = document.getElementById('np-model');
-    if (!sel) return;
+  /**
+   * ⚠ تطبيع نص البحث.
+   *
+   * بيوحّد الأرقام العربية والمسافات وحالة الحروف قبل المقارنة.
+   * من غيره: اللي بيكتب «١٣» ما بيلاقيش «13»، واللي بيكتب
+   * «13promax» ما بيلاقيش «13 Pro Max» — والاتنين نفس الموديل.
+   */
+  function normModel(raw) {
+    return String(raw || '')
+      .replace(/[\u0660-\u0669]/g, function (d) {
+        return String(d.charCodeAt(0) - 1632);
+      })
+      .replace(/[\u06f0-\u06f9]/g, function (d) {
+        return String(d.charCodeAt(0) - 1776);
+      })
+      .toLowerCase()
+      .replace(/\s+/g, '');
+  }
 
-    var keep = sel.value;
+  /**
+   * ⚠ تهريب النص قبل الحقن.
+   *
+   * أسماء الموديلات بيكتبها المستخدم، وحقنها في innerHTML من
+   * غير تهريب بيخلّي علامة أقلّ من واحدة تكسر الشريط كله.
+   */
+  function escModel(raw) {
+    return String(raw || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function modelLabel(m) {
+    return m.brand ? m.brand + ' — ' + m.name : m.name;
+  }
+
+  /**
+   * بناء شرايط الموديلات.
+   *
+   * ⚠ بتتفلتر بحاجتين مع بعض: نوع الجهاز، واللي مكتوب في خانة
+   * البحث. والنتيجة بتتعرض كشرايط زي أدراج الشاشة الرئيسية —
+   * نفس المكوّن اللي المستخدم متعوّد عليه، وحجم لمسة مريح.
+   *
+   * ⚠ وغير المصنّف بيظهر للإكسسوار بس. لو ظهر في درج الآيفون،
+   * بتسجّل جهاز على موديل إحنا مش متأكدين إنه آيفون — والعدّ
+   * في الدرج بيبقى كذب.
+   *
+   * ⚠ والاختيار بيتلغى لوحده لو خرج من الفلتر (بدّلت من آيفون
+   * لأندرويد مثلاً). سيبانه كان بيخلّي الخانة المخفية شايلة
+   * موديل مش ظاهر قدّامك — وده أسوأ من التصفير الصامت.
+   */
+  function paintModelList() {
+    var box = document.getElementById('np-model-picks');
+    var hid = document.getElementById('np-model');
+    var q = document.getElementById('np-model-q');
+    if (!box || !hid) return;
+
     var isDevice = typeEl && typeEl.value === 'device';
     var famEl = document.getElementById('np-family');
     var want = isDevice && famEl ? famEl.value : '';
+    var term = normModel(q ? q.value : '');
 
-    var out = '<option value="">— بدون موديل —</option>';
-    var found = false;
+    // ⚠ المختار الأول: لو خرج من الفلتر بيتلغى قبل الرسم.
+    if (hid.value) {
+      var still = null;
+      for (var k = 0; k < ALL_MODELS.length; k++) {
+        if (ALL_MODELS[k].id !== hid.value) continue;
+        if (!want || ALL_MODELS[k].family === want) still = ALL_MODELS[k];
+        break;
+      }
+      if (!still) { hid.value = ''; if (q) q.value = ''; term = ''; }
+    }
+
+    var out = '';
+    var shown = 0;
+    var exact = '';
+
+    // ⚠ «بدون موديل» للإكسسوار وحده — الجهاز إلزامي، والخادم
+    // بيرفضه برضه لو الشاشة اتخطّت.
+    if (!isDevice) {
+      out += '<button type="button" class="drawer" data-pick=""'
+        + (hid.value ? '' : ' data-on="1"') + '>بدون موديل</button>';
+    }
+
     for (var i = 0; i < ALL_MODELS.length; i++) {
       var m = ALL_MODELS[i];
       if (want && m.family !== want) continue;
-      var label = m.brand ? m.brand + ' — ' + m.name : m.name;
-      out += '<option value="' + m.id + '">' + label + '</option>';
-      if (m.id === keep) found = true;
-    }
-    out += '<option value="__add__">+ إضافة موديل</option>';
 
-    sel.innerHTML = out;
-    if (found) sel.value = keep;
+      var label = modelLabel(m);
+      var norm = normModel(label);
+      if (term && norm.indexOf(term) < 0) continue;
+
+      // ⚠ سقف احترازي. الشريط أفقي وبيتمرّر، لكن مية زرار
+      // بتبطّئ الرسم على موبايل قديم — والمستخدم اللي محتاج
+      // أكتر من أربعين نتيجة محتاج يكتب حرف كمان مش يمرّر.
+      if (shown >= 40) break;
+
+      if (norm === term) exact = m.id;
+
+      out += '<button type="button" class="drawer" data-pick="' + m.id + '"'
+        + (m.id === hid.value ? ' data-on="1"' : '') + '>'
+        + escModel(label) + '</button>';
+      shown++;
+    }
+
+    if (shown === 0) {
+      out += '<span class="field-hint">مفيش موديل بالاسم ده.</span>';
+    }
+
+    out += '<button type="button" class="drawer" data-add-drawer="1"'
+      + ' data-pick="__add__">+ موديل جديد</button>';
+
+    box.innerHTML = out;
+
+    // ⚠ التطابق التام بيختار لوحده.
+    //
+    // من غيره: بنحطّ اسم الموديل في الخانة بعد ما تدوس عليه،
+    // وأول حرف بعدها بيلغي الاختيار — فترجع تدوس تاني على نفس
+    // الشريط اللي هو الوحيد الظاهر. حلقة مغلقة صغيرة ومزعجة.
+    if (exact && !hid.value) hid.value = exact;
+  }
+
+  /** اختيار موديل من شريط — بيملا الخانة المخفية وخانة البحث */
+  function pickModel(id) {
+    var hid = document.getElementById('np-model');
+    var q = document.getElementById('np-model-q');
+    if (!hid) return;
+
+    hid.value = id || '';
+
+    var label = '';
+    for (var i = 0; i < ALL_MODELS.length; i++) {
+      if (ALL_MODELS[i].id === id) { label = modelLabel(ALL_MODELS[i]); break; }
+    }
+    if (q) q.value = label;
+
+    paintModelList();
   }
 
   if (typeEl) { typeEl.addEventListener('change', syncType); syncType(); }
 
   var familyEl = document.getElementById('np-family');
   if (familyEl) familyEl.addEventListener('change', paintModelList);
+
+  // ══════════ خانة بحث الموديل ══════════
+  //
+  // ⚠ الكتابة بتلغي الاختيار القديم.
+  //
+  // من غير كده: تختار «13 Pro»، تمسح وتكتب «14»، والخانة
+  // المخفية لسه شايلة الـ13 برو. تدوس حفظ فيتسجّل جهاز باسم
+  // مش اللي قدّامك على الشاشة — وده أوحش من رسالة رفض.
+  var modelQEl = document.getElementById('np-model-q');
+  if (modelQEl) {
+    modelQEl.addEventListener('input', function () {
+      var hid = document.getElementById('np-model');
+      if (hid) hid.value = '';
+      paintModelList();
+    });
+  }
 
   // ══════════ تسوية التكلفة ══════════
   //
@@ -6713,7 +6858,9 @@ ${MENU_JS}
   document.addEventListener('change', async function (e) {
     var sel = e.target;
     if (!sel || !sel.id) return;
-    if (sel.id !== 'np-model' && sel.id !== 'np-color' && sel.id !== 'np-supplier') return;
+    // ⚠ الموديل خرج من هنا: بقى شرايط مش قايمة منسدلة، فمفيش
+    // حدث التغيير يتنادى عليه أصلاً. إضافته في معالج الضغط تحت.
+    if (sel.id !== 'np-color' && sel.id !== 'np-supplier') return;
 
     if (sel.value !== '__add__') { lastPick[sel.id] = sel.value; return; }
     sel.value = lastPick[sel.id] || '';
@@ -6737,17 +6884,39 @@ ${MENU_JS}
       );
       return;
     }
-
-    var mname = prompt('اسم الموديل الجديد؟');
-    if (mname === null || !mname.trim()) return;
-
-    // ⚠ العيلة من نوع الجهاز المختار فوق — السؤال هنا تكرار
-    // لحاجة الشاشة عارفاها.
-    var fam = null;
-    if (typeEl && typeEl.value === 'device' && familyEl) fam = familyEl.value;
-
-    await addToRegistry('/api/products/models', { name: mname.trim(), family: fam }, 'الموديل');
   });
+
+  // ══════════ ضغط شرايط الموديل ══════════
+  //
+  // ⚠ معالج واحد على الحاوية مش على كل شريط.
+  //
+  // الشرايط بتتعاد بناءها مع كل حرف بتكتبه، وأي مستمع متعلّق
+  // على شريط بيموت مع الرسمة اللي بعدها. الحاوية ثابتة.
+  var modelPicksEl = document.getElementById('np-model-picks');
+  if (modelPicksEl) {
+    modelPicksEl.addEventListener('click', async function (e) {
+      var hit = e.target.closest ? e.target.closest('[data-pick]') : null;
+      if (!hit) return;
+
+      var pid = hit.getAttribute('data-pick');
+
+      if (pid !== '__add__') { pickModel(pid); return; }
+
+      // ⚠ الاسم المكتوب في خانة البحث بيتقدّم كاقتراح.
+      // اللي وصل لـ«موديل جديد» غالبًا كتب اسمه ومالقهوش،
+      // وإعادة كتابته من الأول شغل مكرر بلا سبب.
+      var typed = modelQEl ? modelQEl.value.trim() : '';
+      var mname = prompt('اسم الموديل الجديد؟', typed);
+      if (mname === null || !mname.trim()) return;
+
+      // ⚠ العيلة من نوع الجهاز المختار فوق — السؤال هنا تكرار
+      // لحاجة الشاشة عارفاها.
+      var fam = null;
+      if (typeEl && typeEl.value === 'device' && familyEl) fam = familyEl.value;
+
+      await addToRegistry('/api/products/models', { name: mname.trim(), family: fam }, 'الموديل');
+    });
+  }
 
   // ══════════ فحص رقم الـIMEI ══════════
   //
@@ -6869,8 +7038,12 @@ ${MENU_JS}
       // ⚠ الموديل إلزامي للجهاز، لأن اسم الجهاز بيتولد منه.
       // من غيره الجهاز بيتسجّل بلا اسم وما يظهرش في أي بحث.
       if (isDevice && !modelId) {
-        say('اختر الموديل — اسم الجهاز بيتولّد منه.', false);
-        if (modelInput) modelInput.focus();
+        say('اختر الموديل من الشرايط — اسم الجهاز بيتولّد منه.', false);
+        // ⚠ المؤشر بيروح لخانة **البحث**. الخانة اللي جنبها
+        // مخفية، ونقل المؤشر عليها ما بيعملش حاجة — فالرسالة كانت
+        // هتظهر والمستخدم مش عارف يكتب فين.
+        var modelQ = document.getElementById('np-model-q');
+        if (modelQ) modelQ.focus();
         return;
       }
 
