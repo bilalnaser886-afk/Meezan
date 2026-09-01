@@ -924,11 +924,31 @@ export async function createProduct(
   // ⚠ الفحوصات هنا رسايل عربية واضحة. الحراسة الحقيقية
   // (الخزنة تبع المحل · صلاحية الاعتماد · المورّد موجود)
   // جوّه دوال قاعدة البيانات جنب البيانات.
-  const rawSettle = String(input.settle ?? 'NONE').trim().toUpperCase();
-  if (rawSettle !== 'NONE' && rawSettle !== 'PAID' && rawSettle !== 'CREDIT') {
+  const rawSettle = String(input.settle ?? '').trim().toUpperCase();
+
+  // ══ ⚠ التسوية إلزامية لما يكون فيه تكلفة ══
+  //
+  // الافتراضي القديم كان `'NONE'`، ومعناه إن الطلب اللي مفيهوش
+  // تسوية بيعدّي كـ«تسجيل مخزون بس». يعني تكلفة ٥٠ ألف بتتسجّل،
+  // والفلوس ما تخرجش من الخزنة ومحدش يبقى مديون بيها.
+  //
+  // ⚠ والعطل ده **بيبان كأنه نجاح**: المنتج بيتضاف، والرسالة
+  // بتقول تمام، والرقم الغلط بيقعد في الخزنة لحد ما تعدّ الدرج.
+  //
+  // ⚠ والفحص هنا مش في الواجهة، لأن إخفاء خيار مش بيمنع حد
+  // يبعت الطلب من المتصفح — والفرق بين الاتنين هو الفرق بين
+  // لافتة وقفل.
+  //
+  // ⚠ ولاحظ الشرط: **بتكلفة بس**. لو التكلفة صفر، مفيش فلوس
+  // تتحرّك أصلاً والسؤال مالوش معنى — فبنعدّيها NONE بهدوء بدل
+  // ما نطلّع رسالة على سؤال مالوش إجابة.
+  if (!rawSettle && input.costPiastres > 0) {
+    throw Errors.validation('حدّد التكلفة دي راحت فين: مخزون بس، أو مدفوعة، أو على الحساب.');
+  }
+  if (rawSettle && rawSettle !== 'NONE' && rawSettle !== 'PAID' && rawSettle !== 'CREDIT') {
     throw Errors.validation('نوع تسوية التكلفة غير معروف.');
   }
-  const settle = rawSettle as 'NONE' | 'PAID' | 'CREDIT';
+  const settle = (rawSettle || 'NONE') as 'NONE' | 'PAID' | 'CREDIT';
   const treasuryId = String(input.treasuryId ?? '').trim() || null;
   // ══ ⚠ المورّد إجباري ══
   //
