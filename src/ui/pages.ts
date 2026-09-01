@@ -718,8 +718,18 @@ const PRINT_SHARED_JS = `
    * صغيرة زي "01" — فأول تتابع غالبًا مش اللي إنت عايزه.
    */
   function ocrPick(text) {
-    var runs = String(text || '').match(/\\d{6,}/g) || [];
-    var loose = null;
+    // ⚠ الحد أربع خانات مش ستة.
+    //
+    // ══ غلطة كانت هنا ══
+    // كان الحد ستة، والكود المختصر على الملصق **ست خانات
+    // بالظبط** — فكان بيتلقط بس بيترفض بعدين لأن الفلتر كان
+    // بيطلب ١٥ خانة. النتيجة: "ملقيتش رقم" والرقم قدّامه.
+    //
+    // القارئ ده بيتستخدم في مكانين: آيمي في شاشة البضاعة،
+    // وكود مختصر في خانة البحث. فلازم يشوف الاتنين.
+    var runs = String(text || '').match(/\\d{4,}/g) || [];
+    var exact15 = null;
+    var longest = null;
 
     for (var i = 0; i < runs.length; i++) {
       var r = runs[i];
@@ -729,13 +739,17 @@ const PRINT_SHARED_JS = `
         var slice = r.substr(k, 15);
         if (ocrLuhn(slice)) return { value: slice, sure: true };
       }
-      if (!loose && r.length === 15) loose = r;
+      if (!exact15 && r.length === 15) exact15 = r;
+      if (!longest || r.length > longest.length) longest = r;
     }
 
-    // ⚠ ما عدّاش لُون — بنرجّعه معلّم "مش متأكد" مش بنرميه.
-    // الرقم اللي قرّب بيوفّر على الموظّف كتابة ١٥ خانة، وهو
-    // شايفه قدّامه في الخانة ويقدر يصلّح رقم واحد.
-    return loose ? { value: loose, sure: false } : null;
+    // ⚠ الترتيب: آيمي عدّى لُون ← آيمي ما عدّاش ← أطول رقم.
+    //
+    // واللي ما عدّاش لُون بيترجع معلّم "مش متأكد" مش بيترمى:
+    // الرقم اللي قرّب بيوفّر كتابة ١٥ خانة، والموظّف شايفه
+    // قدّامه ويقدر يصلّح خانة واحدة.
+    if (exact15) return { value: exact15, sure: false };
+    return longest ? { value: longest, sure: false } : null;
   }
 
   /**
