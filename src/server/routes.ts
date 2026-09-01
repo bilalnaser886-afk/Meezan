@@ -2110,6 +2110,7 @@ maintenanceRoutes.post('/tickets', requireAuth({ requireAll: [PERMISSIONS.MAINTE
       repairShopId: body.repairShopId ?? null,
       cost: body.cost ?? null,
       promisedDate: body.promisedDate ?? null,
+      receivedDate: body.receivedDate ?? null,
       parentTicketId: body.parentTicketId ?? null,
       branchId: body.branchId ?? null,
     });
