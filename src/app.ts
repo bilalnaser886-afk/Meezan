@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import { SESSION_POLICY, assertEnv, idleRuleFor, type Env } from './domain/config';
 import { todayInCairo } from './domain/dates';
-import { AppError } from './domain/errors';
+import { AppError, Errors } from './domain/errors';
 import { PERMISSIONS } from './domain/permissions';
 import {
   announcementRoutes,
@@ -25,6 +25,7 @@ import {
   closingRoutes,
   reportRoutes,
   maintenanceRoutes,
+  shopRoutes,
   supplierRoutes,
   transferRoutes,
   returnRoutes,
@@ -44,6 +45,8 @@ import {
   listTransfers,
 } from './application/use-cases/treasury';
 import { listCategories, listColors, listModels, listProducts, listSellableProducts } from './application/use-cases/products';
+import { listSupplierNames } from './application/use-cases/purchases';
+import { listShopAccounts } from './application/use-cases/shops';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
 import { listCustomers } from './application/use-cases/customers';
 import { listTenants } from './application/use-cases/platform';
@@ -64,6 +67,7 @@ import {
   closingsPage,
   reportPage,
   maintenancePage,
+  shopsPage,
   suppliersPage,
   setupPage,
   treasuryPage,
@@ -125,6 +129,8 @@ app.route('/api/returns', returnRoutes);
 app.route('/api/reports', reportRoutes);
 app.route('/api/transfers', transferRoutes);
 app.route('/api/suppliers', supplierRoutes);
+// ⚠ دفتر مستقل عن الموردين: دين **ليك** مش عليك.
+app.route('/api/shops', shopRoutes);
 app.route('/api/maintenance', maintenanceRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/purchases', purchaseRoutes);
@@ -218,7 +224,7 @@ app.get('/platform-setup', (c) => {
  *
  * ⚠ الشاشة دي مالهاش أي وصول لبيانات المحلات. الحارس بيفحص
  * `tenant.view` اللي مالكوش غير مشغّل المنصّة، وحالات الاستخدام
- * بترمي لو الدور ده حاول يقرا منتجات أو مبيعات.
+ * بترمي لو الدور ده حاول يقرا بضاعة أو مبيعات.
  */
 app.get('/platform', requireAuth({ redirectOnFail: true }), async (c) => {
   const user = c.get('user');
@@ -362,7 +368,13 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const idleRule = idleRuleFor(user.roleKey);
 
-  const [products, balances, recent, branchLabel, posBranches] = await Promise.all([
+  const canConsign = user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE);
+
+  const [
+    products, balances, recent, branchLabel, posBranches, shopAccounts,
+    posCategories, posModels, posColors,
+  ] =
+    await Promise.all([
     listSellableProducts(container.products, user),
     listBalances(container.treasury, user),
     // ⚠ الخطأ ما يصحّش يتبلع في صمت. لو الاستعلام فشل، القائمة
@@ -378,6 +390,19 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
     user.roleKey === 'SUPER_ADMIN'
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
+    // ⚠ حسابات المحلات — للخروج أجل. بتتجاب لمن يملك الصلاحية
+    // بس، وفاضية لغيره فالقسم كله بيختفي.
+    canConsign
+      ? listShopAccounts(container.shops, user).catch(() => [])
+      : Promise.resolve([]),
+    // ⚠ سجلات الفلترة — نفس اللي بتروح لشاشة البضاعة.
+    //
+    // و`catch` على كل واحدة عن قصد: لو سجل الألوان وقع لأي
+    // سبب، البيع لازم يفضل شغّال بشريط ناقص. الكاشير اللي
+    // قدّامه زبون ما ينفعش يتقفل عليه البيع عشان شريط فلتر.
+    listCategories(container.products, user).catch(() => []),
+    listModels(container.products, user).catch(() => []),
+    listColors(container.products, user).catch(() => []),
   ]);
 
   return c.html(
@@ -392,13 +417,13 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       // ⚠ مدير الفرع والمالك بس. المندوب بيبيع وما بيرجّعش —
       // اللي بياخد الفلوس مش هو اللي بيردّها.
       canRefund: user.permissions.includes(PERMISSIONS.SALES_REFUND),
-      // ⚠ الخزائن اللي مالهاش فرع (مستوى الشركة) مستبعدة: البيع
+      // ⚠ الخزن اللي مالهاش فرع (مستوى الشركة) مستبعدة: البيع
       // لازم يتسجّل على فرع، والدالة في قاعدة البيانات بترفضها.
       // إخفاؤها هنا بيمنع الموظّف يختار حاجة هتترفض بعد الضغط.
       //
       // ⚠ و`branchId` بيتمرّر دلوقتي عشان الشاشة تفلتر بيه.
       // الفلتر ده **راحة مش حماية** — الحارس الحقيقي في دالة
-      // القاعدة، وهو اللي بيرفض خزينة فرع مع منتج فرع تاني.
+      // القاعدة، وهو اللي بيرفض خزنة فرع مع منتج فرع تاني.
       treasuries: balances
         .filter((b) => b.isActive && b.branchId !== null)
         .map((b) => ({
@@ -409,6 +434,9 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         })),
       // ⚠ فاضية لغير صاحب المحل — والشاشة بتخفي الخانة ساعتها.
       branches: posBranches.map((b: { id: string; name: string }) => ({ id: b.id, name: b.name })),
+      // ⚠ الخمس حقول الأخيرة كانت موجودة في `ProductRecord` وما
+      // كانتش بتتبعت. من غيرها، شاشة البيع بتوري كومة مسطّحة
+      // وشاشة البضاعة بتوري أدراج — نفس البضاعة بمنظّمين مختلفين.
       products: products.map((p) => ({
         id: p.id,
         name: p.name,
@@ -417,7 +445,22 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         pricePiastres: p.pricePiastres,
         quantityOnHand: p.quantityOnHand,
         branchId: p.branchId,
+        categoryId: p.categoryId,
+        modelId: p.modelId,
+        colorId: p.colorId,
+        storageCapacity: p.storageCapacity,
+        customsCleared: p.customsCleared,
       })),
+      // ⚠ الأسماء والمعرّفات بس — مفيش عدّ.
+      //
+      // شاشة البضاعة بتوري رقم جنب كل شريحة، وهو معدود على
+      // **كل** المخزون. هنا المعروض هو المتاح للبيع بس، فالرقم
+      // كان هيقول حاجة والشاشة تحته توري حاجة تانية.
+      categories: posCategories.map((c) => ({
+        id: c.id, name: c.name, parentId: c.parentId,
+      })),
+      models: posModels.map((m) => ({ id: m.id, name: m.name, family: m.family })),
+      colors: posColors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
       recentSales: recent.map((s) => ({
         id: s.id,
         totalPiastres: s.totalPiastres,
@@ -434,6 +477,10 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
       // مصدر واحد. لو اتكتب في المكانين، هييجي يوم يتغيّر في
       // واحد ويفضل القديم في التاني: الفاتورة تقول حاجة
       // والشاشة تقول حاجة.
+      // ⚠ الاسم والمعرّف بس. الشاشة دي بتخرّج بضاعة مش بتعرض
+      // ديون، والرصيد معلومة مالية مالهاش لزوم هنا.
+      shopAccounts: shopAccounts.map((sh) => ({ id: sh.shopId, name: sh.name })),
+      canConsign,
       defaultWarrantyDays: DEFAULT_WARRANTY_DAYS,
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
@@ -443,7 +490,7 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
 });
 
 /**
- * شاشة المنتجات.
+ * شاشة البضاعة.
  *
  * ⚠ التكلفة مش بتتفلتر هنا. الحقل بيوصل أو ما بيوصلش من طبقة
  * قاعدة البيانات حسب صلاحية profit.view_real، والصفحة بتعرض
@@ -460,8 +507,30 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
   const idleRule = idleRuleFor(user.roleKey);
   const canEdit = user.permissions.includes(PERMISSIONS.INVENTORY_ADJUST);
 
-  const [products, branches, allBranches, branchLabel, categories, models, colors] = await Promise.all([
-    listProducts(container.products, user),
+  const [
+    products, branches, allBranches, branchLabel,
+    categories, models, colors, suppliers, treasuryList,
+  ] = await Promise.all([
+    // ⚠ الفشل هنا بيسمّي نفسه بدل ما يطلع "خطأ غير متوقّع".
+    //
+    // الرسالة الموحّدة بتحمي النظام، بس لما الصفحة كلها تقع
+    // بيها إنت مش عارف وقعت من فين: البضاعة؟ الفروع؟ الأدراج؟
+    //
+    // ⚠ ومش بنبلع الخطأ ونرجّع قايمة فاضية — القايمة الفاضية
+    // شكلها زي "مفيش بضاعة" بالظبط، وده أوحش من رسالة خطأ.
+    // ⚠ الفشل هنا بيسمّي نفسه بدل ما يطلع "خطأ غير متوقّع".
+    //
+    // الرسالة الموحّدة بتحمي النظام، بس لما الصفحة كلها تقع
+    // بيها إنت مش عارف وقعت من فين: البضاعة؟ الفروع؟ الأدراج؟
+    //
+    // ⚠ ومش بنبلع الخطأ ونرجّع قايمة فاضية — القايمة الفاضية
+    // شكلها زي "مفيش بضاعة" بالظبط، وده أوحش من رسالة خطأ.
+    listProducts(container.products, user).catch((err) => {
+      console.error('[products] تعذّر جلب البضاعة:', err);
+      throw Errors.internal(
+        `listProducts: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }),
     // قائمة الفروع للإضافة — للمالك بس، غيره مقفول على فرعه
     // والاختيار مالوش معنى عنده
     user.roleKey === 'SUPER_ADMIN' && canEdit
@@ -473,7 +542,12 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     canEdit
       ? container.branches.listActive(user.tenantId).catch(() => [])
       : Promise.resolve([]),
-    branchLabelFor(container, user),
+    branchLabelFor(container, user).catch((err) => {
+      console.error('[products] تعذّر جلب اسم الفرع:', err);
+      throw Errors.internal(
+        `branchLabel: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }),
     // ⚠ الأدراج بتتجاب لكل من يشوف المخزون، مش للمعدّل بس.
     // الأدراج تنظيم عرض — واللي بيشوف قايمة مسطّحة والباقي
     // شايفين أدراج مش بيشوف نفس المحل.
@@ -483,6 +557,14 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
     // نفس المحل.
     listModels(container.products, user).catch(() => []),
     listColors(container.products, user).catch(() => []),
+    // ⚠ أسماء الموردين بس — لقايمة مصدر الشراء في نموذج الإضافة.
+    // بلا أي رقم مالي، فالمندوب بيختار من غير ما يشوف الديون.
+    listSupplierNames(container.purchases, user).catch(() => []),
+    // ⚠ خزن نطاق المستخدم — لسداد التكلفة وقت الإضافة.
+    // نفس نطاق شاشة الموردين: المالك كل الخزن، وغيره فرعه.
+    container.treasury.treasuries
+      .listBalances(user.tenantId, user.roleKey === 'SUPER_ADMIN' ? null : user.branchId)
+      .catch(() => []),
   ]);
 
   // ورش الصيانة — لقائمة "تحويل للصيانة" في كارت المنتج
@@ -509,6 +591,11 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       categories,
       models,
       colors,
+      suppliers,
+      canManageSuppliers: user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE),
+      // ⚠ الاسم والمعرّف بس — الرصيد معلومة مالية والمندوب
+      // مش محتاجها عشان يقول "دفعت من الدرج".
+      treasuries: treasuryList.map((t) => ({ id: t.treasuryId, name: t.name })),
       branches,
       // ⚠ فروع التحويل غير قائمة الإضافة: هنا بنستبعد فرع
       // المستخدم نفسه — تحويل لفرعك مالوش معنى، والقاعدة
@@ -554,7 +641,7 @@ app.get('/password', requireAuth({ redirectOnFail: true }), (c) => {
  * صفحة العملاء.
  *
  * بتتفتح من قائمة التلات نقط مش من الشريط السفلي: الشريط لليومي
- * المتكرر (بيع، منتجات، خزينة)، والقائمة للي بتفتحه لما تحتاجه.
+ * المتكرر (بيع، بضاعة، خزنة)، والقائمة للي بتفتحه لما تحتاجه.
  */
 app.get('/customers', requireAuth({ redirectOnFail: true }), async (c) => {
   const user = c.get('user');
@@ -654,7 +741,7 @@ app.get('/maintenance', requireAuth({ redirectOnFail: true }), async (c) => {
  * ⚠ الأرصدة بتتجاب بالجافاسكربت مش هنا — بتتغيّر مع كل حركة
  * في نفس الشاشة، وإعادة تحميل الصفحة مع كل تسجيل مرهقة.
  *
- * اللي بيتبعت مع الصفحة: الخزائن (لقائمة السداد) بس.
+ * اللي بيتبعت مع الصفحة: الخزن (لقائمة السداد) بس.
  */
 app.get('/suppliers', requireAuth({ redirectOnFail: true }), async (c) => {
   const user = c.get('user');
@@ -666,13 +753,73 @@ app.get('/suppliers', requireAuth({ redirectOnFail: true }), async (c) => {
   const container = buildContainer(c.env);
   const idleRule = idleRuleFor(user.roleKey);
 
-  // مدير الفرع بيدفع من خزينة فرعه. صاحب المحل من أي خزينة.
+  // مدير الفرع بيدفع من خزنة فرعه. صاحب المحل من أي خزنة.
+  const treasuries = await container.treasury.treasuries
+    .listBalances(user.tenantId, user.roleKey === 'SUPER_ADMIN' ? null : user.branchId)
+    .catch(() => []);
+
+  // ⚠ الفروع لصاحب المحل وحده.
+  //
+  // هو اللي بيختار الفرع وقت تسجيل دين أو خصم، وبيفلتر بيه
+  // الخزائن وقت السداد. مدير الفرع مالوش اختيار أصلاً — فرعه
+  // بيتاخد من جلسته، وإرسال القايمة له كان هيدّي إحساس كاذب
+  // بإنه يقدر يختار.
+  const supplierBranches =
+    user.roleKey === 'SUPER_ADMIN'
+      ? await container.branches.listActive(user.tenantId).catch(() => [])
+      : [];
+
+  return c.html(
+    suppliersPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel: await branchLabelFor(container, user),
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
+      // ⚠ الفرع بيتبعت مع كل خزنة عشان الشاشة تفلتر بيه.
+      // من غيره، صاحب المحل بيختار فرع المعادي ويلاقي خزائن
+      // فيصل في القايمة — والسداد بينزل من دين الفرع الغلط.
+      treasuries: treasuries.map((t) => ({
+        treasuryId: t.treasuryId,
+        name: t.name,
+        branchId: t.branchId,
+      })),
+      branches: supplierBranches.map((b) => ({ branchId: b.id, name: b.name })),
+      today: todayInCairo(),
+      idleTimeoutSeconds: idleRule.seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRule.action,
+    }),
+  );
+});
+
+/**
+ * صفحة حساب المحلات — المرآة المقلوبة للموردين.
+ *
+ * ⚠ نفس الصلاحية (`supplier.manage`). ده دفتر ديون، والديون
+ * معلومة مالية سواء كانت عليك أو ليك.
+ */
+app.get('/shops', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const idleRule = idleRuleFor(user.roleKey);
+
+  // ⚠ نفس نطاق شاشة الموردين: مدير الفرع بيحصّل في خزنة فرعه،
+  // وصاحب المحل في أي خزنة.
   const treasuries = await container.treasury.treasuries
     .listBalances(user.tenantId, user.roleKey === 'SUPER_ADMIN' ? null : user.branchId)
     .catch(() => []);
 
   return c.html(
-    suppliersPage({
+    shopsPage({
       fullName: user.fullName,
       username: user.username,
       branchLabel: await branchLabelFor(container, user),
@@ -785,7 +932,7 @@ app.get('/closings', requireAuth({ redirectOnFail: true }), async (c) => {
 });
 
 /**
- * صفحة الخزينة.
+ * صفحة الخزنة.
  * الأرصدة والحركات وقوائم الاختيار بتتجاب على الخادم في رحلة
  * واحدة متوازية — أسرع من أربع نداءات من المتصفح على شبكة موبايل.
  */
@@ -815,10 +962,10 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
       // ⚠ الملخّص نداء واحد بيرجّع الصفوف والمجاميع مع بعض —
       // متحسبين من نفس البيانات، فمستحيل يختلفوا.
       getFinancialSummary(container.treasury, user),
-      // التحويلات بتظهر لكل من يشوف الخزينة، والتنفيذ لمن
+      // التحويلات بتظهر لكل من يشوف الخزنة، والتنفيذ لمن
       // يقدر يعتمد بس. الفرق بين "تشوف" و"تعمل".
       listTransfers(container.treasury, user).catch(() => []),
-      // صاحب المحل مالوش فرع، فلازم يختار عند إضافة خزينة
+      // صاحب المحل مالوش فرع، فلازم يختار عند إضافة خزنة
       isOwner ? listBranches(container.branchOps, user).catch(() => []) : Promise.resolve([]),
     ]);
 
