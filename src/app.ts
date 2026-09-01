@@ -1008,3 +1008,5 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
 //
 // دلوقتي الكل بيدخل من /login بكود محله. والقفل الحقيقي اللي
 // فضل: كود المحل + كلمة المرور + مفتاح تاني لحساب المنصّة وحده.
+
+export default app;
