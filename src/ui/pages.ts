@@ -12780,14 +12780,12 @@ export function maintenancePage(data: MaintenancePageData): Html {
              أو اتسلّم من تاني.
              وكل صف هنا معناه إصلاح ما نفعش من أول مرة.
 
-             ══ 🔴 والقيمة كانت RETURNED — ودي كانت العطل ══
-             الكلمة دي متحجوزة في نطاق **أجهزة المحل** بمعنى
-             تاني خالص (جهاز رجع من الورشة)، ونطاق التذاكر
-             مكانش بيعرفها، فالطلب كله كان بيترفض برسالة
-             «النطاق غير صحيح».
-             ⚠ اسم واحد بمعنيين في نطاقين = عطل مستني ميعاده.
-             REVISIT مالهاش أي معنى تاني في النظام. -->
-        <option value="REVISIT">المرتجعات</option>
+             ⚠⚠ القيمة لازم تفضل RETURNED بالحرف.
+             دي نفس الكلمة اللي fn_tickets بتعرفها من مايجريشن
+             ٥٢، ونفس اللي listTickets بتقبلها. تلات نُسخ لنفس
+             القايمة — الشاشة والكود والقاعدة — وأي واحدة تسبق
+             التانية بتطلّع «النطاق غير صحيح». -->
+        <option value="RETURNED">المرتجعات</option>
         <option value="ALL">الكل</option>
       </select>
 
@@ -14038,18 +14036,32 @@ ${MENU_JS}
 
       var sign = m.direction === 'PAYMENT' ? '-' : '+';
 
+      // ══ ⚠ سطرين تحت بعض، مش صف واحد ══
+      //
+      // كلاس prod-row-main صف مرن: على الموبايل بيلفّ فبيبان
+      // سطرين، وعلى الكمبيوتر فيه مساحة فبيفضلوا جنب بعض —
+      // ونفس الشاشة بتبان بشكلين مختلفين حسب عرض الجهاز.
+      //
+      // ⚠ والكشف مش قايمة أصناف: كل سطر فيه اسم طويل ومبلغ
+      // وتاريخ، وقراية الأرقام تحت بعض أسرع من تتبّعها في
+      // آخر سطر عريض.
+      //
+      // ⚠ وخاصية العرض متحطّة هنا مش في ورقة الأنماط عن
+      // قصد: هي بتخصّ الكشف وحده. لو نزلت على كلاس الصف
+      // نفسه، كانت هتغيّر كل قايمة في النظام.
       var r = document.createElement('div');
       r.className = 'prod-row';
-      var main = document.createElement('div');
-      main.className = 'prod-row-main';
-      var nm = document.createElement('span');
+      r.style.display = 'block';
+
+      var nm = document.createElement('div');
       nm.className = 'prod-row-name';
       nm.textContent = label + (m.note ? ' — ' + m.note : '');
-      var sb2 = document.createElement('span');
+
+      var sb2 = document.createElement('div');
       sb2.className = 'prod-row-sub';
       sb2.textContent = sign + money(amount) + ' · ' + m.occurredAt;
-      main.appendChild(nm); main.appendChild(sb2);
-      r.appendChild(main);
+
+      r.appendChild(nm); r.appendChild(sb2);
       box.appendChild(r);
     }
   }
