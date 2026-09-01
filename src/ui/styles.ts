@@ -416,7 +416,20 @@ button{font:inherit}
 
    ⚠ touch-action:none هنا **إلزامي** وبيغلب القاعدة العامة
    فوق: السحب بالإصبع لازم يرسم النمط مش يمرّر الصفحة. */
+/* ⚠ direction:ltr إلزامي هنا، وده مش تفصيلة تنسيق.
+
+   الصفحة كلها RTL، وشبكة CSS بتوزّع خاناتها حسب اتجاه النص.
+   فالنقطة رقم 1 كانت بتتحطّ فوق **يمين** والتالتة فوق شمال —
+   يعني الشبكة مرآة لنمط أندرويد الحقيقي.
+
+   ⚠ والنتيجة كانت أوحش من شكل مقلوب: شاشة العرض بترسم بـSVG
+   بإحداثيات مطلقة، فهي سليمة. يعني الموظّف بيرسم النمط في
+   اتجاه، وبعد الحفظ يلاقيه معكوس — ويفتكر إن النظام غيّره.
+
+   والأخطر إنه لو رسم النمط اللي شايفه على جهاز العميل، اللي
+   بيتسجّل بيبقى مرآته — ونمط مرآة ما بيفتحش الجهاز. */
 .pat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+  direction:ltr;
   width:200px;margin:8px auto;padding:14px;background:var(--card);
   border:1px solid var(--line);border-radius:var(--r);touch-action:none}
 .pat-dot{aspect-ratio:1;border-radius:50%;background:var(--line);
@@ -461,6 +474,8 @@ button{font:inherit}
 .scan-video{width:100%;max-height:62vh;border-radius:var(--r);background:#000;
   object-fit:cover}
 .scan-hint{color:#fff;font-size:var(--fs-4);margin:12px 0}
+/* زرارين جنب بعض في شاشة المسح: إلغاء والكتابة اليدوية */
+.scan-box .btn-mini{margin:0 4px}
 
 @media print{
   body > *{display:none !important}
@@ -480,19 +495,65 @@ button{font:inherit}
 .pr-total{border-top:1.5px solid #000;margin-top:8px;padding-top:8px;
   font-size:16px;font-weight:600}
 .pr-note{margin-top:12px;font-size:11px;color:#444}
-/* الملصق: مقاس صغير مستقل عن الفاتورة */
-.pr-label{width:58mm;text-align:center;padding:3mm 1mm}
-.pr-label-shop{font-family:var(--font-display);font-size:12px;font-weight:600;
-  border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:4px}
-.pr-label-name{font-size:13px;font-weight:600;margin-bottom:3px}
-.pr-label-code{font-family:var(--font-mono);font-size:11px;letter-spacing:1px;
-  margin-top:2px;direction:ltr}
-/* سطر المواصفات: بيلف لو طال بدل ما يتقص */
-.pr-label-spec{font-size:10px;margin-top:4px;line-height:1.6;
-  display:flex;flex-wrap:wrap;justify-content:center;gap:3px 8px}
-.pr-label-foot{display:flex;justify-content:space-between;margin-top:5px;
-  padding-top:3px;border-top:1px solid #000;font-size:10px;
-  font-family:var(--font-mono)}
+/* ═══ الملصق ═══
+   ⚠ **العرض مش هنا.** بيتحطّ على العنصر وقت البناء من
+   LABEL_W_MM في pages.ts، عشان نفس القيمة تروح لـ@page كمان.
+   قيمة واحدة في مكان واحد = مستحيل الاتنين يختلفوا.
+
+   ⚠ والمقاسات تحت مضغوطة لملصق ٢٥ مم ارتفاع. لو كبّرت
+   الملصق، تقدر تكبّرهم — بس لو صغّرته، السطور هتتقص. */
+/* ⚠ box-sizing لازم: من غيره الحشو بيتزوّد **فوق** الارتفاع
+   المفروض، والملصق بيطلع 25mm + 1.6mm = ورقتين تاني.
+   overflow:hidden هو الضمانة الأخيرة، و break-inside بيمنع
+   المتصفح يقسّمه على صفحتين حتى لو حصل أي شيء غير متوقّع. */
+/* ══ ⚠ كل حاجة على الملصق **عريضة**، وده مش ذوق ══
+
+   الطابعة الحرارية بتحرق نقط كاملة — مفيش نص نقطة. وعلى
+   6.5px الخط العادي سُمكه 1.1 نقطة، يعني الطابعة بتقرّبه
+   لنقطة واحدة والحرف بيطلع باهت أو مقطّع.
+
+   العريض بيوصل السُمك لـ2.1 نقطة = نقطتين كاملتين، فالحرف
+   بيتحرق كامل.
+
+   ⚠ والأهم إنه **ببلاش**: العرض ما بياخدش مساحة رأسية، يعني
+   الوضوح اتحسّن من غير ما الملصق يكبر ولا سطر يتشال. */
+.pr-label{text-align:center;padding:.5mm 1mm;line-height:1.1;
+  box-sizing:border-box;overflow:hidden;font-weight:700;
+  /* ⚠ أسود خالص مش رمادي: أي تدرّج بيتحوّل نقط متفرّقة على
+     الطابعة الحرارية، والحرف بيبان مهترئ. */
+  color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;
+  break-inside:avoid;page-break-inside:avoid}
+/* ══ ⚠ كل المقاسات تحت مضبوطة على ميزانية 25 مم ══
+
+   الترتيب عمود، فالستة سطور بيتقاسموا الارتفاع والرمز بياخد
+   الفاضل. أي تكبير هنا بيصغّر الرمز مباشرةً — ولو نزل تحت
+   0.375 مم للمربع، بيبطّل يتمسح.
+
+   يعني دول مش أرقام ذوق. */
+
+/* اسم المحل: أكبر سطر على الملصق — هو اللي بيتشاف من بعيد */
+.pr-label-shop{font-family:var(--font-display);font-size:10px;font-weight:700;
+  letter-spacing:.05em;white-space:nowrap;overflow:hidden;
+  border-bottom:1px solid #000;padding-bottom:1px;margin-bottom:1px}
+
+.pr-label-name{font-size:8.5px;font-weight:700;margin-bottom:.5px;
+  /* اسم طويل بيتقص بنقط بدل ما يلفّ سطرين ويزقّ الباقي بره */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ⚠ الرمز مربّع، والمتصفح بيسيب مسافة تحت الـsvg زي أي سطر
+   نص. block بتشيلها — من غيرها بيضيع ملّيمتر بلا فايدة. */
+.pr-label svg{display:block;margin:0 auto}
+.pr-label-code{font-family:var(--font-mono);font-size:7px;font-weight:700;
+  letter-spacing:.2px;
+  margin-top:.5px;direction:ltr;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ⚠ سطر واحد بس. كان بيلفّ لو طال — واللفّ على ملصق 25mm
+   معناه إن السطر السفلي بيتزقّ بره الورقة. */
+.pr-label-spec{font-size:6.5px;font-weight:700;margin-top:.5px;line-height:1.1;
+  display:flex;flex-wrap:nowrap;justify-content:center;gap:0 5px;
+  overflow:hidden;white-space:nowrap}
+.pr-label-foot{display:flex;justify-content:space-between;margin-top:1px;
+  padding-top:1px;border-top:1px solid #000;font-size:7px;line-height:1.1;
+  font-weight:700;font-family:var(--font-mono)}
 
 .strip{display:flex;align-items:center;gap:13px;padding:14px var(--pad);
   border-radius:var(--r);margin-bottom:14px;background:var(--card);
@@ -778,7 +839,7 @@ select.field-input{appearance:none;
   line-height:1;font-variant-numeric:tabular-nums;direction:ltr}
 .cart-total-num .bal-cur{color:rgba(255,255,255,.5)}
 
-/* ═══ مربّعات المنتجات ═══
+/* ═══ مربّعات البضاعة ═══
    مربّعات كبيرة مش قايمة: الضغط بالإبهام على شاشة لمس. */
 .prod-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
 .prod-btn{display:flex;flex-direction:column;align-items:flex-start;gap:5px;
@@ -793,7 +854,7 @@ select.field-input{appearance:none;
 .prod-btn-qty{font-family:var(--font-mono);font-size:var(--fs-1);color:var(--ink-faint);
   direction:rtl}
 
-/* ═══ صفوف شاشة المنتجات ═══
+/* ═══ صفوف شاشة البضاعة ═══
    flex-wrap مش حساب عرض يدوي: لوحة التعديل بتنزل سطر كامل تحت
    لوحدها، والسطر بيتظبط مهما طال الاسم. */
 .prod-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;
@@ -827,6 +888,13 @@ select.field-input{appearance:none;
   letter-spacing:.04em;line-height:1.6;white-space:nowrap}
 .type-tag[data-type="device"]{color:var(--brand);background:var(--brand-wash)}
 .type-tag[data-type="accessory"]{color:var(--ink-soft);background:var(--surface)}
+/* ⚠ "بدون سريال" بلون الخصم مش بلون الجهاز، وده مقصود: دي مش
+   صفة للمنتج — دي **فجوة في البيانات** لسه محتاجة تتقفل.
+   لو خدت لون الجهاز، كانت هتبان حالة طبيعية والعين هتعدّي عليها. */
+.type-tag[data-type="nosn"]{color:var(--debit);background:var(--debit-wash)}
+/* الصفّ اللي الماسح وصل له — وميض ثانيتين وبيروح لوحده */
+.prod-row[data-found="true"]{outline:2px solid var(--brand);
+  outline-offset:2px;border-radius:var(--r-sm)}
 
 /* السريال بخط أحادي المسافة: الأرقام والحروف بتتصفّ فبتقارن أسرع */
 .serial{font-family:var(--font-mono);font-size:var(--fs-1);color:var(--ink-soft);
@@ -851,7 +919,7 @@ select.field-input{appearance:none;
 .price-log-who{color:var(--ink-faint);font-size:var(--fs-1)}
 
 /* ═══ السعر اليدوي في السلة ═══
-   بيظهر بس للمنتجات اللي مالهاش سعر مسجّل. */
+   بيظهر بس للبضاعة اللي مالهاش سعر مسجّل. */
 .cart-price{display:flex;align-items:center;gap:6px;margin-top:6px}
 .cart-price-input{width:104px;height:38px;padding:0 9px;font-family:var(--font-mono);
   font-size:var(--fs-input);direction:ltr;text-align:center;color:var(--ink);
