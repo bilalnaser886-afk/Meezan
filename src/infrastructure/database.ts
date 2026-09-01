@@ -3049,6 +3049,41 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
       }));
     },
 
+    /**
+     * دفتر المورّد.
+     *
+     * ⚠ كل سطر بيجاوب على أربع أسئلة: إمتى · على إيه · مين · بكام.
+     * والاسم بيتقرا من سجل المنتج مش من الملاحظة، عشان يفضل صح
+     * لو الجهاز اتغيّر اسمه بعدين.
+     */
+    async listMovements(supplierId, tenantId, limit = 200) {
+      const { data, error } = await db.rpc('fn_supplier_movements', {
+        p_supplier_id: supplierId,
+        // ⚠ المحل بيتبعت للدالة نفسها مش بيتفلتر هنا. لو فلترنا
+        // بعد الرد، الصفوف كانت هتسافر على الشبكة الأول —
+        // والتسريب بيحصل قبل الفلترة مش بعدها.
+        p_tenant_id: tenantId,
+        p_limit: limit,
+      });
+      if (error) raiseSupplierError(error, 'fn_supplier_movements');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        id: String(row.id),
+        direction: String(row.direction) === 'DEBT' ? ('DEBT' as const) : ('PAYMENT' as const),
+        isDiscount: Boolean(row.is_discount),
+        amountPiastres: Number(row.amount_piastres),
+        note: row.note ? String(row.note) : null,
+        occurredAt: String(row.occurred_at).slice(0, 10),
+        productId: row.product_id ? String(row.product_id) : null,
+        itemName: row.item_name ? String(row.item_name) : null,
+        entryDate: row.entry_date ? String(row.entry_date).slice(0, 10) : null,
+        serialNumber: row.serial_number ? String(row.serial_number) : null,
+        actorName: String(row.actor_name ?? '—'),
+        actorRole: String(row.actor_role ?? '—'),
+        treasuryName: row.treasury_name ? String(row.treasury_name) : null,
+      }));
+    },
+
     async create(data) {
       const { data: rows, error } = await db
         .from('suppliers')
