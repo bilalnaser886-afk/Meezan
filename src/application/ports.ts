@@ -1352,7 +1352,16 @@ export interface MaintenanceRepository {
   ): Promise<RepairTicket[]>;
   createTicket(data: Record<string, unknown>): Promise<{ id: string }>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
-  findTicket(id: string): Promise<{ id: string; tenantId: string; branchId: string } | null>;
+  /**
+   * ⚠ بترجّع الحالة كمان.
+   *
+   * السبب إن فتح مرتجع لازم يتأكد إن الزيارة السابقة **اتسلّمت**
+   * فعلاً. من غير الحالة، الفحص ده كان محتاج رحلة تانية للقاعدة
+   * أو كان بيتساب للشاشة — والشاشة لافتة مش قفل.
+   */
+  findTicket(id: string): Promise<
+    { id: string; tenantId: string; branchId: string; status: string } | null
+  >;
   /** ⚠ محصور — الحراسة جوّه دالة القاعدة كمان */
   unlock(
     ticketId: string,
