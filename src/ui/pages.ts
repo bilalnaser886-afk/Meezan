@@ -500,7 +500,7 @@ const PRINT_SHARED_JS = `
 
   // بيرسم الباركود كـ SVG. مفيش صور ولا طلبات شبكة.
   window.barcodeSvg = function (value, height) {
-    var text = String(value || '').toUpperCase().replace(/[^0-9A-Z\-. $/+%]/g, '');
+    var text = String(value || '').toUpperCase().replace(/[^0-9A-Z\\-. $/+%]/g, '');
     if (!text) return '';
 
     var NARROW = 2, WIDE = 5, GAP = 2;
@@ -852,8 +852,8 @@ const PRINT_SHARED_JS = `
         // ⚠ اللي ما عدّاش لُون بيتسأل عليه، ما بيتقبلش بالسكوت.
         if (!best.sure) {
           var ok = confirm(
-            'قريت: ' + best.value + '\n\n' +
-            'الرقم ده مش مطابق لفحص الآيمي — يعني غالبًا فيه خانة اتقريت غلط.\n\n' +
+            'قريت: ' + best.value + '\\n\\n' +
+            'الرقم ده مش مطابق لفحص الآيمي — يعني غالبًا فيه خانة اتقريت غلط.\\n\\n' +
             'أحطّه في الخانة وتصلّحه بإيدك؟'
           );
           if (!ok) {
