@@ -252,7 +252,7 @@ export interface CreateTenantInput {
   ownerUsername: string;
   ownerFullName: string;
   ownerPasswordHash: string;
-  /** فرع واحد على الأقل. كل فرع بياخد خزينة كاش تلقائيًا. */
+  /** فرع واحد على الأقل. كل فرع بياخد خزنة كاش تلقائيًا. */
   branches: TenantBranchInput[];
   /** ممكن تبقى فاضية — صاحب المحل يقدر يضيف بعدين */
   users: TenantUserInput[];
@@ -294,7 +294,7 @@ export interface TenantRepository {
    */
   listOverview(): Promise<TenantOverview[]>;
   /**
-   * بتنشئ المحل وفروعه وحساباته وأسباب الصرف وخزائنه — كله معًا.
+   * بتنشئ المحل وفروعه وحساباته وأسباب الصرف وخزنه — كله معًا.
    * يا الكل يتعمل يا مفيش حاجة تتعمل.
    */
   create(data: CreateTenantInput): Promise<{
@@ -419,7 +419,7 @@ export interface PlatformAnnouncementRow {
   targetCount: number;
 }
 
-// ═══════════════════ الخزينة ═══════════════════
+// ═══════════════════ الخزنة ═══════════════════
 
 export type MovementDirection = 'IN' | 'OUT';
 
@@ -439,10 +439,10 @@ export type MovementType =
   | 'REFUND';
 
 /**
- * الأنواع اللي المستخدم يقدر يسجّلها **بإيده** من شاشة الخزينة.
+ * الأنواع اللي المستخدم يقدر يسجّلها **بإيده** من شاشة الخزنة.
  *
  * ══ ليه البيع مستثنى بنوع منفصل؟ ══
- * حركة البيع مش بتتكتب من شاشة الخزينة أبدًا — بتتولّد جوّه دالة
+ * حركة البيع مش بتتكتب من شاشة الخزنة أبدًا — بتتولّد جوّه دالة
  * البيع الذرية مع الفاتورة وخصم المخزون في نفس اللحظة.
  *
  * لو سمحنا بتسجيلها يدويًا، هيبقى ممكن تدخل فلوس على إنها "بيع"
@@ -455,7 +455,7 @@ export type ManualMovementType = Exclude<MovementType, 'SALE' | 'REFUND'>;
 
 export type MovementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-/** أنواع الخزائن — نص + CHECK في القاعدة، مش enum */
+/** أنواع الخزن — نص + CHECK في القاعدة، مش enum */
 export type TreasuryType = 'CASH' | 'WALLET' | 'VISA' | 'INSTAPAY';
 
 export interface TreasuryBalance {
@@ -480,7 +480,7 @@ export interface TreasuryBalance {
   provider: string | null;
 }
 
-/** صف في الملخّص المالي — رصيد خزينة واحدة باسم فرعها */
+/** صف في الملخّص المالي — رصيد خزنة واحدة باسم فرعها */
 export interface TreasurySummaryRow extends TreasuryBalance {
   branchName: string | null;
   lastMovementAt: Date | null;
@@ -502,7 +502,7 @@ export interface UpdateTreasuryInput {
   isActive?: boolean | null;
 }
 
-// ─────────── التحويل بين الخزائن ───────────
+// ─────────── التحويل بين الخزن ───────────
 
 export interface TransferTreasuryInput {
   actorId: string;
@@ -552,7 +552,7 @@ export interface ExpenseReason {
   /**
    * سبب "شراء بضاعة" — أصل بيتحوّل لأصل، مش مصروف.
    *
-   * ⚠ قائمة الدخل بتستبعده، وشاشة الخزينة بتخفيه من قائمة أسباب
+   * ⚠ قائمة الدخل بتستبعده، وشاشة الخزنة بتخفيه من قائمة أسباب
    * المصروف: الشرا له مساره الخاص اللي بيكتب بيان (صنف · كمية ·
    * مورّد) جنب الحركة.
    *
@@ -627,18 +627,18 @@ export interface SalaryStatement {
 export interface TreasuryRepository {
   /** ⚠ المحل إلزامي. الفرع اختياري (null = كل فروع المحل). */
   listBalances(tenantId: string, branchId: string | null): Promise<TreasuryBalance[]>;
-  /** بيرجّع المحل والفرع، أو null لو الخزينة مش موجودة */
+  /** بيرجّع المحل والفرع، أو null لو الخزنة مش موجودة */
   findScope(treasuryId: string): Promise<{ tenantId: string; branchId: string | null } | null>;
 
   /**
-   * الملخّص المالي — صف لكل خزينة، باسم فرعها.
+   * الملخّص المالي — صف لكل خزنة، باسم فرعها.
    *
    * ⚠ دالة واحدة، والتطبيق بيجمّع منها المجموع الكلي ومجموع كل
    * فرع ومجموع كل نوع. ليه مش تلات دوال؟ عشان **يستحيل المجموع
    * يخالف الأجزاء**.
    *
    * لو كل رقم له استعلامه، هييجي يوم واحد يتعدّل ويفضل الباقي
-   * قديم — والشاشة تقول "الإجمالي ١٠٠٠" وتحته خزائن مجموعهم ٩٠٠.
+   * قديم — والشاشة تقول "الإجمالي ١٠٠٠" وتحته خزن مجموعهم ٩٠٠.
    */
   summary(tenantId: string, branchId: string | null): Promise<TreasurySummaryRow[]>;
 
@@ -647,7 +647,7 @@ export interface TreasuryRepository {
   update(input: UpdateTreasuryInput): Promise<{ treasuryId: string; balancePiastres: number }>;
 
   /**
-   * تحويل بين خزينتين — عملية ذرية.
+   * تحويل بين خزنتين — عملية ذرية.
    *
    * ⚠ حركتين بمعرّف مجموعة مشترك (`transfer_group_id`)، عشان
    * الطرفين يتعاملوا كوحدة واحدة في الدفتر.
@@ -689,12 +689,12 @@ export interface ExpenseReasonRepository {
    *
    * ⚠ و`is_advance` و`is_inventory` بيفضلوا false دايمًا:
    * الاتنين بيغيّروا معاملة الحركة في قائمة الدخل، ومش قرار
-   * يتاخد من خانة نص في شاشة الخزينة.
+   * يتاخد من خانة نص في شاشة الخزنة.
    */
   create(input: { tenantId: string; name: string }): Promise<{ id: string }>;
 }
 
-// ═══════════════════ المنتجات ═══════════════════
+// ═══════════════════ البضاعة ═══════════════════
 
 /**
  * ⚠ لاحظ إن `costPiastres` **اختياري** في النوع ده، وده مقصود
@@ -731,6 +731,11 @@ export interface ProductRecord {
   productType: ProductType;
   /** للأجهزة فقط. الإكسسوار بيفضل null. */
   serialNumber: string | null;
+  /**
+   * ⚠ "مش متاح سريال" — قرار صريح مش خانة فاضية.
+   * الإكسسوار بيفضل false دايمًا.
+   */
+  serialUnavailable: boolean;
   /** اسم التاجر أو المحل اللي اتشترى منه. نص حر. */
   source: string | null;
   /** YYYY-MM-DD — نص مش Date، عشان ما يتزحلقش يوم بالتوقيت */
@@ -794,7 +799,21 @@ export interface CreateProductInput {
   name: string;
   productType: ProductType;
   serialNumber: string | null;
+  serialUnavailable: boolean;
   source: string | null;
+  /** مورّد مسجّل. null = مصدر غير محدّد أو نص قديم في `source` */
+  supplierId: string | null;
+  /**
+   * تسوية التكلفة وقت الإضافة.
+   *
+   * ⚠ 'PAID' بتطلّع فلوس من الخزنة فعلاً، و'CREDIT' بتزوّد
+   * دين المورّد. الاتنين بيتكتبوا مع المنتج في **معاملة واحدة**
+   * جوّه قاعدة البيانات — لو اتفصلوا، بيبقى عندك جهاز بلا دين
+   * أو دين بلا جهاز، والاتنين بيبانوا كأنهم نجاح.
+   */
+  settle?: 'NONE' | 'PAID' | 'CREDIT';
+  /** مطلوبة مع 'PAID' بس */
+  treasuryId?: string | null;
   /** null = سيب الافتراضي (تاريخ النهاردة بتوقيت القاهرة) */
   entryDate: string | null;
   pricePiastres: number | null;
@@ -813,7 +832,7 @@ export interface CreateProductInput {
   /**
    * درج المنتج. `null` = غير مصنّف.
    *
-   * ⚠ فاضي مسموح عن قصد: المنتجات اللي كانت موجودة قبل الأدراج
+   * ⚠ فاضي مسموح عن قصد: البضاعة اللي كانت موجودة قبل الأدراج
    * مالهاش درج، وتخمين مكانها أوحش من تركه فاضي — الفاضي بيبان
    * في الشاشة وبتتصرّف، والتخمين الغلط بيتصدّق.
    */
@@ -830,6 +849,7 @@ export interface UpdateProductInput {
   isActive?: boolean;
   source?: string | null;
   serialNumber?: string | null;
+  serialUnavailable?: boolean;
   entryDate?: string;
   /** محكوم بصلاحية `inventory.reorder_point` — صاحب المحل وحده */
   reorderPoint?: number;
@@ -871,19 +891,19 @@ export interface PriceChange extends PriceChangeRecord {
 export interface ProductListOptions {
   /** بيتحدّد من صلاحية `profit.view_real` بس. مفيش مصدر تاني. */
   includeCost: boolean;
-  /** المنتجات المفعّلة بس — لشاشة الكاشير */
+  /** البضاعة المفعّلة بس — لشاشة الكاشير */
   activeOnly?: boolean;
 }
 
 /**
- * درج منتجات.
+ * درج بضاعة.
  *
  * ══ شجرة على مستويين ══
  *   `parentId` فاضي  →  قسم رئيسي   (إكسسوار · مكملات)
  *   `parentId` موجود →  درج جوّه قسم (جرابات · شواحن)
  *
  * ⚠ `productCount` **محسوب مش مخزّن** — بيتعدّ في نفس استعلام
- * القراءة. نفس مبدأ رصيد الخزينة والتنبيهات: الرقم المخزّن
+ * القراءة. نفس مبدأ رصيد الخزنة والتنبيهات: الرقم المخزّن
  * بيختلف عن مصدره يوم ما، وساعتها الدرج بيقول حاجة والمخزون
  * بيقول حاجة تانية.
  */
@@ -898,7 +918,7 @@ export interface ProductCategory {
 }
 
 export interface CategoryRepository {
-  /** الشجرة كلها + عدد منتجات كل درج. `branchId` فاضي = كل الفروع. */
+  /** الشجرة كلها + عدد بضاعة كل درج. `branchId` فاضي = كل الفروع. */
   list(tenantId: string, branchId: string | null): Promise<ProductCategory[]>;
   create(input: {
     tenantId: string;
@@ -906,7 +926,7 @@ export interface CategoryRepository {
     name: string;
   }): Promise<{ id: string }>;
   rename(id: string, tenantId: string, name: string): Promise<void>;
-  /** حذف ناعم. الحارس (مزروع؟ فيه منتجات؟) في حالة الاستخدام. */
+  /** حذف ناعم. الحارس (مزروع؟ فيه بضاعة؟) في حالة الاستخدام. */
   softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
   /** للحراسة قبل التعديل والحذف */
   findById(id: string, tenantId: string): Promise<ProductCategory | null>;
@@ -923,11 +943,25 @@ export interface CategoryRepository {
  * ⚠ ونفس غلطة `products.source` اللي اتصلّحت بسجل موردين في
  * ملف ٢٢. ده نفس العلاج.
  */
+export type ModelFamily = 'IPHONE' | 'ANDROID' | null;
+
 export interface DeviceModel {
   id: string;
   name: string;
   /** ⚠ عمود مستقل عن الاسم عشان "كل الآيفون" تبقى سؤال ممكن */
   brand: string | null;
+  /**
+   * عيلة الجهاز — 'IPHONE' أو 'ANDROID'، و null = غير مصنّف.
+   *
+   * ⚠ دي **مش** الماركة. الماركة نص حر بيوصف المصنّع
+   * (سامسونج · شاومي · ريلمي)، والعيلة قيمتين بس بيتقسّم
+   * عليهم الدرجين في الشاشة.
+   *
+   * ⚠ والموديل بيفضل صف واحد مهما كانت عيلته. الإكسسوار
+   * بيشاور على نفس الصف اللي الجهاز بيشاور عليه — ولو
+   * فصلناهم، السؤال "وريني كل حاجة للـ12 برو ماكس" بيموت.
+   */
+  family: ModelFamily;
   sortOrder: number;
   /** أجهزة متاحة للبيع — **بالكمية** مش بعدد الصفوف */
   deviceCount: number;
@@ -937,8 +971,17 @@ export interface DeviceModel {
 
 export interface ModelRepository {
   list(tenantId: string, branchId: string | null): Promise<DeviceModel[]>;
-  create(input: { tenantId: string; name: string; brand: string | null }): Promise<{ id: string }>;
-  update(id: string, tenantId: string, patch: { name?: string; brand?: string | null }): Promise<void>;
+  create(input: {
+    tenantId: string;
+    name: string;
+    brand: string | null;
+    family: ModelFamily;
+  }): Promise<{ id: string }>;
+  update(
+    id: string,
+    tenantId: string,
+    patch: { name?: string; brand?: string | null; family?: ModelFamily },
+  ): Promise<void>;
   softDelete(id: string, tenantId: string, actorId: string, at: Date): Promise<void>;
   findById(id: string, tenantId: string): Promise<DeviceModel | null>;
 }
@@ -992,7 +1035,7 @@ export interface SaleLineInput {
   productId: string;
   quantity: number;
   /**
-   * السعر اليدوي — للمنتجات اللي مالهاش سعر مسجّل بس.
+   * السعر اليدوي — للبضاعة اللي مالهاش سعر مسجّل بس.
    *
    * ⚠ لو المنتج له سعر، دالة قاعدة البيانات بتتجاهل القيمة دي
    * تمامًا وبتستخدم سعر المنتج. من غير القاعدة دي، أي حد يقدر
@@ -1065,7 +1108,7 @@ export interface SaleItemLine {
   productName: string;
   quantity: number;
   unitPricePiastres: number;
-  /** محجوب عن غير `profit.view_real` — نفس قاعدة المنتجات */
+  /** محجوب عن غير `profit.view_real` — نفس قاعدة البضاعة */
   unitCostPiastres?: number;
   lineTotalPiastres: number;
 }
@@ -1309,7 +1352,16 @@ export interface MaintenanceRepository {
   ): Promise<RepairTicket[]>;
   createTicket(data: Record<string, unknown>): Promise<{ id: string }>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
-  findTicket(id: string): Promise<{ id: string; tenantId: string; branchId: string } | null>;
+  /**
+   * ⚠ بترجّع الحالة كمان.
+   *
+   * السبب إن فتح مرتجع لازم يتأكد إن الزيارة السابقة **اتسلّمت**
+   * فعلاً. من غير الحالة، الفحص ده كان محتاج رحلة تانية للقاعدة
+   * أو كان بيتساب للشاشة — والشاشة لافتة مش قفل.
+   */
+  findTicket(id: string): Promise<
+    { id: string; tenantId: string; branchId: string; status: string } | null
+  >;
   /** ⚠ محصور — الحراسة جوّه دالة القاعدة كمان */
   unlock(
     ticketId: string,
@@ -1319,6 +1371,30 @@ export interface MaintenanceRepository {
 }
 
 // ─────────── الموردين والديون ───────────
+
+/**
+ * رصيد المورّد عند فرع واحد.
+ *
+ * ══ ⚠ ليه التوزيع أصلاً؟ ══
+ * البضاعة بتدخل فرع معيّن، والسداد بيخرج من خزنة فرع معيّن.
+ * البُعد ده موجود على الأرض سواء سجّلناه أو لأ.
+ *
+ * ولما ما نسجّلوش: مدير الفرع الأول بيسدّد دين بضاعة دخلت
+ * الفرع التاني، والدفتر بيقول "تمام" — وخزنة فرعه ناقصة فلوس
+ * مش بتاعته ومفيش رقم بيقول كده.
+ *
+ * ⚠ و`branchId` فاضي معناه **غير موزّع** مش "كل الفروع": دي
+ * حركات قديمة ما اتحدّدش فرعها، وبتتعرض في مجموعة مستقلة.
+ */
+export interface SupplierBranchBalance {
+  branchId: string | null;
+  branchName: string | null;
+  debtPiastres: number;
+  paidPiastres: number;
+  balancePiastres: number;
+  movementCount: number;
+  lastMovement: string | null;
+}
 
 export interface SupplierBalance {
   supplierId: string;
@@ -1332,10 +1408,74 @@ export interface SupplierBalance {
   /** الدين = الزيادات ناقص السداد. ناتج جمع مش رقم مخزّن. */
   balancePiastres: number;
   lastMovement: string | null;
+  /**
+   * التوزيع على الفروع.
+   *
+   * ⚠ مجموع `balancePiastres` بتوعهم = `balancePiastres` فوق
+   * بالظبط. الاتنين بيتعرضوا مع بعض عن قصد: الخوف الأصلي في
+   * ملف ٢٢ كان من ضياع الإجمالي، والحل إنك توري الاتنين مش
+   * إنك تختار واحد.
+   */
+  branches: SupplierBranchBalance[];
+}
+
+/**
+ * سطر واحد في دفتر المورّد.
+ *
+ * ══ ⚠ اسم الجهاز جاي من السجل مش من النص ══
+ * `itemName` بيتقرا من `products.name` عبر الربط، والملاحظة
+ * احتياطي للحركات اليدوية والصفوف القديمة.
+ *
+ * الفرق مش شكلي: النص الحر بيتجمّد وقت الكتابة، والسجل بيفضل
+ * صح لو الجهاز اتغيّر اسمه — ودي نفس غلطة `products.source`
+ * اللي المشروع اتعلّمها مرتين.
+ */
+export interface SupplierMovement {
+  id: string;
+  direction: 'DEBT' | 'PAYMENT';
+  /** سداد بلا فلوس — بيقلّل الدين والدرج ما بيتغيّرش */
+  isDiscount: boolean;
+  amountPiastres: number;
+  note: string | null;
+  /** تاريخ العملية — للدين ده تاريخ دخول البضاعة */
+  occurredAt: string;
+  branchId: string | null;
+  /** اسم الفرع، أو فاضي لو الحركة غير موزّعة */
+  branchName: string | null;
+  productId: string | null;
+  itemName: string | null;
+  /** تاريخ دخول الجهاز المخزن، لو الحركة مربوطة بجهاز */
+  entryDate: string | null;
+  serialNumber: string | null;
+  actorName: string;
+  /** مفتاح الدور خام — الواجهة هي اللي بتترجمه لكلمة عربية */
+  actorRole: string;
+  /** الخزنة اللي السداد خرج منها. فاضية للدين والخصم. */
+  treasuryName: string | null;
 }
 
 export interface SupplierRepository {
-  listBalances(tenantId: string): Promise<SupplierBalance[]>;
+  /**
+   * ⚠ `branchId` هنا **فلتر نطاق** مش اختيار عرض.
+   *
+   * صاحب المحل بيبعت null فبيشوف كل الفروع موزّعة. مدير الفرع
+   * بيبعت فرعه، وساعتها الأرقام الكلية بتتحسب من فرعه وحده —
+   * مش إجمالي المحل مع تفصيل جزئي، لأن ده كان هيوريه رقم أكبر
+   * من اللي هو مسؤول عنه.
+   */
+  listBalances(tenantId: string, branchId: string | null): Promise<SupplierBalance[]>;
+  /**
+   * دفتر حركات مورّد واحد.
+   *
+   * ⚠ المحل معامل في الاستعلام مش فلترة بعدية — دفتر مورّد محل
+   * تاني بيرجع فاضي، مش بيترجع ويتفلتر.
+   */
+  listMovements(
+    supplierId: string,
+    tenantId: string,
+    branchId: string | null,
+    limit?: number,
+  ): Promise<SupplierMovement[]>;
   create(data: {
     tenantId: string;
     name: string;
@@ -1348,19 +1488,46 @@ export interface SupplierRepository {
     data: { name?: string; phone?: string | null; notes?: string | null; isActive?: boolean },
   ): Promise<void>;
   findById(id: string): Promise<{ id: string; tenantId: string; name: string } | null>;
-  /** دين — ما بيمسّش الخزينة */
+  /**
+   * خصم — بيقلّل الدين **بلا أي حركة فلوس**.
+   *
+   * ⚠ الفرق عن السداد إن الدرج ما بيتغيّرش. تسجيله كسداد كان
+   * هينقّص الخزنة وهي ما نقصتش، ورصيدك على الورق يبقى أقل
+   * من اللي في الدرج فعلاً.
+   *
+   * ⚠ والملاحظة إلزامية: رقم بينقص بلا أثر مادي محتاج سبب
+   * مكتوب، وإلا مفيش طريقة تفرّق بين خصم وغلطة بعد شهرين.
+   */
+  recordDiscount(input: {
+    supplierId: string;
+    actorId: string;
+    amountPiastres: number;
+    note: string;
+    date: string | null;
+    /**
+     * ⚠ بيتجاهل تمامًا لغير صاحب المحل.
+     *
+     * دالة قاعدة البيانات بتاخد الفرع من **جلسة المنفّذ** لو
+     * كان ليه فرع، وما بتبصّش على القيمة دي أصلاً. فمدير الفرع
+     * مالوش أي طريقة يعلّم خصم على فرع تاني حتى لو عدّل الطلب.
+     */
+    branchId: string | null;
+  }): Promise<{ movementId: string; newBalance: number }>;
+  /** دين — ما بيمسّش الخزنة */
   recordDebt(input: {
     supplierId: string;
     actorId: string;
     amountPiastres: number;
     note: string | null;
     date: string | null;
+    /** ⚠ بيتجاهل لغير صاحب المحل — الفرع من الجلسة جوّه القاعدة */
+    branchId: string | null;
   }): Promise<{ movementId: string; newBalance: number }>;
   /**
-   * سداد — **بيمسّ الخزينة ذريًا**.
+   * سداد — **بيمسّ الخزنة ذريًا**.
    *
    * الفلوس بتطلع من الدرج فعلاً. لو سجّلناه في دفتر الموردين
-   * بس، رصيد الخزينة يبقى أكبر من الحقيقة بمقدار كل ما دفعته.
+   * بس، رصيد الخزنة يبقى أكبر من الحقيقة بمقدار كل ما دفعته.
    */
   recordPayment(input: {
     supplierId: string;
@@ -1430,7 +1597,7 @@ export interface TransferRepository {
  * السبب: كل التنبيهات دي بتوصف حالة قائمة ("باقي ٢")، مش حدث
  * حصل. ولو خزّنّاها، هتفضل معلّقة بعد ما المشكلة تتحل.
  *
- * نفس مبدأ رصيد الخزينة: ناتج جمع، مش رقم مخزّن.
+ * نفس مبدأ رصيد الخزنة: ناتج جمع، مش رقم مخزّن.
  */
 export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE';
 export type AlertSeverity = 'HIGH' | 'MEDIUM';
@@ -1474,7 +1641,7 @@ export interface IncomeStatement {
 
   expensesPiastres: number;
   /**
-   * عمولات تحويل الخزائن — **جوّه الحساب**.
+   * عمولات تحويل الخزن — **جوّه الحساب**.
    *
    * ⚠ ودي عكس السُلفة تحتها بالظبط. العمولة فلوس **خرجت
    * ومارجعتش** — الوكيل خدها. فهي تكلفة حقيقية بتقلّل الربح.
@@ -1529,7 +1696,7 @@ export interface ReturnRepository {
    * الاسترجاع في عملية واحدة لا تتجزّأ.
    *
    * الأربع خطوات (فحص المتبقي · رفّ المراجعة · سجل المرتجع ·
-   * حركة الخزينة) بتحصل جوّه دالة قاعدة البيانات: يا كلها يا
+   * حركة الخزنة) بتحصل جوّه دالة قاعدة البيانات: يا كلها يا
    * ولا واحدة. مفيش حالة "الفلوس طلعت والبضاعة ما رجعتش".
    */
   create(input: CreateReturnInput): Promise<CreateReturnResult>;
@@ -1549,7 +1716,7 @@ export interface SaleRepository {
    * إنشاء بيع كامل في عملية واحدة لا تتجزّأ.
    *
    * التنفيذ بينادي دالة في قاعدة البيانات بتعمل الأربع خطوات
-   * (فحص الكمية، الخصم، الفاتورة، حركة الخزينة) مع بعض:
+   * (فحص الكمية، الخصم، الفاتورة، حركة الخزنة) مع بعض:
    * يا كلها تنجح يا مفيش حاجة فيها تحصل.
    */
   create(input: CreateSaleInput): Promise<CreateSaleResult>;
@@ -1563,6 +1730,89 @@ export interface SaleRepository {
    * التسجيل المتأخر بتضيع.
    */
   updateExitDate(id: string, exitDate: string): Promise<void>;
+  /**
+   * ملاحظة الفاتورة — بتتكتب بعد الإنشاء.
+   *
+   * ⚠ منفصلة عن `create` عن قصد. الملاحظة نص وبس، ودخولها
+   * المعاملة الذرّية كان معناه تعديل أخطر دالة في النظام
+   * عشان سطر مالوش أي أثر حسابي.
+   */
+  setNote(id: string, actorId: string, note: string): Promise<void>;
+}
+
+// ═══════════════════ حساب المحلات ═══════════════════
+//
+// ⚠ المرآة المقلوبة للموردين:
+//     الموردين  →  دين **عليك**   (بضاعة دخلت بالأجل)
+//     المحلات   →  دين **ليك**    (بضاعة خرجت بالأجل)
+//
+// ⚠ ومنفصل عن `CustomerRecord` عن قصد. العميل بيشتري قطعة
+// ويمشي؛ المحل جهة ليها حساب جاري بيفضل مفتوح لشهور. دمجهم
+// كان هيخلّي شاشة العملاء فيها أرصدة لناس مالهمش أرصدة.
+
+export interface ShopBalance {
+  shopId: string;
+  name: string;
+  contactName: string | null;
+  phone: string | null;
+  /** إجمالي اللي خرج بالأجل */
+  totalOut: number;
+  totalPaid: number;
+  /** موجب = المحل مديون لك */
+  balancePiastres: number;
+  lastMovement: string | null;
+}
+
+export interface ConsignLine {
+  productId: string;
+  quantity: number;
+  /** سعر الوحدة اللي اتفقت عليه مع المحل — ممكن يختلف عن سعر البيع */
+  unitPricePiastres: number;
+}
+
+export interface ShopRepository {
+  listBalances(tenantId: string): Promise<ShopBalance[]>;
+  create(data: {
+    tenantId: string;
+    branchId: string | null;
+    name: string;
+    contactName: string | null;
+    phone: string | null;
+    notes: string | null;
+    createdById: string;
+  }): Promise<{ id: string }>;
+  update(
+    id: string,
+    data: { name?: string; contactName?: string | null; phone?: string | null },
+  ): Promise<void>;
+  findById(id: string): Promise<{ id: string; tenantId: string; name: string } | null>;
+  /**
+   * خروج بضاعة أجل — **عملية ذرية**.
+   *
+   * ⚠ تلات كتابات مع بعض: الكمية بتنقص، والدين بيتسجّل،
+   * والبنود بتتكتب. لو اتفصلوا، يا بضاعة نقصت ومحدش مديون
+   * بيها، يا دين على محل وبضاعة لسه في المخزون.
+   */
+  consign(input: {
+    shopId: string;
+    actorId: string;
+    items: ConsignLine[];
+    note: string | null;
+    date: string | null;
+  }): Promise<{ movementId: string; totalPiastres: number; newBalance: number }>;
+  /**
+   * سداد المحل — **بيمسّ الخزنة ذريًا**.
+   *
+   * ⚠ عكس سداد المورّد: الفلوس **بتدخل** الدرج مش بتطلع.
+   */
+  recordPayment(input: {
+    shopId: string;
+    actorId: string;
+    treasuryId: string;
+    amountPiastres: number;
+    note: string | null;
+    date: string | null;
+  }): Promise<{ movementId: string; treasuryMovementId: string; newBalance: number }>;
 }
 
 // ═══════════════════ العملاء ═══════════════════
@@ -1762,7 +2012,7 @@ export interface PurchaseFilter {
 
 export interface PurchaseRepository {
   /**
-   * تسجيل شراء — حركة الخزينة والبيان مع بعض في معاملة واحدة.
+   * تسجيل شراء — حركة الخزنة والبيان مع بعض في معاملة واحدة.
    *
    * ⚠ الاعتماد بيتحدّد **جوّه القاعدة** من صلاحيات المنفّذ، مش
    * من الطلب. لو التطبيق هو اللي بيقول "دي معتمدة"، أي طلب
