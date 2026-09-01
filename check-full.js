@@ -1,17 +1,5 @@
 const fs = require('fs'), vm = require('vm');
 
-/**
- * ⚠ الخطوة دي هي اللي كانت ناقصة، وفوّتت غلطة كسرت الموقع.
- *
- * الملف قالب نصي في TypeScript. يعني `\n` المكتوبة في المصدر
- * بتتحوّل **سطر جديد حقيقي** قبل ما توصل للمتصفح.
- *
- * الفاحص كان بيقرا المصدر الخام، فكان شايف `\n` كحرفين سليمين
- * جوّه نص — وبيقول "سليم". والمتصفح كان بيشوف سطر جديد جوّه نص
- * أحادي، يعني نص مفتوح، يعني SyntaxError.
- *
- * فلازم نعالج الهروب زي ما TypeScript بتعالجه، وبعدين نفحص.
- */
 function unescapeTemplate(s) {
   return s.replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (m, g) => {
     switch (g[0]) {
@@ -24,7 +12,7 @@ function unescapeTemplate(s) {
       case '0': return g.length === 1 ? '\0' : m;
       case 'u': case 'x':
         try { return JSON.parse('"' + m + '"'); } catch { return m; }
-      default: return g;   // \\ · \` · \' · \" · \$
+      default: return g;
     }
   });
 }
@@ -45,6 +33,26 @@ const src = fs.readFileSync(process.argv[2], 'utf8');
 const names = [...src.matchAll(/^function (\w*Script)\(/gm)].map(m => m[1]);
 let bad = 0;
 
+// ══ ⚠ الثوابت المشتركة — النقطة العميا اللي كلّفتنا جلسة ══
+//
+// الفحص النحوي كان بيغطّي دوال `*Script` بس. والماسح بالكاميرا
+// وسكربت الطباعة والتنبيهات كلهم في ثوابت `_JS` مشتركة — يعني
+// **بره الفحص تمامًا**.
+//
+// والنتيجة: نص أحادي اتكسر جوّه PRINT_SHARED_JS، فالسكربت كله
+// وقع و`window.scanBarcode` ما اتعرّفتش. الشاشة قالت "الماسح
+// غير متاح على هذا المتصفح" — رسالة بتشاور على المتصفح والغلط
+// في سطر عندنا.
+//
+// ⚠ والفاحص كان بيقول أخضر، لأنه ما بصّش على المكان أصلاً.
+for (const m of src.matchAll(/^const (\w+_JS) = `/gm)) {
+  const from = m.index + m[0].length;
+  const to = src.indexOf('\n`;', from);
+  if (to < 0) { console.log('WARN  ' + m[1]); continue; }
+  try { new vm.Script(unescapeTemplate(strip(src.slice(from, to)))); }
+  catch (err) { bad++; console.log('FAIL نحوي ' + m[1] + ': ' + err.message); }
+}
+
 for (const n of names) {
   const i = src.indexOf('function ' + n + '(');
   const s = src.indexOf('return `', i);
@@ -54,13 +62,6 @@ for (const n of names) {
   catch (err) { bad++; console.log('FAIL نحوي ' + n + ': ' + err.message); }
 }
 
-// ── backtick داخل تعليقات القوالب ──
-//
-// ⚠ الفحص ده كان بيغطّي **السكربتات بس**، وفات عليه backtick
-// في تعليق HTML جوّه قالب صفحة — وده كسر البناء كله.
-//
-// دلوقتي بيفحص أي تعليق `<!-- ... -->` في الملف كمان، لأن
-// قوالب الصفحات هي كمان `html` templates بتقفل على backtick.
 let ticks = 0;
 {
   const ranges = [];
@@ -88,9 +89,6 @@ let ticks = 0;
     }
   }
 
-  // ⚠ وتعليقات HTML في أي مكان في الملف.
-  // قوالب الصفحات مالهاش حدود سهلة التحديد زي السكربتات، فبنفحص
-  // كل تعليق `<!-- -->` — والتعليق ده ما بيتكتبش غير جوّه قالب.
   const htmlComments = src.matchAll(/<!--[\s\S]*?-->/g);
   for (const m of htmlComments) {
     if (!m[0].includes('`')) continue;
@@ -100,7 +98,6 @@ let ticks = 0;
   }
 }
 
-// ── فحص النطاق ──
 const fnRe = /^function (\w*Script)\(([^)]*)\)/gms;
 let scope = 0, m;
 while ((m = fnRe.exec(src))) {
@@ -117,7 +114,6 @@ while ((m = fnRe.exec(src))) {
   if (badRefs.length) { scope++; console.log('FAIL نطاق — ' + m[1] + ': ' + badRefs.join(', ')); }
 }
 
-// ── دوال منادَاة وهي مش معرّفة في نفس السكربت ──
 const COMMON = new Set(['fetch','parseInt','parseFloat','setTimeout','setInterval',
   'clearTimeout','clearInterval','confirm','alert','prompt','isFinite','String',
   'Number','Boolean','Array','Object','JSON','Math','Date','Promise','Event',
@@ -149,12 +145,6 @@ for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
   const defined = new Set([
     ...[...body.matchAll(/function (\w+)\s*\(/g)].map(x => x[1]),
     ...[...body.matchAll(/var (\w+)\s*=/g)].map(x => x[1]),
-    // ⚠ ومعاملات الدوال كمان.
-    //
-    // من غير السطرين دول، أي دالة بتاخد دالة تانية كمعامل
-    // (`function wireRow(el, attr, onPick)`) بتطلّع إيجابية
-    // كاذبة على `onPick`. والإيجابية الكاذبة أخطر من إنها
-    // مزعجة: بتخلّي الواحد يبطّل يقرا نتيجة الفاحص.
     ...[...body.matchAll(/function\s*\w*\s*\(([^)]*)\)/g)]
       .flatMap(x => x[1].split(',').map(a => a.trim()))
       .filter(Boolean),
@@ -172,20 +162,11 @@ for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
   }
 }
 
-// ── معرّفات مستخدمة في السكربت ومش موجودة في أي قالب ──
-//
-// ⚠ الفحص ده اتضاف بعد عطل حقيقي: غيّرت `id` في القالب من
-// `storage-row` لـ`row-storage` ونسيت النداء في السكربت.
-//
-// النتيجة كانت أوحش من خطأ: الزرار بيفتح صفّ **فاضي**. مفيش
-// استثناء، ومفيش رسالة، والفاحص النحوي أعمى تمامًا — الكتابة
-// سليمة والاسم بس مش موجود.
 let ids = 0;
 {
   const declared = new Set(
     [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
   );
-  // المعرّفات اللي بتتبني وقت التشغيل بـ innerHTML مش في المصدر
   const runtimeBuilt = new Set(
     [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
   );
@@ -198,10 +179,6 @@ let ids = 0;
     const body = src.slice(st + 8, to);
 
     const used = new Set(
-      // ⚠ المعرّف **الكامل** بس — القوس بيقفل بعد النص مباشرةً.
-      // بدون ده، `getElementById('edit-' + id)` بتتقرا كمعرّف
-      // اسمه "edit-" وبتطلّع إيجابية كاذبة. وقعت فيها أول مرة
-      // كتبت الفحص ده: ٥٣ إيجابية كاذبة دفعة واحدة.
       [...body.matchAll(/getElementById\(\s*'([A-Za-z][\w-]*)'\s*\)/g)].map((x) => x[1]),
     );
     for (const id of used) {
@@ -212,6 +189,61 @@ let ids = 0;
   }
 }
 
-console.log((bad || scope || ticks || helpers || ids)
-  ? '\n🔴 ' + (bad + scope + ticks + helpers + ids) + ' مشكلة'
+// ── ⚠ شرطة مائلة مفردة جوّه قالب سكربت ──
+//
+// ⚠ الفحص ده اتضاف بعد عطل ضيّع ساعة.
+//
+// `\d` في المصدر بتوصل للمتصفح كـ`d`، لأن القالب النصي بياكل
+// الشرطة. فـ`/^(\d+)$/` بتبقى `/^(d+)$/` — تعبير نمطي **سليم
+// نحويًا** بيدوّر على حرف d بدل رقم.
+//
+// ⚠ وعشان كده الفحص النحوي فوق أعمى عنه تمامًا: هو بيفك الهروب
+// الأول (زي المتصفح) وبعدين بيحلّل، والناتج بيتحلّل سليم.
+// الغلط في **المعنى** مش في الكتابة.
+//
+// الأعراض كانت: الكاشير بيكتب 4000 والإجمالي بيفضل صفر، بلا أي
+// رسالة خطأ. ونفس الغلطة كانت في فحص الآيمي وفحص التاريخ.
+//
+// القاعدة: أي `\` لازم توصل للمتصفح تتكتب `\\` في المصدر.
+// و`\u0660` استثناء — القالب بيحوّلها للحرف نفسه وده مقبول.
+let slashes = 0;
+
+// ⚠ القايمة بتضم الثوابت المشتركة كمان. الغلطة اللي عدّت كانت
+// في ثابت، والفحص كان بيبصّ على الدوال بس.
+const SPANS = [];
+for (const m of src.matchAll(/^function (\w*Script)\(/gm)) {
+  const st = src.indexOf('return `', m.index);
+  if (st < 0) continue;
+  const to = src.indexOf('\n`;', st);
+  if (to > st) SPANS.push([m[1], st + 8, to]);
+}
+for (const m of src.matchAll(/^const (\w+_JS) = `/gm)) {
+  const st = m.index + m[0].length;
+  const to = src.indexOf('\n`;', st);
+  if (to > st) SPANS.push([m[1], st, to]);
+}
+
+for (const [label, spanFrom, spanTo] of SPANS) {
+  const raw = src.slice(spanFrom, spanTo);
+  const base = src.slice(0, spanFrom).split('\n').length;
+
+  raw.split('\n').forEach((line, i) => {
+    const t = line.trim();
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return;
+
+    // شرطة مفردة: مش مسبوقة ولا متبوعة بشرطة تانية
+    const singles = [...line.matchAll(/(?<!\\)\\(?!\\)(.)/g)];
+    for (const s1 of singles) {
+      // \u و \x بيتحوّلوا لحروف صحيحة، وده مقبول
+      if (s1[1] === 'u' || s1[1] === 'x') continue;
+      slashes++;
+      console.log('FAIL شرطة مفردة (هتتاكل قبل المتصفح) — '
+        + label + ' السطر ' + (base + i) + ': ' + t.slice(0, 70));
+      break;
+    }
+  });
+}
+
+console.log((bad || scope || ticks || helpers || ids || slashes)
+  ? '\n🔴 ' + (bad + scope + ticks + helpers + ids + slashes) + ' مشكلة'
   : '\n✅ كل السكربتات سليمة نحويًا ونطاقيًا');
