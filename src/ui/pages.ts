@@ -13978,6 +13978,17 @@ ${MENU_JS}
     if (!box) return;
 
     box.hidden = false;
+
+    // ══ ⚠ الحاوية هي اللي كانت بتصفّ السطور جنب بعض ══
+    //
+    // الصف نفسه كان مظبوط، لكن حاوية exit-edit مرنة — فكل
+    // سطر بقى عمود جنب اللي قبله على الشاشة العريضة، وأربع
+    // حركات بانت في سطر واحد.
+    //
+    // ⚠ الدرس: لما عنصر يبان في مكان غلط، بصّ على **الحاوية**
+    // قبل ما تصلّح العنصر. أنا صلّحت العنصر المرة اللي فاتت
+    // والمنظر ما اتغيّرش.
+    box.style.display = 'block';
     box.textContent = 'جارٍ التحميل…';
 
     var res = await fetch('/api/maintenance/accounts/' + encodeURIComponent(shopId),
@@ -14002,6 +14013,12 @@ ${MENU_JS}
     // ⚠ السداد الواحد بيرجع من القاعدة سطرين (مخزون + خدمة).
     // بنجمّعهم برقم المجموعة عشان الشاشة توري دفعة واحدة —
     // الموظّف دفع مرة، والتقسيم تفصيلة محاسبية مش واقعة تانية.
+    // ⚠ نفس الصفوف اللي بتتعرض هي اللي بتتصدّر. لو بنينا
+    // للتصدير قايمة تانية، الملف والشاشة كانوا هيختلفوا يوم
+    // ما — والاختلاف ده بيتكتشف عند العميل مش عندنا.
+    var out = [];
+    var totalDebt = 0, totalPaid = 0;
+
     var seen = {};
     for (var i = 0; i < list.length; i++) {
       var m = list[i];
@@ -14063,7 +14080,67 @@ ${MENU_JS}
 
       r.appendChild(nm); r.appendChild(sb2);
       box.appendChild(r);
+
+      if (m.direction === 'PAYMENT') totalPaid += amount; else totalDebt += amount;
+
+      out.push([
+        m.occurredAt,
+        m.note || '—',
+        m.direction === 'PAYMENT' ? 'سداد' : (LEDGER_KIND[m.sourceKind] || 'دين'),
+        (m.direction === 'DEBT' && m.isRevisit) ? ('زيارة ' + m.visitNumber) : '—',
+        sign + money(amount)
+      ]);
     }
+
+    // ══ التصدير ══
+    //
+    // ⚠ بنستخدم exportXls و exportPdf الموجودين
+    // في السكربت المشترك، مش بنكتب مصدّر جديد.
+    //
+    // نسخة تانية معناها إن شكل ملف الصيانة هيختلف عن شكل ملف
+    // البضاعة، وأي تحسين في واحد بيسيب التاني وراه.
+    //
+    // ⚠ والإكسيل ده HTML بامتداد .xls — إكسل بيفتحه ملوّن.
+    // بعض النسخ القديمة بتقول "الامتداد لا يطابق المحتوى"،
+    // بتدوس فتح وبيشتغل. التفصيلة دي موثّقة في السكربت المشترك.
+    var shop = accShop(shopId);
+    var shopName = shop ? shop.name : 'ورشة';
+    var stamp = new Date().toISOString().slice(0, 10);
+
+    var COLS = ['التاريخ', 'البيان', 'النوع', 'مرتجع', 'المبلغ'];
+    var TOT = [
+      'الرصيد',
+      'دين ' + money(totalDebt) + ' · سداد ' + money(totalPaid),
+      '', '',
+      money(totalDebt - totalPaid)
+    ];
+
+    function accExport(kind) {
+      var opts = {
+        title: 'حساب ' + shopName,
+        subtitle: 'كشف حساب محل صيانة · ' + stamp,
+        columns: COLS,
+        rows: out,
+        totals: TOT,
+        filename: 'حساب-' + shopName + '-' + stamp
+      };
+      if (kind === 'xls') window.exportXls(opts); else window.exportPdf(opts);
+    }
+
+    var bar = document.createElement('div');
+    bar.className = 'prod-edit-actions';
+
+    var xb = document.createElement('button');
+    xb.className = 'btn-mini'; xb.type = 'button'; xb.textContent = 'إكسيل';
+    xb.addEventListener('click', function () { accExport('xls'); });
+    bar.appendChild(xb);
+
+    var pb = document.createElement('button');
+    pb.className = 'btn-mini'; pb.type = 'button'; pb.textContent = 'PDF';
+    pb.addEventListener('click', function () { accExport('pdf'); });
+    bar.appendChild(pb);
+
+    box.appendChild(bar);
   }
 
   var accPanel = document.getElementById('acc-panel');
