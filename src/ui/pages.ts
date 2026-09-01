@@ -3354,7 +3354,22 @@ export function treasuryPage(data: TreasuryPageData): Html {
         <label class="field-label" for="mv-type">نوع الحركة</label>
         <select class="field-input" id="mv-type">
           <option value="EXPENSE">مصروف</option>
-          <option value="PURCHASE">شراء بضاعة</option>
+
+          <!-- ══ ⚠ «شراء بضاعة» متشالة **مؤقتًا** ══
+               الرجوع = شيل التعليق عن السطر اللي تحت. وبس.
+
+               ⚠ ومتشالة بالتعليق مش بالمسح عن قصد: كل منطقها
+               (خانات الصنف والكمية والمورّد، ومسار /api/purchases)
+               لسه مكانه وشغّال. مسحه كان هيخلّي الرجوع شغل نص
+               ساعة بدل سطر.
+
+               ⚠⚠ وطول ما هي متشالة: مفيش طريقة تسجّل شرا بضاعة
+               من شاشة الخزنة خالص. سبب الصرف «شراء بضاعة» مخفي
+               من قايمة الأسباب لأن النوع ده كان موجود.
+               الطريق الوحيد دلوقتي: شاشة البضاعة ← إضافة منتج ←
+               التكلفة «اتدفعت». -->
+          <!-- <option value="PURCHASE">شراء بضاعة</option> -->
+
           <option value="ADVANCE">سُلفة موظّف</option>
           ${data.canApprove
             ? html`<option value="DEPOSIT">إيداع</option>
@@ -3915,6 +3930,11 @@ export interface PosPageData {
    * واحد عندهم بتبقى أثاث بلا وظيفة.
    */
   branches: Array<{ id: string; name: string }>;
+  /**
+   * ⚠ الحقول التلاتة الأخيرة كانت موجودة في الخادم وما كانتش
+   * بتتبعت للشاشة. من غيرها، البيع كان بيوري كومة مسطّحة
+   * والبضاعة عندها أدراج — نفس البضاعة بمنظّمين مختلفين.
+   */
   products: Array<{
     id: string;
     name: string;
@@ -3924,7 +3944,23 @@ export interface PosPageData {
     pricePiastres: number | null;
     quantityOnHand: number;
     branchId: string;
+    categoryId: string | null;
+    modelId: string | null;
+    colorId: string | null;
+    /** مشتقّ مش مسجّل — الشريط بيتبني من الصفوف الموجودة */
+    storageCapacity: string | null;
+    customsCleared: boolean;
   }>;
+  /**
+   * سجلات الفلترة — نفس اللي في شاشة البضاعة بالحرف.
+   *
+   * ⚠ ومفيش زرار «+» في أي شريط منهم هنا، وده مقصود: البيع
+   * مش مكان إنشاء درج ولا موديل ولا لون. الكاشير بيختار من
+   * الموجود، والإنشاء قرار تنظيم مكانه شاشة البضاعة.
+   */
+  categories: Array<{ id: string; name: string; parentId: string | null }>;
+  models: Array<{ id: string; name: string; family: string | null }>;
+  colors: Array<{ id: string; name: string; hex: string | null }>;
   recentSales: Array<{
     id: string;
     totalPiastres: number;
@@ -3999,7 +4035,14 @@ export function posPage(data: PosPageData): Html {
             data-name="${p.name}"
             data-branch="${p.branchId}"
             data-price="${p.pricePiastres === null ? '' : String(p.pricePiastres)}"
-            data-max="${String(p.quantityOnHand)}">
+            data-max="${String(p.quantityOnHand)}"
+            data-type="${p.productType}"
+            data-cat="${p.categoryId ?? '__none__'}"
+            data-model="${p.modelId ?? '__none__'}"
+            data-color="${p.colorId ?? '__none__'}"
+            data-storage="${p.storageCapacity ?? '__none__'}"
+            data-customs="${p.customsCleared ? 'true' : 'false'}"
+            data-searchable="${[p.name, p.serialNumber ?? ''].join(' ')}">
             <span class="prod-btn-name">${p.name}</span>
             <span class="prod-btn-price">
               ${p.pricePiastres === null ? 'السعر عند البيع' : formatPiastres(p.pricePiastres)}
@@ -4207,10 +4250,100 @@ export function posPage(data: PosPageData): Html {
     <summary>البضاعة</summary>
     <div class="panel-body">
       ${hasProducts
-        ? html`<div class="field">
+        ? html`<!-- ══ الأدراج — نفس شاشة البضاعة ══
+
+               ⚠ الشرايط في مكان واحد وبتتبدّل، مش نسخة في كل
+               تبويب. نسختين معناهم إن العلامة على الاتنين ممكن
+               تختلف — والكاشير يشوف «أسود» مختار في مكان
+               و«الكل» في مكان تاني.
+
+               ⚠ ومفيش زرار «+» في أي شريط، على عكس شاشة
+               البضاعة. البيع مش مكان إنشاء درج ولا لون. -->
+          <div class="tools">
+            <button class="tool" type="button" data-postool="cat">
+              درج الإكسسوار والمكملات
+            </button>
+            <button class="tool" type="button" data-postool="iph">درج الآيفون</button>
+            <button class="tool" type="button" data-postool="and">درج الأندرويد</button>
+            <button class="tool" type="button" data-postool="flt">فلتر</button>
+          </div>
+
+          <!-- ⚠ أدوات الفلتر بتتغيّر بالدرج المفتوح:
+                 الإكسسوار → اللون · الموديل
+                 الأجهزة   → اللون · المساحة · الضريبة
+               والمساحة والضريبة مالهمش معنى على جراب. -->
+          <div class="tools" id="pos-filter-tools" hidden>
+            <button class="tool" type="button" data-possub="color">اللون</button>
+            <button class="tool" type="button" data-possub="model" data-for="accessory">
+              الموديل
+            </button>
+            <button class="tool" type="button" data-possub="storage" data-for="device">
+              المساحة
+            </button>
+            <button class="tool" type="button" data-possub="customs" data-for="device">
+              الضريبة
+            </button>
+          </div>
+
+          <div class="row-wrap" id="pos-row-cat" hidden>
+            <div class="drawers" id="pos-drawers">
+              <button class="drawer" type="button" data-posdrawer="" data-on>الكل</button>
+              ${data.categories
+                .filter((c) => c.parentId === null)
+                .map(
+                  (section) => html`${data.categories
+                    .filter((d) => d.parentId === section.id)
+                    .map(
+                      (d) => html`<button class="drawer" type="button"
+                        data-posdrawer="${d.id}">${d.name}</button>`,
+                    )}`,
+                )}
+              <button class="drawer" type="button" data-posdrawer="__none__">غير مصنّف</button>
+            </div>
+          </div>
+
+          <div class="row-wrap" id="pos-row-model" hidden>
+            <div class="drawers" id="pos-models">
+              <button class="drawer" type="button" data-posmodel="" data-on>الكل</button>
+              ${data.models.map(
+                (m) => html`<button class="drawer" type="button" data-posmodel="${m.id}"
+                  data-family="${m.family ?? '__none__'}">${m.name}</button>`,
+              )}
+              <button class="drawer" type="button" data-posmodel="__none__">بلا موديل</button>
+            </div>
+          </div>
+
+          <div class="row-wrap" id="pos-row-color" hidden>
+            <div class="drawers" id="pos-colors">
+              <button class="drawer" type="button" data-poscolor="" data-on>الكل</button>
+              ${data.colors.map(
+                (c) => html`<button class="drawer" type="button" data-poscolor="${c.id}">
+                  ${c.hex ? html`<span class="dot" style="background:${c.hex}"></span>` : ''}
+                  ${c.name}
+                </button>`,
+              )}
+              <button class="drawer" type="button" data-poscolor="__none__">بلا لون</button>
+            </div>
+          </div>
+
+          <!-- ══ المساحة والضريبة — مشتقّة مش مسجّلة ══
+               مالهمش سجل: أعمدة على المنتج نفسه، فالشرايط
+               بتتبني من البضاعة المعروضة وقت التحميل. -->
+          <div class="row-wrap" id="pos-row-storage" hidden>
+            <div class="drawers" id="pos-storages"></div>
+          </div>
+
+          <div class="row-wrap" id="pos-row-customs" hidden>
+            <div class="drawers" id="pos-customs"></div>
+          </div>
+
+          <div class="field">
             <input class="field-input" id="pos-search" type="search"
-              placeholder="ابحث بالاسم" autocomplete="off">
-          </div>`
+              placeholder="ابحث بالاسم أو السريال" autocomplete="off">
+          </div>
+          <p class="field-hint" id="pos-empty-note">
+            افتح درج أو ابحث عشان تشوف البضاعة.
+          </p>`
         : ''}
       ${productsHtml}
     </div>
@@ -4644,19 +4777,339 @@ ${TIME_JS}
   var search = document.getElementById('pos-search');
   var branchEl = document.getElementById('pos-branch');
   var treasuryEl = document.getElementById('pos-treasury');
+  var emptyNote = document.getElementById('pos-empty-note');
 
+  // ══════════ حالة الفلاتر ══════════
+  //
+  // ⚠ نفس الأبعاد اللي في شاشة البضاعة بالحرف، وبنفس أسماء
+  // السمات على الصفوف. ده مقصود: يوم ما نوحّد المحرّكين، مفيش
+  // حاجة في القوالب هتحتاج تتغيّر.
+  var activeMode = '';
+  var activeFamily = '';
+  var activeDrawer = '';
+  var activeModel = '';
+  var activeColor = '';
+  var activeStorage = '';
+  var activeCustoms = '';
+
+  /**
+   * المصفاة الواحدة.
+   *
+   * ⚠ الفرع والبحث والفلاتر كلهم بيتحكّموا في نفس الخاصية.
+   * لو كل واحد كتبها لوحده، آخر واحد يشتغل بيدهس على التاني —
+   * تبحث فيرجع منتج من فرع تاني، أو تغيّر الفرع فيرجع اللي
+   * البحث خبّاه. فالقرار بيتاخد مرة واحدة من كلهم مع بعض.
+   */
   function applyFilters() {
-    var q = search ? search.value.trim() : '';
+    var q = search ? search.value.trim().toLowerCase() : '';
     var branch = branchEl ? branchEl.value : '';
 
     var btns = document.querySelectorAll('[data-add]');
+    var shown = 0;
+
     for (var i = 0; i < btns.length; i++) {
-      var name = btns[i].getAttribute('data-name') || '';
-      var okName = q.length === 0 || name.indexOf(q) !== -1;
-      var okBranch = !branch || btns[i].getAttribute('data-branch') === branch;
-      btns[i].hidden = !(okName && okBranch);
+      var el = btns[i];
+      var hay = (el.getAttribute('data-searchable') || el.getAttribute('data-name') || '')
+        .toLowerCase();
+
+      var okText = !q || hay.indexOf(q) !== -1;
+      var okBranch = !branch || el.getAttribute('data-branch') === branch;
+      var okDrawer = !activeDrawer
+        || (el.getAttribute('data-cat') || '__none__') === activeDrawer;
+      var okModel = !activeModel
+        || (el.getAttribute('data-model') || '__none__') === activeModel;
+      var okColor = !activeColor
+        || (el.getAttribute('data-color') || '__none__') === activeColor;
+      var okStorage = !activeStorage
+        || (el.getAttribute('data-storage') || '__none__') === activeStorage;
+      var okCustoms = !activeCustoms
+        || (el.getAttribute('data-customs') || 'false') === activeCustoms;
+      var okMode = !activeMode || el.getAttribute('data-type') === activeMode;
+
+      // ══ ⚠ العيلة بتتقرا من **الموديل** مش من المنتج ══
+      //
+      // المنتج مالوش عمود عيلة، وموديله هو اللي معلّم. فبنجيب
+      // موديل الصفّ وندوّر على عيلته في الشريط.
+      //
+      // ودي اللي بتخلّي تصنيف موديل واحد ينقل كل أجهزته
+      // وإكسسواراته للدرج الصح في نفس اللحظة.
+      var okFamily = true;
+      if (activeFamily) {
+        var rowModel = el.getAttribute('data-model') || '';
+        var chip = rowModel && rowModel !== '__none__'
+          ? document.querySelector('#pos-models [data-posmodel="' + rowModel + '"]')
+          : null;
+        okFamily = !!chip && chip.getAttribute('data-family') === activeFamily;
+      }
+
+      // ══ ⚠ البضاعة مقفولة لحد ما تفتح درج ══
+      //
+      // قايمة بكل البضاعة من غير درج مفتوح مش قايمة — دي كومة،
+      // والكاشير بيمرّر فيها بدل ما يختار.
+      //
+      // ⚠ والبحث بيفتحها: لو كتبت حاجة، إنت عارف بتدوّر على
+      // إيه — فالكومة بتبقى نتيجة مش كومة.
+      var browsing = !!activeMode || !!activeDrawer || !!q;
+
+      var match = browsing && okText && okBranch && okMode && okFamily
+        && okDrawer && okModel && okColor && okStorage && okCustoms;
+
+      el.hidden = !match;
+      if (match) shown++;
+    }
+
+    // ⚠ السطر الإرشادي بيختفي أول ما يبان أي منتج. سيبانه
+    // فوق نتيجة موجودة بيخلّيه يقرا كإنه رسالة خطأ.
+    if (emptyNote) {
+      emptyNote.hidden = shown > 0;
+      emptyNote.textContent = browsing
+        ? 'مفيش بضاعة مطابقة للفلاتر دي.'
+        : 'افتح درج أو ابحث عشان تشوف البضاعة.';
     }
   }
+
+  // ══════════ الشرايط ══════════
+
+  /** رجّع صفّ لـ«الكل» */
+  function posClearRow(id, attr) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var chips = el.querySelectorAll('.drawer');
+    for (var i = 0; i < chips.length; i++) {
+      if (chips[i].getAttribute(attr) === '') chips[i].setAttribute('data-on', '');
+      else chips[i].removeAttribute('data-on');
+    }
+  }
+
+  function posWireRow(el, attr, onPick) {
+    if (!el) return;
+    el.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.drawer') : null;
+      if (!chip || !chip.hasAttribute(attr)) return;
+
+      var all = el.querySelectorAll('.drawer');
+      for (var i = 0; i < all.length; i++) all[i].removeAttribute('data-on');
+      chip.setAttribute('data-on', '');
+
+      onPick(chip.getAttribute(attr) || '');
+      posPaintTools();
+      applyFilters();
+    });
+  }
+
+  /**
+   * ⚠ شرايح الموديل بتتفلتر بالعيلة.
+   *
+   * درج الآيفون بيوري موديلات الآيفون بس. من غير كده، بتفتح
+   * الدرج وتلاقي قايمة سامسونج قدّامك — والدرج يبقى اسم على
+   * قايمة مش درج.
+   */
+  function posPaintFamilyChips() {
+    var box = document.getElementById('pos-models');
+    if (!box) return;
+    var chips = box.querySelectorAll('[data-family]');
+    for (var i = 0; i < chips.length; i++) {
+      var fam = chips[i].getAttribute('data-family');
+      chips[i].hidden = !!activeFamily && fam !== activeFamily;
+    }
+  }
+
+  /**
+   * ⚠ المساحة والضريبة مالهمش سجل — بيتبنوا من البضاعة المعروضة.
+   *
+   * والصفّ بيتعلّم فاضي لو مفيش قيم، عشان زرّاره ما يفتحش صفّ
+   * فاضي — والزرار اللي بيفتح فراغ بيخلّي الواحد يفتكر إن فيه عطل.
+   */
+  function posBuildDerived(rowId, listId, attr, chipAttr, label) {
+    var row = document.getElementById(rowId);
+    var list = document.getElementById(listId);
+    if (!row || !list) return;
+
+    var btns = document.querySelectorAll('[data-add]');
+    var seen = [];
+    for (var i = 0; i < btns.length; i++) {
+      var v = btns[i].getAttribute(attr);
+      if (!v || v === '__none__') continue;
+      if (seen.indexOf(v) === -1) seen.push(v);
+    }
+    if (!seen.length) { row.setAttribute('data-empty', '1'); return; }
+
+    seen.sort();
+    var out = '<button class="drawer" type="button" ' + chipAttr + '="" data-on>الكل</button>';
+    for (var k = 0; k < seen.length; k++) {
+      var text = label ? label(seen[k]) : seen[k];
+      out += '<button class="drawer" type="button" ' + chipAttr + '="'
+        + seen[k] + '">' + text + '</button>';
+    }
+    list.innerHTML = out;
+    row.removeAttribute('data-empty');
+  }
+
+  // ══════════ شريط الأدوات ══════════
+  //
+  // ⚠ صفّ شرايط واحد ظاهر في المرة. الخمسة المفتوحين بياخدوا
+  // نص الشاشة والبضاعة تختفي تحت.
+  var posFilterTools = document.getElementById('pos-filter-tools');
+  var posOpenRow = '';
+
+  var POS_ROWS = {
+    cat: 'pos-row-cat', model: 'pos-row-model', color: 'pos-row-color',
+    storage: 'pos-row-storage', customs: 'pos-row-customs'
+  };
+
+  function posShowRow(key) {
+    for (var k in POS_ROWS) {
+      var el = document.getElementById(POS_ROWS[k]);
+      if (el) el.hidden = true;
+    }
+    if (!key) { posOpenRow = ''; return; }
+    var target = document.getElementById(POS_ROWS[key]);
+    if (!target) { posOpenRow = ''; return; }
+    if (target.getAttribute('data-empty') === '1') { posOpenRow = ''; return; }
+    target.hidden = false;
+    posOpenRow = key;
+  }
+
+  /** أي أدوات فلتر تبان — حسب الدرج المفتوح */
+  function posSyncFilterTools() {
+    if (!posFilterTools) return;
+    var subs = posFilterTools.querySelectorAll('[data-possub]');
+    for (var i = 0; i < subs.length; i++) {
+      var only = subs[i].getAttribute('data-for');
+      subs[i].hidden = !!only && !!activeMode && only !== activeMode;
+    }
+  }
+
+  /**
+   * العلامات.
+   *
+   * ⚠ الزرار بيفضل معلّم طول ما فلتره شغّال حتى لو صفّه مقفول.
+   * الفلتر الشغّال ومخفي بيخلّي الكاشير يفتكر إن نص البضاعة اتمسح.
+   */
+  function posPaintTools() {
+    var on = {
+      cat: activeMode === 'accessory',
+      iph: activeMode === 'device' && activeFamily === 'IPHONE',
+      and: activeMode === 'device' && activeFamily === 'ANDROID',
+      color: !!activeColor,
+      model: !!activeModel,
+      storage: !!activeStorage,
+      customs: !!activeCustoms
+    };
+    on.flt = on.color || on.model || on.storage || on.customs;
+
+    var all = document.querySelectorAll('.tool');
+    for (var i = 0; i < all.length; i++) {
+      var key = all[i].getAttribute('data-postool') || all[i].getAttribute('data-possub');
+      if (!key) continue;
+      if (on[key]) all[i].setAttribute('data-on', '');
+      else all[i].removeAttribute('data-on');
+    }
+  }
+
+  var posToolsEl = document.querySelector('[data-postool]');
+  if (posToolsEl && posToolsEl.parentNode) {
+    posToolsEl.parentNode.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-postool]') : null;
+      if (!btn) return;
+      var key = btn.getAttribute('data-postool');
+
+      if (key === 'flt') {
+        if (!posFilterTools) return;
+        var closing = !posFilterTools.hidden;
+        posFilterTools.hidden = closing;
+
+        // ══ ⚠ القفل بيلغي الفلاتر، مش بيخبّيها ══
+        //
+        // الفلتر اللي بيتخبّى وهو شغّال بيسيب الكاشير قدّام
+        // شاشة فاضية بلا سبب ظاهر. فقفل الفلتر بقى هو زرار
+        // الإلغاء نفسه — مخرج واحد معروف.
+        //
+        // ⚠ والدرج ما بيتلغيش معاهم: هو مش تحت الفلتر، وله
+        // زراره وضغطة تانية عليه بترجّع الكل.
+        if (closing) {
+          activeColor = ''; activeModel = '';
+          activeStorage = ''; activeCustoms = '';
+          posClearRow('pos-colors', 'data-poscolor');
+          posClearRow('pos-models', 'data-posmodel');
+          posClearRow('pos-storages', 'data-storage');
+          posClearRow('pos-customs', 'data-customs');
+          posShowRow('');
+          posPaintTools();
+          applyFilters();
+        }
+
+        posSyncFilterTools();
+        return;
+      }
+
+      var mode = key === 'cat' ? 'accessory' : 'device';
+      var family = key === 'iph' ? 'IPHONE' : (key === 'and' ? 'ANDROID' : '');
+
+      if (activeMode === mode && activeFamily === family) {
+        activeMode = ''; activeFamily = '';
+        posShowRow('');
+      } else {
+        activeMode = mode;
+        activeFamily = family;
+        posShowRow(mode === 'accessory' ? 'cat' : 'model');
+        posPaintFamilyChips();
+
+        if (mode === 'accessory') {
+          // ⚠ فلاتر النوع التاني بتتصفّى مع تغيير الدرج.
+          // «مساحة 256» شغّالة وإنت في درج الجرابات بتخلّي
+          // الشاشة فاضية بلا سبب ظاهر.
+          activeStorage = ''; activeCustoms = '';
+          posClearRow('pos-storages', 'data-storage');
+          posClearRow('pos-customs', 'data-customs');
+        } else {
+          activeDrawer = '';
+          posClearRow('pos-drawers', 'data-posdrawer');
+          // ⚠ والموديل المختار بيتصفّى لو مش من نفس العيلة —
+          // وإلا بتفتح درج الآيفون وموديل سامسونج لسه مختار،
+          // والنتيجة صفر بلا سبب ظاهر.
+          if (activeModel) {
+            var still = document.querySelector(
+              '#pos-models [data-posmodel="' + activeModel + '"][data-family="' + family + '"]',
+            );
+            if (!still) { activeModel = ''; posClearRow('pos-models', 'data-posmodel'); }
+          }
+        }
+      }
+
+      posSyncFilterTools();
+      posPaintTools();
+      applyFilters();
+    });
+  }
+
+  if (posFilterTools) {
+    posFilterTools.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-possub]') : null;
+      if (!btn) return;
+      var key = btn.getAttribute('data-possub');
+      posShowRow(posOpenRow === key ? '' : key);
+    });
+  }
+
+  // ⚠ المشتقّة بتتبني قبل الربط — الشرايط لسه مش موجودة وقت التحميل.
+  posBuildDerived('pos-row-storage', 'pos-storages', 'data-storage', 'data-storage', null);
+  posBuildDerived('pos-row-customs', 'pos-customs', 'data-customs', 'data-customs',
+    function (v) { return v === 'true' ? 'خالص' : 'ضريبة'; });
+
+  posWireRow(document.getElementById('pos-drawers'), 'data-posdrawer',
+    function (v) { activeDrawer = v; });
+  posWireRow(document.getElementById('pos-models'), 'data-posmodel',
+    function (v) { activeModel = v; });
+  posWireRow(document.getElementById('pos-colors'), 'data-poscolor',
+    function (v) { activeColor = v; });
+  posWireRow(document.getElementById('pos-storages'), 'data-storage',
+    function (v) { activeStorage = v; });
+  posWireRow(document.getElementById('pos-customs'), 'data-customs',
+    function (v) { activeCustoms = v; });
+
+  posSyncFilterTools();
+  posPaintTools();
 
   // ⚠ خزن الفروع التانية بتتشال من القايمة مش بتتخبّى بس.
   // «hidden» على «<option>» مش مضمون في كل المتصفحات، والخانة
@@ -5620,11 +6073,15 @@ export function productsPage(data: ProductsPageData): Html {
                           <p class="field-hint">اكتب الفرق لا الرقم النهائي.</p>
                         </div>`}
 
-                    <div class="field">
-                      <label class="field-label" for="source-${p.id}">مصدر الشراء</label>
-                      <input class="field-input" id="source-${p.id}" type="text"
-                        maxlength="80" value="${p.source ?? ''}">
-                    </div>
+                    <!-- ══ ⚠ خانة «مصدر الشراء» اتشالت من هنا ══
+                         كانت نص حر، وملف ٤٢ حوّل المصدر لمورّد
+                         مسجّل عشان السؤال «إيه اللي جه من أحمد؟»
+                         يتجاوب.
+                         وسيبانها هنا كان بيخلّي فيه مصدرين لنفس
+                         المعلومة: سجل مرتّب للفلوس، ونص حر جنبه —
+                         والاتنين بيختلفوا يوم ما.
+                         ⚠ العمود نفسه ما اتمسحش من القاعدة: الصفوف
+                         القديمة لسه بتعرض مصدرها في سطر الملخّص. -->
 
                     <div class="field">
                       <label class="field-label" for="entry-${p.id}">تاريخ الدخول</label>
@@ -5984,9 +6441,13 @@ export function productsPage(data: ProductsPageData): Html {
             </div>
 
             <div class="field">
-              <label class="field-label" for="np-cost">التكلفة (اختياري)</label>
+              <label class="field-label" for="np-cost">التكلفة</label>
               <input class="field-input" id="np-cost" type="text" inputmode="decimal"
                 dir="ltr" autocomplete="off">
+              <p class="field-hint">
+                إلزامية. جالك بلا تكلفة؟ اكتب صفر — الصفر المكتوب قرار،
+                والخانة الفاضية نسيان.
+              </p>
             </div>
 
             <!-- ══ ⚠ تسوية التكلفة — بتظهر لما تكتب رقم بس ══
@@ -6041,9 +6502,13 @@ export function productsPage(data: ProductsPageData): Html {
                  والزرار بيضيف المورّد **في السجل** على طول، فبيظهر
                  في شاشة الموردين وحساباتهم من غير أي خطوة تانية. -->
             <div class="field">
-              <label class="field-label" for="np-supplier">مصدر الشراء (اختياري)</label>
+              <label class="field-label" for="np-supplier">مصدر الشراء</label>
               <select class="field-input" id="np-supplier">
-                <option value="">— غير محدّد —</option>
+                <!-- ⚠ «غير محدّد» بقى «اختر» — الفرق مش لغوي.
+                     الأولى بتقرا كإجابة مشروعة، والتانية بتقول
+                     إن فيه خطوة لسه ناقصة.
+                     ومشتريها من زبون؟ فيه صف اسمه «شراء من زبون». -->
+                <option value="">— اختر المصدر —</option>
                 ${data.suppliers.map(
                   (sp) => html`<option value="${sp.id}">${sp.name}</option>`,
                 )}
@@ -6483,12 +6948,13 @@ ${MENU_JS}
 
     var id = btn.getAttribute('data-save-details');
     var serialEl = document.getElementById('serial-' + id);
-    var sourceEl = document.getElementById('source-' + id);
     var entryEl = document.getElementById('entry-' + id);
 
     var body = {};
     if (serialEl) body.serialNumber = serialEl.value;
-    if (sourceEl) body.source = sourceEl.value;
+    // ⚠ المصدر مابقاش بيتبعت خالص. الخانة اتشالت من القالب،
+    // ولو سبنا السطر ده كان هيبعت قيمة فاضية ويفضّي العمود
+    // في كل حفظ — يعني يمسح مصدر الصفوف القديمة بصمت.
     if (entryEl && entryEl.value) body.entryDate = entryEl.value;
 
     // ⚠ الخانة موجودة لصاحب المحل بس. غيابها من الصفحة معناه
@@ -7044,6 +7510,25 @@ ${MENU_JS}
         // هتظهر والمستخدم مش عارف يكتب فين.
         var modelQ = document.getElementById('np-model-q');
         if (modelQ) modelQ.focus();
+        return;
+      }
+
+      // ══ ⚠ التكلفة والمصدر إلزاميين ══
+      //
+      // الفحص هنا **راحة مش حراسة**: الخادم بيرفض الاتنين
+      // برضه. الفايدة إن الرسالة بتوصل من غير رحلة شبكة،
+      // والمؤشر بيروح للخانة الناقصة على طول.
+      var costVal = document.getElementById('np-cost');
+      if (costVal && costVal.value.trim() === '') {
+        say('اكتب التكلفة. لو الجهاز جالك بلا تكلفة، اكتب صفر.', false);
+        costVal.focus();
+        return;
+      }
+
+      var supVal = document.getElementById('np-supplier');
+      if (supVal && !supVal.value) {
+        say('اختر مصدر الشراء. مشتريها من زبون؟ اختر «شراء من زبون».', false);
+        supVal.focus();
         return;
       }
 
