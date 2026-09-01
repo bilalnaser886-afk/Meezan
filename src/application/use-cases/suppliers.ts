@@ -19,6 +19,13 @@
  * شرا البضاعة تحويل فلوس لمخزون — أصل بيتحوّل لأصل تاني.
  * المصروف بيحصل وقت البيع (تكلفة البضاعة المباعة). حركة السداد
  * معلّمة `is_inventory`، وقائمة الدخل بتستبعدها وتوريها للعلم.
+ *
+ * ══ ⚠ والمجموع لوحده ما بيكفّيش ══
+ * الشاشة كانت بتوري "عليك 47,000 لأحمد" وبس. والرقم ده ما
+ * بيخليكش تعمل حاجة: أحمد بيقول رقم تاني، ومالكش غير تصدّقه.
+ *
+ * `listSupplierMovements` تحت بتفتح الدفتر سطر سطر — كل سطر
+ * بيقول إمتى، على إيه، مين سجّله، وبكام.
  */
 
 import { DateError, parseDateInput } from '../../domain/dates';
@@ -30,6 +37,7 @@ import type {
   AuthenticatedUser,
   Clock,
   SupplierBalance,
+  SupplierMovement,
   SupplierRepository,
   TreasuryRepository,
 } from '../ports';
@@ -65,6 +73,34 @@ export async function listSuppliers(
 ): Promise<SupplierBalance[]> {
   assertSupplierAccess(actor);
   return deps.suppliers.listBalances(actor.tenantId);
+}
+
+/**
+ * دفتر مورّد واحد — الحركات سطر سطر.
+ *
+ * ══ ⚠ نفس صلاحية الأرصدة، وده مقصود ══
+ * الدفتر **تفصيل** لنفس الرقم اللي في الشاشة. صلاحية منفصلة
+ * كانت هتدّي حد يشوف الإجمالي ويتمنع من تفاصيله — وده مالوش
+ * معنى أمني: اللي شايف إنك مديون بـ٤٧ ألف مش هيتأذّى النظام
+ * لو شاف دول جم منين.
+ *
+ * ⚠ وحاجز المحل هنا **مرتين**: مرة على المورّد نفسه، ومرة جوّه
+ * الاستعلام في قاعدة البيانات. التكرار مقصود — لو الأولانية
+ * اتشالت يومًا ما بالغلط، التانية بتفضل واقفة.
+ */
+export async function listSupplierMovements(
+  deps: SupplierDeps,
+  actor: AuthenticatedUser,
+  supplierId: string,
+  limit = 200,
+): Promise<SupplierMovement[]> {
+  assertSupplierAccess(actor);
+
+  const supplier = await deps.suppliers.findById(supplierId);
+  // مورّد محل تاني = غير موجود بالنسبة لك
+  if (!supplier || supplier.tenantId !== actor.tenantId) throw Errors.notFound('المورّد');
+
+  return deps.suppliers.listMovements(supplierId, actor.tenantId, limit);
 }
 
 // ─────────── الكتابة ───────────
