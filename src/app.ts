@@ -726,6 +726,12 @@ app.get('/maintenance', requireAuth({ redirectOnFail: true }), async (c) => {
       canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
       canManage: user.permissions.includes(PERMISSIONS.MAINTENANCE_MANAGE),
+      // ⚠ صلاحية تانية عن قصد: حساب الورش دفتر ديون، واللي
+      // مش مسموح له يشوف حساب الموردين مش مسموح له يشوف ده.
+      // في الأدوار الافتراضية الاتنين بيمشوا مع بعض، والاستثناء
+      // الفردي هو اللي بيفرّقهم — وعشان كده مش بنعيد استخدام
+      // نفس المفتاح.
+      canLedger: user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE),
       branches: branches.map((b) => ({ id: b.id, name: b.name })),
       today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
