@@ -1368,6 +1368,101 @@ export interface MaintenanceRepository {
     actorId: string,
     canManage: boolean,
   ): Promise<{ kind: string; value: string | null }>;
+
+  // ─── دفتر الورش ───
+  //
+  // ⚠ في نفس المستودع مش في مستودع جديد. السبب إن الورشة
+  // كيان واحد: نفس الصف اللي بيستقبل الأجهزة هو اللي عليه
+  // الحساب. مستودعين معناهم إن حاجز المحل بيتكتب مرتين —
+  // وأول واحد يتنسي بيفتح ورشة محل تاني.
+
+  shopBalances(tenantId: string): Promise<RepairShopBalance[]>;
+  shopLedger(
+    shopId: string,
+    tenantId: string,
+    limit: number,
+  ): Promise<RepairShopMovement[]>;
+  /** دين يدوي — ما بيمسّش الخزنة */
+  recordShopDebt(input: {
+    shopId: string;
+    actorId: string;
+    amountPiastres: number;
+    note: string;
+    date: string | null;
+  }): Promise<{ movementId: string; newBalance: number }>;
+  /** سداد — ذري، بيمسّ الخزنة وبيقسّم نفسه */
+  recordShopPayment(input: {
+    shopId: string;
+    actorId: string;
+    treasuryId: string;
+    amountPiastres: number;
+    note: string | null;
+    date: string | null;
+  }): Promise<RepairShopPaymentResult>;
+}
+
+// ─────────── حساب محلات الصيانة ───────────
+
+/**
+ * رصيد ورشة واحدة.
+ *
+ * ══ ⚠ التقسيم مش شكلي ══
+ * `deviceDebt` تكلفتها **دخلت المخزون** خلاص (بتزوّد تكلفة
+ * الجهاز)، و`ticketDebt` مصروف خدمة. والاتنين في رصيد واحد
+ * لأنك بتدفع للورشة مبلغ واحد.
+ *
+ * والسداد بيتقسّم بينهم تلقائيًا في القاعدة — من غير كده،
+ * إصلاح جهاز محلّك بيتحمّل مرتين في قائمة الدخل.
+ *
+ * ⚠ و`openDevices` و`openTickets` **بره الرصيد** عن قصد: شغل
+ * لسه في الورشة ومفيش دين عليه لحد ما يرجع. بيتعرضوا عشان
+ * تعرف إن فيه حاجة جاية، مش عشان تحسبها.
+ */
+export interface RepairShopBalance {
+  shopId: string;
+  name: string;
+  phone: string | null;
+  isActive: boolean;
+  /** أجهزة المحل — تكلفتها دخلت المخزون */
+  deviceDebt: number;
+  /** أجهزة الزباين — مصروف خدمة */
+  ticketDebt: number;
+  /** دين اتكتب بإيدك (قطع غيار مثلاً) */
+  manualDebt: number;
+  paidPiastres: number;
+  /** موجب = إنت مديون للورشة */
+  balancePiastres: number;
+  /** لسه في الورشة — مش في الرصيد */
+  openDevices: number;
+  openTickets: number;
+  lastMovement: string | null;
+}
+
+export interface RepairShopMovement {
+  id: string;
+  direction: 'DEBT' | 'PAYMENT';
+  amountPiastres: number;
+  /** DEVICE جهاز محل · TICKET جهاز عميل · MANUAL بإيدك */
+  sourceKind: 'DEVICE' | 'TICKET' | 'MANUAL';
+  sourceId: string | null;
+  isInventory: boolean;
+  note: string | null;
+  occurredAt: string;
+  /**
+   * ⚠ السداد الواحد بيولّد سطرين (مخزون + خدمة). الرقم ده
+   * بيخلّي الشاشة تجمّعهم في بند واحد بدل ما توري المستخدم
+   * دفعتين وهو دفع مرة.
+   */
+  paymentGroupId: string | null;
+  createdByName: string | null;
+}
+
+/** نتيجة السداد — بيرجّع القسمة عشان الشاشة توضّحها */
+export interface RepairShopPaymentResult {
+  groupId: string;
+  inventoryPiastres: number;
+  servicePiastres: number;
+  newBalance: number;
 }
 
 // ─────────── الموردين والديون ───────────
