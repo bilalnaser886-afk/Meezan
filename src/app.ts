@@ -370,7 +370,10 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
 
   const canConsign = user.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE);
 
-  const [products, balances, recent, branchLabel, posBranches, shopAccounts] =
+  const [
+    products, balances, recent, branchLabel, posBranches, shopAccounts,
+    posCategories, posModels, posColors,
+  ] =
     await Promise.all([
     listSellableProducts(container.products, user),
     listBalances(container.treasury, user),
@@ -392,6 +395,14 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
     canConsign
       ? listShopAccounts(container.shops, user).catch(() => [])
       : Promise.resolve([]),
+    // ⚠ سجلات الفلترة — نفس اللي بتروح لشاشة البضاعة.
+    //
+    // و`catch` على كل واحدة عن قصد: لو سجل الألوان وقع لأي
+    // سبب، البيع لازم يفضل شغّال بشريط ناقص. الكاشير اللي
+    // قدّامه زبون ما ينفعش يتقفل عليه البيع عشان شريط فلتر.
+    listCategories(container.products, user).catch(() => []),
+    listModels(container.products, user).catch(() => []),
+    listColors(container.products, user).catch(() => []),
   ]);
 
   return c.html(
@@ -423,6 +434,9 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         })),
       // ⚠ فاضية لغير صاحب المحل — والشاشة بتخفي الخانة ساعتها.
       branches: posBranches.map((b: { id: string; name: string }) => ({ id: b.id, name: b.name })),
+      // ⚠ الخمس حقول الأخيرة كانت موجودة في `ProductRecord` وما
+      // كانتش بتتبعت. من غيرها، شاشة البيع بتوري كومة مسطّحة
+      // وشاشة البضاعة بتوري أدراج — نفس البضاعة بمنظّمين مختلفين.
       products: products.map((p) => ({
         id: p.id,
         name: p.name,
@@ -431,7 +445,22 @@ app.get('/pos', requireAuth({ redirectOnFail: true }), async (c) => {
         pricePiastres: p.pricePiastres,
         quantityOnHand: p.quantityOnHand,
         branchId: p.branchId,
+        categoryId: p.categoryId,
+        modelId: p.modelId,
+        colorId: p.colorId,
+        storageCapacity: p.storageCapacity,
+        customsCleared: p.customsCleared,
       })),
+      // ⚠ الأسماء والمعرّفات بس — مفيش عدّ.
+      //
+      // شاشة البضاعة بتوري رقم جنب كل شريحة، وهو معدود على
+      // **كل** المخزون. هنا المعروض هو المتاح للبيع بس، فالرقم
+      // كان هيقول حاجة والشاشة تحته توري حاجة تانية.
+      categories: posCategories.map((c) => ({
+        id: c.id, name: c.name, parentId: c.parentId,
+      })),
+      models: posModels.map((m) => ({ id: m.id, name: m.name, family: m.family })),
+      colors: posColors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
       recentSales: recent.map((s) => ({
         id: s.id,
         totalPiastres: s.totalPiastres,
