@@ -89,8 +89,12 @@ import {
   getProductMaintenance,
   getShopHistory,
   getTicketUnlock,
+  getRepairShopLedger,
   listMaintenanceRecords,
+  listRepairShopAccounts,
   listRepairShops,
+  recordRepairShopDebt,
+  recordRepairShopPayment,
   listTickets,
   returnFromMaintenance,
   sendToMaintenance,
@@ -2006,9 +2010,49 @@ maintenanceRoutes.get('/', requireAuth(VIEW), async (c) => {
   const container = buildContainer(c.env);
   const user = c.get('user');
 
-  // ⚠ نطاق التذاكر ونطاق أجهزة المحل مختلفين في القيم المسموحة
-  // (DELIVERED مقابل RETURNED)، فبنترجم مرة واحدة هنا.
-  const scope = c.req.query('scope') ?? 'OPEN';
+  // ══ ⚠ نطاقين مختلفين، والشاشة بتبعت واحد ══
+  //
+  // أجهزة المحل بتعرف: OPEN · RETURNED · ALL
+  // تذاكر العملاء بتعرف: OPEN · DELIVERED · REVISIT · ALL
+  //
+  // ══ 🔴 والترجمة القديمة كانت في اتجاه واحد بس ══
+  // كانت `scope === 'DELIVERED' ? 'RETURNED' : scope` — يعني
+  // بتصلّح DELIVERED وبتسيب أي قيمة تانية تعدّي زي ما هي.
+  //
+  // فلما الشاشة بعتت `RETURNED` (المرتجعات)، القيمة دي عدّت
+  // للتذاكر وهي مش في قايمتها، والتذاكر رفضت — و`Promise.all`
+  // بيسقط **كله** لو واحد رفض. فالشاشة بتقول «النطاق غير صحيح»
+  // ومفيش ولا قايمة بتتحدّث، لا التذاكر ولا أجهزة المحل ولا
+  // الورش.
+  //
+  // ⚠ الدرس: الترجمة اللي بتعالج حالة واحدة وبتسيب الباقي
+  // بتشتغل صح لحد ما تتضاف حالة جديدة — وساعتها بتقع بصمت
+  // في الكود وبصوت عالي في وش المستخدم.
+  //
+  // دلوقتي كل نطاق ليه خريطة كاملة، والقيمة اللي مش في
+  // الخريطة بتقع على الافتراضي بدل ما تتسرّب.
+  const requested = c.req.query('scope') ?? 'OPEN';
+
+  /** نطاق تذاكر العملاء — القيم اللي `listTickets` بتقبلها */
+  const ticketScope =
+    requested === 'DELIVERED' || requested === 'REVISIT' || requested === 'ALL'
+      ? requested
+      : 'OPEN';
+
+  /**
+   * نطاق أجهزة المحل.
+   *
+   * ⚠ «المرتجعات» مفهوم في التذاكر بس — جهاز عميل رجع تاني
+   * بعد إصلاح ما نفعش. أجهزة المحل مالهاش المعنى ده أصلاً،
+   * فبنوريها كلها بدل ما نفلترها بمعيار مالوش لازمة عندها.
+   */
+  const recordScope =
+    requested === 'DELIVERED'
+      ? 'RETURNED'
+      : requested === 'REVISIT' || requested === 'ALL'
+        ? 'ALL'
+        : 'OPEN';
+
   const shared = {
     search: c.req.query('q') ?? null,
     from: c.req.query('from') ?? null,
@@ -2018,11 +2062,8 @@ maintenanceRoutes.get('/', requireAuth(VIEW), async (c) => {
 
   const [shops, records, tickets] = await Promise.all([
     listRepairShops(container.maintenance, user),
-    listMaintenanceRecords(container.maintenance, user, {
-      ...shared,
-      scope: scope === 'DELIVERED' ? 'RETURNED' : scope,
-    }),
-    listTickets(container.maintenance, user, { ...shared, scope }),
+    listMaintenanceRecords(container.maintenance, user, { ...shared, scope: recordScope }),
+    listTickets(container.maintenance, user, { ...shared, scope: ticketScope }),
   ]);
 
   return c.json({ ok: true, shops, records, tickets });
@@ -2175,6 +2216,93 @@ maintenanceRoutes.get('/tickets/:id/unlock',
     return c.json({ ok: true, ...unlock });
   },
 );
+
+
+// ─────────── حساب محلات الصيانة ───────────
+//
+// ⚠ الحارس هنا `supplier.manage` مش `maintenance.manage`.
+//
+// دي شاشة **ديون** قبل ما تكون شاشة صيانة، واللي مش مسموح له
+// يشوف حساب الموردين مش مسموح له يشوف حساب الورش. يعني
+// المندوب بيشوف الأجهزة وما بيشوفش الأرقام.
+//
+// ⚠ والفحص متكرر جوّه حالة الاستخدام كمان — الحارس بيقفل
+// الباب، والحالة بتقفل الخزنة. إخفاء زرار مش حماية.
+const LEDGER = { requireAll: [PERMISSIONS.SUPPLIER_MANAGE] };
+
+/** أرصدة كل الورش */
+maintenanceRoutes.get('/accounts', requireAuth(LEDGER), async (c) => {
+  const container = buildContainer(c.env);
+  const user = c.get('user');
+
+  // ⚠ الخزن بتيجي مع الأرصدة في نفس الرحلة.
+  //
+  // شاشة الحساب مالهاش لازمة من غير قايمة خزن — السداد أول
+  // فعل فيها. نداء تاني كان معناه إن الزرار يبان والقايمة
+  // فاضية لحظة، والموظّف يضغط ويلاقي "اختر الخزنة".
+  //
+  // ⚠ و`listBalances` بتحترم نطاق الفرع لوحدها: مدير الفرع
+  // بيشوف خزائن فرعه بس، فالقايمة مش محتاجة فلترة تانية هنا.
+  const [accounts, treasuries] = await Promise.all([
+    listRepairShopAccounts(container.maintenance, user),
+    listBalances(container.treasury, user),
+  ]);
+
+  return c.json({
+    ok: true,
+    accounts,
+    treasuries: treasuries
+      .filter((t) => t.isActive)
+      .map((t) => ({ treasuryId: t.treasuryId, name: t.name, branchId: t.branchId })),
+  });
+});
+
+/** كشف حساب ورشة واحدة */
+maintenanceRoutes.get('/accounts/:id', requireAuth(LEDGER), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الورشة مفقود.');
+
+  const container = buildContainer(c.env);
+  const movements = await getRepairShopLedger(container.maintenance, c.get('user'), id);
+  return c.json({ ok: true, movements });
+});
+
+/** دين يدوي — ما بيمسّش الخزنة */
+maintenanceRoutes.post('/accounts/:id/debt', requireAuth(LEDGER), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الورشة مفقود.');
+
+  const body = await readJson<{ amount?: string; note?: string; date?: string }>(c);
+  const container = buildContainer(c.env);
+  const result = await recordRepairShopDebt(container.maintenance, c.get('user'), id, {
+    amount: String(body.amount ?? ''),
+    note: String(body.note ?? ''),
+    date: body.date ?? null,
+  });
+  return c.json({ ok: true, ...result });
+});
+
+/** سداد — بيمسّ الخزنة وبيقسّم نفسه بين المخزون والمصروف */
+maintenanceRoutes.post('/accounts/:id/payment', requireAuth(LEDGER), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الورشة مفقود.');
+
+  const body = await readJson<{
+    amount?: string;
+    treasuryId?: string;
+    note?: string | null;
+    date?: string | null;
+  }>(c);
+
+  const container = buildContainer(c.env);
+  const result = await recordRepairShopPayment(container.maintenance, c.get('user'), id, {
+    amount: String(body.amount ?? ''),
+    treasuryId: body.treasuryId,
+    note: body.note ?? null,
+    date: body.date ?? null,
+  });
+  return c.json({ ok: true, ...result });
+});
 
 
 // ═══════════════════ 8) العملاء ═══════════════════
