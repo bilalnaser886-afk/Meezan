@@ -7072,6 +7072,10 @@ export function productsPage(data: ProductsPageData): Html {
           درج الأندرويد
         </button>
         <button class="tool" type="button" data-tool="flt">فلتر</button>
+        <!-- ⚠ أداة معايرة، مش وظيفة يومية.
+             بتطبع ورقة فيها نفس الكود بأربع مقاسات عشان تقيس
+             أصغر مقاس طابعتك بتقراه فعلاً — بدل ما نخمّن. -->
+        <button class="tool" type="button" data-qr-calib>معايرة الرمز</button>
       </div>
 
       <!-- ⚠ أدوات الفلتر بتتغيّر بالدرج المفتوح:
@@ -9269,6 +9273,55 @@ ${MENU_JS}
       '</div>' +
     '</div>';
   }
+
+  // ══════════ معايرة الطباعة ══════════
+  //
+  // ══ ⚠ ليه الأداة دي موجودة؟ ══
+  // حجم مربّع الرمز اللي بيتقرا على طابعة حرارية **مش رقم
+  // بيتحسب** — هو رقم بيتقاس. بيعتمد على تمدّد الحرارة على
+  // الورق وعلى إعداد الكثافة في الطابعة نفسها، والاتنين
+  // بيختلفوا من طابعة لطابعة ومن رول لرول.
+  //
+  // ⚠ وإحنا خمّنا مرتين: 3 نقط ما اتقرتش، و4 نقط ما اتقرتش.
+  // والتخمين التالت هيبقى نفس اللفّة.
+  //
+  // الأداة دي بتطبع **نفس الكود** بأربع مقاسات على ورقة واحدة.
+  // تمسح واحدة واحدة، وأول مقاس بيتقرا بثبات هو إجابتك —
+  // تحطّه في LABEL_QR_DOTS وخلاص.
+  //
+  // ⚠ ومقاس واحد بيتقرا مرة مش كفاية: امسح كل واحد تلات مرات
+  // من مسافات مختلفة. الرمز اللي على الحافة بيتقرا في الضوء
+  // الحلو وبيفشل على الكاونتر.
+  document.addEventListener('click', function (e) {
+    var cal = e.target.closest ? e.target.closest('[data-qr-calib]') : null;
+    if (!cal) return;
+
+    var DOT = 25.4 / 203;
+    var sample = 'CAL123';
+    var cells = '';
+
+    // ⚠ الهامش 2 مربّع زي الملصق الحقيقي بالظبط. لو عايرنا
+    // بهامش مختلف، النتيجة ما بتنطبقش على اللي بنطبعه فعلاً.
+    [3, 4, 5, 6].forEach(function (d) {
+      var mm = Math.round((21 + 4) * d * DOT * 100) / 100;
+      cells +=
+        '<div style="display:inline-block;text-align:center;margin:2mm">' +
+          window.qrSvg(sample, mm, 2) +
+          '<div style="font:600 3mm system-ui">' + d + ' نقط · ' + mm + ' مم</div>' +
+        '</div>';
+    });
+
+    window.printHtml(
+      '<div class="pr-doc" style="width:74mm;padding:3mm;text-align:center">' +
+        '<div style="font:700 4mm system-ui;margin-bottom:2mm">معايرة الرمز</div>' +
+        cells +
+        '<div style="font:3mm system-ui;margin-top:2mm">' +
+          'امسح كل رمز 3 مرات. أصغر مقاس بيتقرا دايمًا = LABEL_QR_DOTS' +
+        '</div>' +
+      '</div>',
+      [74, 60]
+    );
+  });
 
   document.addEventListener('click', function (e) {
     var btn = e.target.closest ? e.target.closest('[data-label]') : null;
