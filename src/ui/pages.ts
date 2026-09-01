@@ -634,6 +634,111 @@ const PRINT_SHARED_JS = `
   }
 
   /**
+   * ══════════ قراءة الأرقام بصريًا (OCR) ══════════
+   *
+   * ══ ليه دي موجودة أصلاً؟ ══
+   * الباركود مش موجود دايمًا. الآيمي بيتقرا كتير من **شاشة
+   * موبايل تاني** (شاشة *#06#) وساعتها الخطوط بتبقى موجودة بس
+   * الانعكاس بيمنع قراءتها، أو بتبقى مش موجودة خالص.
+   *
+   * والرقم مكتوب قدّامك بالبنط العريض — فالمنطقي إن الكاميرا
+   * تقراه زي ما تقرا رقم الفيزا.
+   *
+   * ══ ⚠ الثمن، مكتوب عشان يفضل مقروء ══
+   * المكتبة **تقيلة**: حوالي ٤ ميجا بتتحمّل أول مرة. وبتاخد
+   * ثانية أو اتنين لكل محاولة قراءة، والدقة على شاشة لامعة
+   * أقل منها على ملصق ورقي.
+   *
+   * ⚠ عشان كده هي **مش الافتراضي**: الباركود بيتجرّب الأول
+   * (أسرع وأدق)، والقراءة البصرية زرار منفصل بتضغطه لما
+   * الباركود يفشل.
+   *
+   * ══ ⚠ واللي بيخلّي القرار ده آمن: فحص لُون ══
+   * ده أهم سطر في القسم كله.
+   *
+   * OCR بيغلط — بيقرا 8 مكان B و 0 مكان O. لو قبلنا أول رقم
+   * بيطلع، هنسجّل أجهزة بآيمي غلط ومحدش هيكتشف غير بعد شهور.
+   *
+   * فبنقبل **بس** التتابع اللي ١٥ رقم **وبيعدّي فحص لُون**.
+   * والفحص ده بيرفض ٩ من كل ١٠ قراءات غلط تلقائيًا — يعني
+   * الدقة الواطية بتتحوّل لـ"مالقاش" مش لـ"لقى الغلط".
+   */
+  var ocrReady = null;
+
+  function loadOcr() {
+    if (ocrReady) return ocrReady;
+
+    // ⚠ مصدرين زي المكتبة اللي فوق بالظبط — ولنفس السبب.
+    var SOURCES = [
+      'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+      'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js'
+    ];
+
+    ocrReady = new Promise(function (resolve, reject) {
+      var at = 0;
+      function attempt() {
+        if (at >= SOURCES.length) { reject(new Error('cdn')); return; }
+        var tag = document.createElement('script');
+        tag.src = SOURCES[at++];
+        tag.onload = function () {
+          if (window.Tesseract) resolve(window.Tesseract);
+          else attempt();
+        };
+        tag.onerror = function () { attempt(); };
+        document.head.appendChild(tag);
+      }
+      attempt();
+    });
+    return ocrReady;
+  }
+
+  /**
+   * فحص لُون — نفس الخوارزمية المستخدمة في شاشة البضاعة.
+   *
+   * ⚠ متكرّرة هنا عن قصد: القسم ده سكربت مشترك بيتحمّل في كل
+   * شاشة، وشاشة البضاعة سكربتها منفصل. الربط بينهم كان هيخلّي
+   * الماسح يقع في أي شاشة مالهاش الدالة.
+   */
+  function ocrLuhn(num) {
+    if (!/^\\d{15}$/.test(num)) return false;
+    var sum = 0;
+    for (var i = 0; i < 15; i++) {
+      var d = parseInt(num.charAt(14 - i), 10);
+      if (i % 2 === 1) { d = d * 2; if (d > 9) d -= 9; }
+      sum += d;
+    }
+    return sum % 10 === 0;
+  }
+
+  /**
+   * استخراج أفضل مرشّح من نص القراءة.
+   *
+   * ⚠ بنجمع **كل** تتابعات الأرقام، مش أول واحد.
+   * شاشة *#06# فيها آيمي واحد واتنين ورقم تسلسلي وأرقام
+   * صغيرة زي "01" — فأول تتابع غالبًا مش اللي إنت عايزه.
+   */
+  function ocrPick(text) {
+    var runs = String(text || '').match(/\\d{6,}/g) || [];
+    var loose = null;
+
+    for (var i = 0; i < runs.length; i++) {
+      var r = runs[i];
+      // ⚠ التتابع الأطول من ١٥ بيتقطّع: أحيانًا الشرطة بين
+      // الآيمي و"01" بتضيع فيلزقوا في رقم واحد.
+      for (var k = 0; k + 15 <= r.length; k++) {
+        var slice = r.substr(k, 15);
+        if (ocrLuhn(slice)) return { value: slice, sure: true };
+      }
+      if (!loose && r.length === 15) loose = r;
+    }
+
+    // ⚠ ما عدّاش لُون — بنرجّعه معلّم "مش متأكد" مش بنرميه.
+    // الرقم اللي قرّب بيوفّر على الموظّف كتابة ١٥ خانة، وهو
+    // شايفه قدّامه في الخانة ويقدر يصلّح رقم واحد.
+    return loose ? { value: loose, sure: false } : null;
+  }
+
+  /**
    * بيفتح الكاميرا ويرجّع الكود المقروء.
    * بيرمي رسالة عربية جاهزة لو فشل.
    */
@@ -643,7 +748,7 @@ const PRINT_SHARED_JS = `
     overlay.innerHTML =
       '<div class="scan-box">' +
         '<video class="scan-video" playsinline muted></video>' +
-        '<p class="scan-hint">صوّب الكاميرا على الباركود</p>' +
+        '<p class="scan-hint">صوّب على الباركود — أو دوس «اقرا الرقم» لو مفيش</p>' +
         '<button class="btn-mini" type="button" data-scan-cancel>إلغاء</button>' +
         // ⚠ مخرج يدوي دايمًا موجود.
         //
@@ -651,6 +756,12 @@ const PRINT_SHARED_JS = `
         // تلات حاجات ممكن تخذلك والزبون واقف قدامك. الزرار ده
         // بيخلّي أسوأ حالة "اكتبه بإيدك" مش "اقفل وارجع بعدين".
         '<button class="btn-mini" type="button" data-scan-manual>اكتبه بإيدك</button>' +
+        // ⚠ زرار منفصل مش تلقائي.
+        //
+        // القراءة البصرية بتحمّل ٤ ميجا وبتاخد ثواني. لو
+        // شغّلناها لوحدها مع كل مسحة، كل موظّف هيدفع الثمن ده
+        // حتى لو الباركود قدّامه وواضح.
+        '<button class="btn-mini" type="button" data-scan-ocr>اقرا الرقم بالكاميرا</button>' +
       '</div>';
     document.body.appendChild(overlay);
 
@@ -671,6 +782,96 @@ const PRINT_SHARED_JS = `
       var typed = prompt('اكتب الرقم:');
       if (typed && typed.trim()) { manualValue = typed.trim(); }
       cleanup();
+    });
+
+    // ══════════ القراءة البصرية ══════════
+    var hintEl = overlay.querySelector('.scan-hint');
+    var ocrBtn = overlay.querySelector('[data-scan-ocr]');
+    var ocrBusy = false;
+
+    ocrBtn.addEventListener('click', async function () {
+      if (ocrBusy) return;
+      ocrBusy = true;
+      ocrBtn.disabled = true;
+
+      var worker = null;
+      try {
+        hintEl.textContent = 'بنحمّل القارئ… (أول مرة بس)';
+        var T = await loadOcr();
+
+        worker = await T.createWorker('eng');
+        // ⚠ الأرقام بس. من غير القيد ده، القارئ بيقرا الحروف
+        // اللي حوالين الرقم ويلزقها بيه — و"IMEI1" بتبقى جزء
+        // من التتابع.
+        await worker.setParameters({ tessedit_char_whitelist: '0123456789' });
+
+        // ⚠ لوحة رسم بنعيد استخدامها. عمل واحدة جديدة كل
+        // محاولة بيملا الذاكرة على موبايل قديم.
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d');
+
+        var tries = 0;
+        var best = null;
+
+        while (!stopped && tries < 12) {
+          tries++;
+          hintEl.textContent = 'بنقرا الرقم… محاولة ' + tries;
+
+          // ⚠ بنصغّر لعرض 1280 كحد أقصى. الإطار الكامل بيخلّي
+          // القراءة تاخد أربع ثواني بلا أي تحسّن في الدقة.
+          var vw = video.videoWidth || 1280;
+          var vh = video.videoHeight || 720;
+          var scale = vw > 1280 ? 1280 / vw : 1;
+          canvas.width = Math.round(vw * scale);
+          canvas.height = Math.round(vh * scale);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          var out = await worker.recognize(canvas);
+          var pick = ocrPick(out && out.data ? out.data.text : '');
+
+          if (pick && pick.sure) { best = pick; break; }
+          if (pick && !best) best = pick;
+
+          // ⚠ نفس واحدة كل مرة: بنسيب فرصة للكاميرا تركّز من
+          // جديد وللإيد تثبت. من غير الوقفة دي، الاتناشر محاولة
+          // بيبصّوا على نفس الصورة المهزوزة.
+          await new Promise(function (r) { setTimeout(r, 400); });
+        }
+
+        if (worker) { await worker.terminate(); worker = null; }
+
+        if (stopped) return;
+
+        if (!best) {
+          hintEl.textContent = 'ملقيتش رقم. قرّب أكتر وثبّت الإضاءة.';
+          ocrBusy = false;
+          ocrBtn.disabled = false;
+          return;
+        }
+
+        // ⚠ اللي ما عدّاش لُون بيتسأل عليه، ما بيتقبلش بالسكوت.
+        if (!best.sure) {
+          var ok = confirm(
+            'قريت: ' + best.value + '\n\n' +
+            'الرقم ده مش مطابق لفحص الآيمي — يعني غالبًا فيه خانة اتقريت غلط.\n\n' +
+            'أحطّه في الخانة وتصلّحه بإيدك؟'
+          );
+          if (!ok) {
+            hintEl.textContent = 'صوّب الكاميرا على الباركود';
+            ocrBusy = false;
+            ocrBtn.disabled = false;
+            return;
+          }
+        }
+
+        manualValue = best.value;
+        cleanup();
+      } catch (err) {
+        if (worker) { try { await worker.terminate(); } catch (e2) { /* خلاص */ } }
+        hintEl.textContent = 'تعذّر تحميل القارئ. اتأكد من النت أو اكتبه بإيدك.';
+        ocrBusy = false;
+        ocrBtn.disabled = false;
+      }
     });
 
     try {
@@ -739,7 +940,18 @@ const PRINT_SHARED_JS = `
       } catch (e) { /* الصيغ مش مدعومة — بنكمّل للمكتبة */ }
     }
 
-    // ─── الطريق التاني: المكتبة ───
+    // ══ ⚠ حارس قبل تحميل المكتبة ══
+    //
+    // الفحوصات اللي فوق كانت جوّه كتلة بتبلع كل حاجة — حتى
+    // رسالة الإلغاء. فالمستخدم يقفل الماسح، والكود يكمّل
+    // ويحمّل المكتبة على شبكة المحل بلا أي سبب.
+    //
+    // ⚠ وبقت لازمة أكتر مع القراءة البصرية: اللي قرا الرقم
+    // بالكاميرا خلص خلاص، وتحميل ماسح الباركود بعده هدر صافي.
+    if (manualValue) { cleanup(); return manualValue; }
+    if (stopped) throw new Error('أُلغي المسح.');
+
+    // ─── الطريق التالت: مكتبة الباركود ───
     var ZX;
     try {
       ZX = await loadZxing();
