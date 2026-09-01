@@ -10371,7 +10371,15 @@ export interface SuppliersPageData {
   canSell: boolean;
   canViewProducts: boolean;
   canUseTreasury: boolean;
-  treasuries: Array<{ treasuryId: string; name: string }>;
+  /** ⚠ الفرع مع كل خزنة — الشاشة بتفلتر بيه وقت السداد */
+  treasuries: Array<{ treasuryId: string; name: string; branchId: string | null }>;
+  /**
+   * فروع المحل — **فاضية لغير صاحب المحل**.
+   *
+   * مدير الفرع مالوش اختيار: فرعه بيتاخد من جلسته في كل حركة.
+   * وإرسال القايمة له كان هيدّي إحساس كاذب بإنه يقدر يختار.
+   */
+  branches: Array<{ branchId: string; name: string }>;
   today: string;
   idleTimeoutSeconds: number;
   idleWarningSeconds: number;
@@ -10394,6 +10402,7 @@ export function suppliersPage(data: SuppliersPageData): Html {
       data.idleWarningSeconds,
       data.idleAction,
       data.treasuries,
+      data.branches,
     ),
     body: html`${appBar({
       fullName: data.fullName,
@@ -10424,6 +10433,22 @@ export function suppliersPage(data: SuppliersPageData): Html {
       <input class="field-input" id="pay-amount" type="text" inputmode="decimal"
         dir="ltr" placeholder="1500.00" autocomplete="off">
 
+      <!-- ══ الفرع — لصاحب المحل وحده ══
+           ⚠ مدير الفرع مش بيشوف الخانة دي خالص: فرعه بيتاخد
+           من جلسته، وخزائنه هي الوحيدة الواصلة له أصلاً.
+
+           ⚠ واختيار الفرع بيفلتر الخزائن تحته. من غير كده،
+           صاحب المحل بيختار فرع المعادي ويلاقي خزائن فيصل في
+           القايمة — والسداد بينزل من دين الفرع الغلط. -->
+      <div class="field" id="pay-branch-field" hidden>
+        <label class="field-label" for="pay-branch">الفرع</label>
+        <select class="field-input" id="pay-branch">
+          ${data.branches.map(
+            (b) => html`<option value="${b.branchId}">${b.name}</option>`,
+          )}
+        </select>
+      </div>
+
       <label class="field-label" for="pay-treasury">الخزنة</label>
       <select class="field-input" id="pay-treasury">
         ${data.treasuries.map(
@@ -10432,7 +10457,9 @@ export function suppliersPage(data: SuppliersPageData): Html {
       </select>
 
       <button class="btn-mini" type="button" id="pay-go">سداد</button>
-      <p class="field-hint">المبلغ يخرج من الخزنة فورًا وينزل من حساب المورّد.</p>
+      <p class="field-hint">
+        المبلغ يخرج من الخزنة فورًا وينزل من دين الفرع التابعة له.
+      </p>
     </div>
   </div>
 
@@ -10488,7 +10515,9 @@ function suppliersScript(
   warnAt: number,
   action: 'LOGOUT' | 'LOCK',
   /** ⚠ لازم تتمرّر صراحةً — الدالة دي مالهاش وصول لبيانات الصفحة */
-  treasuries: Array<{ treasuryId: string; name: string }>,
+  treasuries: Array<{ treasuryId: string; name: string; branchId: string | null }>,
+  /** فاضية لغير صاحب المحل */
+  branches: Array<{ branchId: string; name: string }>,
 ): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
@@ -10504,6 +10533,49 @@ ${MENU_JS}
   var countEl = document.getElementById('sup-count');
   /** آخر قايمة اتحمّلت — بيستخدمها التصدير */
   var LAST_LIST = [];
+
+  // ══════════ الفروع ══════════
+  //
+  // ⚠ القايمة فاضية لغير صاحب المحل، و**ده هو المفتاح**:
+  // كل اختيار فرع في الشاشة بيتفعّل بوجودها. مدير الفرع
+  // بيشوف شاشة أبسط لأنه مالوش قرار يتاخد أصلاً.
+  var BRANCHES = ${JSON.stringify(branches)};
+  var TREASURIES = ${JSON.stringify(treasuries)};
+  var IS_OWNER = BRANCHES.length > 0;
+
+  function branchWord(id) {
+    for (var i = 0; i < BRANCHES.length; i++) {
+      if (BRANCHES[i].branchId === id) return BRANCHES[i].name;
+    }
+    return null;
+  }
+
+  /**
+   * سؤال الفرع.
+   *
+   * ⚠ بيرجّع سلسلة فاضية لغير صاحب المحل — والخادم بياخد فرعه
+   * من جلسته ساعتها. السؤال هنا كان هيبقى خانة بإجابة واحدة.
+   *
+   * ⚠ وبيرجّع null لو ألغى، عشان اللي بينادي يفرّق بين
+   * "مالوش اختيار" و"اختار يبطّل".
+   */
+  function askBranch(title) {
+    if (!IS_OWNER) return '';
+
+    var lines = [title, ''];
+    for (var i = 0; i < BRANCHES.length; i++) {
+      lines.push((i + 1) + ') ' + BRANCHES[i].name);
+    }
+    lines.push('');
+    lines.push('اكتب رقم الفرع:');
+
+    var pick = prompt(lines.join('\\n'), '1');
+    if (pick === null) return null;
+
+    var n = parseInt(String(pick).trim(), 10);
+    if (!n || n < 1 || n > BRANCHES.length) { say('رقم فرع غير صحيح.', false); return null; }
+    return BRANCHES[n - 1].branchId;
+  }
 
   function say(msg, ok) {
     box.hidden = false;
@@ -10654,6 +10726,7 @@ ${MENU_JS}
             '<button class="btn-mini" type="button" ' +
               'data-sup-pdf="' + sp.supplierId + '">تصدير PDF</button>' +
           '</div>' +
+          branchTable(sp) +
           '<p class="field-hint">' +
             'الرصيد ناتج جمع الحركات، مش رقم مخزّن. تعديله بيتم بدين أو خصم.' +
           '</p>' +
@@ -10666,6 +10739,70 @@ ${MENU_JS}
     } catch (err) {
       say('تعذّر الاتصال بالخادم.', false);
     }
+  }
+
+  /**
+   * توزيع الدين على الفروع.
+   *
+   * ══ ⚠ الفروع **والإجمالي** مع بعض ══
+   * ملف ٢٢ خاف من التوزيع عشان "محدش يعرف الإجمالي". والحل
+   * مش إنك تختار واحد منهم — إنك توري الاتنين.
+   *
+   * فوق: سطر لكل فرع. تحت: خط وإجمالي. الصورتين قدّامك.
+   *
+   * ⚠ ومدير الفرع بيشوف فرعه بس، والإجمالي عنده = فرعه.
+   * ده مش إخفاء — ده نطاق: هو مسؤول عن الرقم ده وبيقدر يسدّده،
+   * وعرض دين فرع تاني عليه كان هيوريه رقم مالوش عليه سلطة.
+   *
+   * ⚠ و"غير موزّع" بيبان صراحةً لو موجود. إخفاؤه كان هيخلّي
+   * مجموع الفروع أقل من الإجمالي بلا تفسير، والفرق ده هو أول
+   * حاجة هتشكّ فيها.
+   */
+  function branchTable(sp) {
+    var list = sp.branches || [];
+    if (!list.length) return '';
+
+    var out = '';
+    for (var i = 0; i < list.length; i++) {
+      var b = list[i];
+      var label = b.branchName || '— غير موزّع —';
+
+      out += '<div class="mv-row">' +
+        '<div class="mv-main">' +
+          '<span class="mv-title">' + escLed(label) + '</span>' +
+          '<span class="mv-sub">' +
+            'استلمت ' + money(b.debtPiastres) +
+            ' · سدّدت ' + money(b.paidPiastres) +
+            (b.lastMovement ? ' · آخر حركة ' + b.lastMovement : '') +
+          '</span>' +
+        '</div>' +
+        '<div class="mv-side">' +
+          '<span class="mv-amount" data-dir="' +
+            (b.balancePiastres > 0 ? 'OUT' : 'IN') + '">' +
+            money(b.balancePiastres) +
+          '</span>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // ⚠ سطر الإجمالي بيتحسب من نفس القايمة مش من رقم تاني.
+    // لو جبناه من مكان مختلف، أول اختلاف بينهم بيخلّي الشاشة
+    // تقول رقمين لنفس السؤال.
+    var total = 0;
+    for (var k = 0; k < list.length; k++) total += list[k].balancePiastres;
+
+    out += '<div class="mv-row">' +
+      '<div class="mv-main">' +
+        '<span class="mv-title">الإجمالي</span>' +
+      '</div>' +
+      '<div class="mv-side">' +
+        '<span class="mv-amount" data-dir="' + (total > 0 ? 'OUT' : 'IN') + '">' +
+          money(total) +
+        '</span>' +
+      '</div>' +
+    '</div>';
+
+    return out;
   }
 
   // ══════════ الدفتر ══════════
@@ -10715,6 +10852,9 @@ ${MENU_JS}
     var title = m.itemName || m.note || kind;
 
     var bits = [m.occurredAt];
+    // ⚠ الفرع بيبان لصاحب المحل بس. مدير الفرع كل حركاته في
+    // فرعه أصلاً، فكتابته على كل سطر ضجيج بيغطّي على المهم.
+    if (IS_OWNER) bits.push(m.branchName || 'غير موزّع');
     if (m.entryDate && m.entryDate !== m.occurredAt) bits.push('دخل ' + m.entryDate);
     if (m.serialNumber) bits.push(m.serialNumber);
     if (m.treasuryName) bits.push('من ' + m.treasuryName);
@@ -10817,6 +10957,47 @@ ${MENU_JS}
   }
 
   // ══════════ السداد السريع ══════════
+  // ══════════ فلترة الخزائن بالفرع ══════════
+  //
+  // ⚠ الفرع بيتحدّد بالخزنة **في الخادم**، مش بالخانة دي.
+  //
+  // يعني الخانة دي راحة عين مش حراسة: بتضيّق القايمة عشان
+  // العين ما تغلطش. والقفل الحقيقي إن الخادم بيقرا فرع الخزنة
+  // وبينزّل منه — فمستحيل يحصل "سداد على فرع من خزنة فرع تاني"
+  // مهما اتبعت من الشاشة.
+  function paintTreasuries() {
+    var field = document.getElementById('pay-branch-field');
+    var brEl = document.getElementById('pay-branch');
+    var trEl = document.getElementById('pay-treasury');
+    if (!trEl) return;
+
+    if (field) field.hidden = !IS_OWNER;
+    if (!IS_OWNER) return;
+
+    var want = brEl ? brEl.value : '';
+    var keep = trEl.value;
+    var out = '';
+    var found = false;
+
+    for (var i = 0; i < TREASURIES.length; i++) {
+      var t = TREASURIES[i];
+      if (want && t.branchId !== want) continue;
+      out += '<option value="' + t.treasuryId + '">' + t.name + '</option>';
+      if (t.treasuryId === keep) found = true;
+    }
+
+    // ⚠ الفرع اللي مالوش خزنة بيبان صراحةً بدل قايمة فاضية.
+    // القايمة الفاضية بتخلّي الواحد يفتكر الشاشة معلّقة.
+    if (!out) out = '<option value="">— مفيش خزنة في الفرع ده —</option>';
+
+    trEl.innerHTML = out;
+    if (found) trEl.value = keep;
+  }
+
+  var payBranchEl = document.getElementById('pay-branch');
+  if (payBranchEl) payBranchEl.addEventListener('change', paintTreasuries);
+  paintTreasuries();
+
   var payBtn = document.getElementById('pay-go');
   if (payBtn) {
     payBtn.addEventListener('click', async function () {
@@ -10861,8 +11042,23 @@ ${MENU_JS}
     if (note === null) return;
     if (isDiscount && !note.trim()) { say('اكتب سبب الخصم.', false); return; }
 
+    // ⚠ الفرع سؤال لصاحب المحل وحده.
+    //
+    // الدين والخصم مش وراهم خزنة تحدّد الفرع زي السداد، فلازم
+    // نسأل. ومدير الفرع ما بيتسألش لأن فرعه بيتاخد من جلسته
+    // في الخادم — والسؤال كان هيبقى خانة بإجابة واحدة.
+    var branchId = askBranch(
+      isDiscount ? 'الخصم ده على أنهي فرع؟' : 'الدين ده على أنهي فرع؟'
+    );
+    if (branchId === null) return;
+
     var result = await send('/api/suppliers/' + encodeURIComponent(id) + '/movement',
-      { kind: kind, amount: amount, note: note.trim() || null }, btn, '…');
+      {
+        kind: kind,
+        amount: amount,
+        note: note.trim() || null,
+        branchId: branchId || null
+      }, btn, '…');
     if (result) {
       say('تم التسجيل — الرصيد الآن ' + money(result.newBalance) + '.', true);
       setTimeout(function () { window.location.reload(); }, 1000);
@@ -10906,8 +11102,8 @@ ${MENU_JS}
     var lines = [
       'المورّد,' + (sp.name || ''),
       'الرصيد,' + (sp.balancePiastres / 100),
-      'إجمالي الدين,' + (sp.totalDebtPiastres / 100),
-      'إجمالي السداد,' + (sp.totalPaidPiastres / 100),
+      'إجمالي الدين,' + (sp.debtPiastres / 100),
+      'إجمالي السداد,' + (sp.paidPiastres / 100),
       ''
     ];
     var csv = '\\uFEFF' + lines.join('\\r\\n');
@@ -10932,8 +11128,8 @@ ${MENU_JS}
         '<h3>حساب المورّد</h3>' +
         '<p>' + (sp.name || '') + '</p>' +
         '<p>الرصيد: ' + money(sp.balancePiastres) + ' ج.م</p>' +
-        '<p>إجمالي الدين: ' + money(sp.totalDebtPiastres) + ' ج.م</p>' +
-        '<p>إجمالي السداد: ' + money(sp.totalPaidPiastres) + ' ج.م</p>' +
+        '<p>إجمالي الدين: ' + money(sp.debtPiastres) + ' ج.م</p>' +
+        '<p>إجمالي السداد: ' + money(sp.paidPiastres) + ' ج.م</p>' +
       '</div>'
     );
   }
