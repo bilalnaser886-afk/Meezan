@@ -1377,8 +1377,51 @@ export interface SupplierBalance {
   lastMovement: string | null;
 }
 
+/**
+ * سطر واحد في دفتر المورّد.
+ *
+ * ══ ⚠ اسم الجهاز جاي من السجل مش من النص ══
+ * `itemName` بيتقرا من `products.name` عبر الربط، والملاحظة
+ * احتياطي للحركات اليدوية والصفوف القديمة.
+ *
+ * الفرق مش شكلي: النص الحر بيتجمّد وقت الكتابة، والسجل بيفضل
+ * صح لو الجهاز اتغيّر اسمه — ودي نفس غلطة `products.source`
+ * اللي المشروع اتعلّمها مرتين.
+ */
+export interface SupplierMovement {
+  id: string;
+  direction: 'DEBT' | 'PAYMENT';
+  /** سداد بلا فلوس — بيقلّل الدين والدرج ما بيتغيّرش */
+  isDiscount: boolean;
+  amountPiastres: number;
+  note: string | null;
+  /** تاريخ العملية — للدين ده تاريخ دخول البضاعة */
+  occurredAt: string;
+  productId: string | null;
+  itemName: string | null;
+  /** تاريخ دخول الجهاز المخزن، لو الحركة مربوطة بجهاز */
+  entryDate: string | null;
+  serialNumber: string | null;
+  actorName: string;
+  /** مفتاح الدور خام — الواجهة هي اللي بتترجمه لكلمة عربية */
+  actorRole: string;
+  /** الخزنة اللي السداد خرج منها. فاضية للدين والخصم. */
+  treasuryName: string | null;
+}
+
 export interface SupplierRepository {
   listBalances(tenantId: string): Promise<SupplierBalance[]>;
+  /**
+   * دفتر حركات مورّد واحد.
+   *
+   * ⚠ المحل معامل في الاستعلام مش فلترة بعدية — دفتر مورّد محل
+   * تاني بيرجع فاضي، مش بيترجع ويتفلتر.
+   */
+  listMovements(
+    supplierId: string,
+    tenantId: string,
+    limit?: number,
+  ): Promise<SupplierMovement[]>;
   create(data: {
     tenantId: string;
     name: string;
