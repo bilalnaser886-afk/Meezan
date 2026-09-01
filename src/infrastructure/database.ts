@@ -62,6 +62,8 @@ import type {
   AlertRepository,
   MaintenanceRecord,
   MaintenanceRepository,
+  ShopRepository,
+  SupplierBranchBalance,
   SupplierRepository,
   TicketStatus,
   TransferRepository,
@@ -541,7 +543,7 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
      * فتح محل — نداء واحد لا يتجزّأ.
      *
      * الدالة في قاعدة البيانات بتعمل: المحل + أول فرع + حساب
-     * المالك + أسباب الصرف + خزينة كاش. لو وقع أي جزء، مفيش
+     * المالك + أسباب الصرف + خزنة كاش. لو وقع أي جزء، مفيش
      * حاجة بتتكتب — بدل ما يبقى عندنا محل نصّه مركّب وصاحبه
      * يدخل يلاقي نظام مكسور من أول يوم.
      */
@@ -592,7 +594,7 @@ export function createTenantRepository(db: SupabaseClient): TenantRepository {
           }
           if (constraint.includes('treasur')) {
             throw Errors.validation(
-              'تعارض في الخزائن: القيد الحالي لا يفرّق بين المحلات. شغّل ملف 15_uniqueness_fix.sql.',
+              'تعارض في الخزن: القيد الحالي لا يفرّق بين المحلات. شغّل ملف 15_uniqueness_fix.sql.',
             );
           }
           throw Errors.validation(
@@ -818,7 +820,7 @@ function raisePlatformError(
   }
 }
 
-// ─────────── الخزينة ───────────
+// ─────────── الخزنة ───────────
 
 export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository {
   return {
@@ -872,7 +874,7 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
     /**
      * الملخّص المالي.
      *
-     * ⚠ صف لكل خزينة، والتجميع بيحصل في حالة الاستخدام من نفس
+     * ⚠ صف لكل خزنة، والتجميع بيحصل في حالة الاستخدام من نفس
      * الصفوف دي. مفيش استعلام تاني للمجاميع — عشان يستحيل
      * المجموع يخالف الأجزاء.
      */
@@ -935,7 +937,7 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
      * واحدة جوّه القاعدة.
      *
      * لو كتبناهم من هنا، أي فشل في النص هيسيب فلوس طالعة من
-     * خزينة وما وصلتش للتانية — وده أسوأ من فشل كامل، لأنه
+     * خزنة وما وصلتش للتانية — وده أسوأ من فشل كامل، لأنه
      * بيبان كأنه نجح.
      */
     async transfer(input) {
@@ -994,7 +996,7 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
   };
 }
 
-// ─────────── حركات الخزينة ───────────
+// ─────────── حركات الخزنة ───────────
 
 const MOVEMENT_COLUMNS =
   'id, tenant_id, treasury_id, branch_id, direction, type, amount_piastres, status, ' +
@@ -1041,7 +1043,7 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         .from('treasury_movements')
         .insert({
           // ⚠⚠ `tenant_id` كان **ناقص** هنا، والعمود `not null`
-          // بلا قيمة افتراضية — يعني **كل** حركة خزينة كانت
+          // بلا قيمة افتراضية — يعني **كل** حركة خزنة كانت
           // بترفض قبل ما تتكتب، والرد بيطلع 500.
           //
           // ══ إزاي فات علينا شهور؟ ══
@@ -1258,7 +1260,7 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 }
 
 // ═══════════════════════════════════════════════════════════
-//  المنتجات
+//  البضاعة
 //
 //  ⚠ أهم فقرة أمنية في الملف كله.
 //
@@ -1275,7 +1277,8 @@ export function createExpenseReasonRepository(db: SupabaseClient): ExpenseReason
 // ═══════════════════════════════════════════════════════════
 
 const PRODUCT_BASE_COLUMNS =
-  'id, tenant_id, branch_id, name, product_type, serial_number, source, entry_date, ' +
+  'id, tenant_id, branch_id, name, product_type, serial_number, serial_unavailable, ' +
+  'source, entry_date, ' +
   'price_piastres, quantity_on_hand, quarantined_quantity, reorder_point, ' +
   'customs_cleared, battery_health, storage_capacity, category_id, model_id, color_id, is_active';
 
@@ -1293,6 +1296,7 @@ interface RawProduct {
   name: string;
   product_type: string;
   serial_number: string | null;
+  serial_unavailable: boolean | null;
   source: string | null;
   entry_date: string;
   price_piastres: number | string | null;
@@ -1314,6 +1318,9 @@ function toProduct(raw: RawProduct): ProductRecord {
     name: raw.name,
     productType: (raw.product_type === 'device' ? 'device' : 'accessory') as ProductType,
     serialNumber: raw.serial_number,
+    // ⚠ الافتراضي false مش null. الصفوف القديمة اتعملت قبل ما
+    // العمود يوجد، والقيمة الغايبة معناها "ليه سريال عادي".
+    serialUnavailable: raw.serial_unavailable === true,
     source: raw.source,
     // عمود date بيرجع نص زي "2026-08-15" — بنسيبه نص.
     // تحويله لـ Date بيحطّ عليه وقت ومنطقة زمنية، وأول ما يترجع
@@ -1348,7 +1355,7 @@ function toProduct(raw: RawProduct): ProductRecord {
 export function createCategoryRepository(db: SupabaseClient): CategoryRepository {
   return {
     /**
-     * الشجرة + عدد منتجات كل درج في **نداء واحد**.
+     * الشجرة + عدد بضاعة كل درج في **نداء واحد**.
      *
      * ⚠ الدالة في القاعدة هي اللي بتعدّ. لو عدّينا هنا، كانت
      * هتبقى رحلة شبكة لكل درج — سبع أدراج دلوقتي وتلاتين بعد سنة.
@@ -1450,7 +1457,7 @@ export function createCategoryRepository(db: SupabaseClient): CategoryRepository
         .update({
           deleted_at: at.toISOString(),
           deleted_by: actorId,
-          delete_reason: 'حذف من شاشة المنتجات',
+          delete_reason: 'حذف من شاشة البضاعة',
         })
         .eq('id', id)
         .eq('tenant_id', tenantId)
@@ -1466,6 +1473,9 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
     id: String(r.id),
     name: String(r.name),
     brand: (r.brand as string | null) ?? null,
+    // ⚠ أي قيمة غير معروفة بتترجم null (غير مصنّف) مش بتتمرّر
+    // كما هي. القيد في القاعدة بيمنعها، وده حزام تاني.
+    family: r.family === 'IPHONE' || r.family === 'ANDROID' ? r.family : null,
     sortOrder: Number(r.sort_order ?? 0),
     deviceCount: Number(r.device_count ?? 0),
     accessoryCount: Number(r.accessory_count ?? 0),
@@ -1492,7 +1502,7 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
       // ⚠ المحل جزء من الاستعلام مش فلتر بعده
       const { data, error } = await db
         .from('device_models')
-        .select('id, name, brand, sort_order')
+        .select('id, name, brand, family, sort_order')
         .eq('id', id)
         .eq('tenant_id', tenantId)
         .is('deleted_at', null)
@@ -1511,6 +1521,7 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
           tenant_id: input.tenantId,
           name: input.name,
           brand: input.brand,
+          family: input.family,
           sort_order: 99,
         })
         .select('id')
@@ -1528,6 +1539,7 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
       const row: Record<string, unknown> = {};
       if (patch.name !== undefined) row.name = patch.name;
       if (patch.brand !== undefined) row.brand = patch.brand;
+      if (patch.family !== undefined) row.family = patch.family;
       if (Object.keys(row).length === 0) return;
 
       const { error } = await db
@@ -1546,7 +1558,7 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
     /**
      * حذف ناعم.
      *
-     * ⚠ الصف بيفضل عشان المنتجات القديمة اللي بتشاور عليه ما
+     * ⚠ الصف بيفضل عشان البضاعة القديمة اللي بتشاور عليه ما
      * تكسرش. والمنتج بيبان "بلا موديل" لأن الموديل مش بيترجع
      * في القايمة — من غير ما نلمس صف المنتج.
      */
@@ -1556,7 +1568,7 @@ export function createModelRepository(db: SupabaseClient): ModelRepository {
         .update({
           deleted_at: at.toISOString(),
           deleted_by: actorId,
-          delete_reason: 'حذف من شاشة المنتجات',
+          delete_reason: 'حذف من شاشة البضاعة',
         })
         .eq('id', id)
         .eq('tenant_id', tenantId)
@@ -1648,7 +1660,7 @@ export function createColorRepository(db: SupabaseClient): ColorRepository {
         .update({
           deleted_at: at.toISOString(),
           deleted_by: actorId,
-          delete_reason: 'حذف من شاشة المنتجات',
+          delete_reason: 'حذف من شاشة البضاعة',
         })
         .eq('id', id)
         .eq('tenant_id', tenantId)
@@ -1694,57 +1706,62 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       return data ? toProduct(data as unknown as RawProduct) : null;
     },
 
+    /**
+     * ⚠ نداء واحد لدالة قاعدة البيانات، مش إدخال مباشر.
+     *
+     * السبب إن الإضافة بقت ممكن تحرّك فلوس (تكلفة مدفوعة) أو
+     * تزوّد دين مورّد. والتلاتة لازم يتكتبوا في معاملة واحدة.
+     *
+     * لو كتبنا المنتج هنا وناديّنا الفلوس بعده، بينهم رحلة
+     * شبكة — وأي فشل بيسيب جهاز بلا دين أو دين بلا جهاز.
+     * والاتنين بيبانوا كأنهم نجاح.
+     *
+     * نفس نمط `fn_transfer_treasury` بالظبط.
+     */
     async create(data) {
-      const { data: row, error } = await db
-        .from('products')
-        .insert({
-          tenant_id: data.tenantId,
-          branch_id: data.branchId,
-          name: data.name,
-          product_type: data.productType,
-          serial_number: data.serialNumber,
-          source: data.source,
-          // null = سيب افتراضي قاعدة البيانات يشتغل (تاريخ القاهرة)
-          ...(data.entryDate ? { entry_date: data.entryDate } : {}),
-          price_piastres: data.pricePiastres,
-          cost_piastres: data.costPiastres,
-          quantity_on_hand: data.quantityOnHand,
-          // ⚠ مواصفات الجهاز بتتكتب مع الصف من أول لحظة.
-          // قبل كده كانت بتتضاف في تعديل تاني بعد الإنشاء —
-          // يعني كان فيه لحظة الجهاز فيها مسجّل بلا مواصفاته،
-          // ولو التعديل التاني فشل بتفضل ناقصة بلا أثر.
-          customs_cleared: data.customsCleared,
-          battery_health: data.batteryHealth,
-          storage_capacity: data.storageCapacity,
-          category_id: data.categoryId,
-          model_id: data.modelId,
-          color_id: data.colorId,
-          is_active: true,
-          created_by_id: data.createdById,
-          updated_by_id: data.createdById,
-        })
-        .select('id')
-        .single();
+      const { data: settled, error: settleError } = await db.rpc(
+        'fn_create_product_settled',
+        {
+          p_product: {
+            tenant_id: data.tenantId,
+            branch_id: data.branchId,
+            name: data.name,
+            product_type: data.productType,
+            serial_number: data.serialNumber,
+            serial_unavailable: data.serialUnavailable,
+            source: data.source,
+            supplier_id: data.supplierId,
+            entry_date: data.entryDate ?? null,
+            price_piastres: data.pricePiastres,
+            cost_piastres: data.costPiastres,
+            quantity_on_hand: data.quantityOnHand,
+            customs_cleared: data.customsCleared,
+            battery_health: data.batteryHealth,
+            storage_capacity: data.storageCapacity,
+            category_id: data.categoryId,
+            model_id: data.modelId,
+            color_id: data.colorId,
+          },
+          p_actor_id: data.createdById,
+          p_settle: data.settle ?? 'NONE',
+          p_treasury_id: data.treasuryId ?? null,
+        },
+      );
 
-      if (error || !row) {
-        // 23505 = تكرار. فيه فهرسين فريدين على الجدول دلوقتي،
-        // فبنقرا اسم الفهرس عشان نقول للمستخدم إيه بالظبط المتكرر
-        // بدل رسالة عامة تخليه يدوّر.
-        if (error?.code === '23505') {
-          const detail = `${error.message} ${error.details ?? ''}`;
-          if (detail.includes('serial')) {
-            throw Errors.validation('الرقم التسلسلي ده مسجّل على منتج آخر.');
-          }
-          throw Errors.validation('يوجد منتج بالاسم نفسه في هذا الفرع.');
+      if (settleError) {
+        // ⚠ نفس ترجمة أخطاء القاعدة المستخدمة في باقي المشروع:
+        // رسالة عربية للمستخدم، والتفاصيل للّوق بس.
+        const detail = settleError.message ?? '';
+        if (detail.includes('اختر')) throw Errors.validation(detail);
+        if (settleError.code === '23505') {
+          throw Errors.validation('الرقم التسلسلي ده مسجّل بالفعل.');
         }
-        // 23514 = قيد. الأشهر هنا: جهاز بلا سريال أو كميته أكبر من 1
-        if (error?.code === '23514') {
-          throw Errors.validation('بيانات المنتج لا تطابق نوعه. الجهاز قطعة واحدة برقم تسلسلي.');
-        }
-        throw Errors.internal(`product insert: ${error?.message}`);
+        throw Errors.internal(`fn_create_product_settled: ${detail}`);
       }
 
-      return { id: row.id as string };
+      const settledRow = (settled as Array<Record<string, unknown>> | null)?.[0];
+      if (!settledRow) throw Errors.internal('fn_create_product_settled: مفيش نتيجة');
+      return { id: String(settledRow.product_id) };
     },
 
     async update(id, data) {
@@ -1758,6 +1775,9 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
       if (data.isActive !== undefined) patch.is_active = data.isActive;
       if (data.source !== undefined) patch.source = data.source;
       if (data.serialNumber !== undefined) patch.serial_number = data.serialNumber;
+      if (data.serialUnavailable !== undefined) {
+        patch.serial_unavailable = data.serialUnavailable;
+      }
       if (data.entryDate !== undefined) patch.entry_date = data.entryDate;
       // ⚠ محكوم بصلاحية `inventory.reorder_point` في حالة الاستخدام،
       // مش هنا. المستودع بينفّذ، والقرار فوق.
@@ -1933,7 +1953,7 @@ function toSale(raw: RawSale): SaleSummary {
  * هي مكتوبة أصلاً عشان الموظّف يقراها قدّام الزبون.
  */
 /**
- * ترجمة أخطاء دوال الخزينة.
+ * ترجمة أخطاء دوال الخزنة.
  *
  * ⚠ الرسائل مكتوبة عربي جوّه الدوال وبتمرّ زي ما هي — هي
  * مكتوبة أصلاً عشان المستخدم يقراها: "رصيد النقدي 196.50 —
@@ -1956,7 +1976,7 @@ function raiseTreasuryError(
     default:
       // 23505 = تكرار. الفهرس الفريد على (المحل، الفرع، الاسم)
       if (error.code === '23505') {
-        throw Errors.validation('فيه خزينة بنفس الاسم في الفرع ده.');
+        throw Errors.validation('فيه خزنة بنفس الاسم في الفرع ده.');
       }
       // 23514 = قيد رفض السجل. أشهرهم هنا: العمولة مش مساوية الفرق
       if (error.code === '23514') {
@@ -1976,12 +1996,12 @@ function raiseSaleError(error: { code?: string; message?: string }): never {
 
     // ══ ⚠ MZ403 هنا **مش** فشل صلاحية، وده مقصود ══
     //
-    // الدالة بترمي الكود ده في حالتين بس: الخزينة من فرع تاني،
+    // الدالة بترمي الكود ده في حالتين بس: الخزنة من فرع تاني،
     // أو منتج في السلة من فرع تاني. الاتنين **غلطة على الكاونتر**
     // مش محاولة تجاوز.
     //
     // والحراسة الحقيقية اتعملت قبل ما نوصل هنا: `createSale`
-    // بتقفل غير صاحب المحل على خزينة فرعه. اللي بيوصل للكود ده
+    // بتقفل غير صاحب المحل على خزنة فرعه. اللي بيوصل للكود ده
     // هو صاحب المحل اللي فروعه كلها بتاعته — بيخلط بينهم بس.
     //
     // ══ وليه اتغيّر من forbidden ══
@@ -2130,6 +2150,19 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
      * اتكتبت، والتاريخ التجاري بيقول إمتى البضاعة خرجت. لو عدّلنا
      * الاتنين مع بعض، مش هتعرف أبدًا إن فيه بيعة اتسجّلت متأخر.
      */
+    /**
+     * ⚠ دالة مستقلة في القاعدة، مش تعديل مباشر على الجدول.
+     * الحاجز اللي بيمنع محل يكتب على فاتورة محل تاني جوّاها.
+     */
+    async setNote(id, actorId, note) {
+      const { error } = await db.rpc('fn_set_sale_note', {
+        p_sale_id: id,
+        p_actor_id: actorId,
+        p_note: note,
+      });
+      if (error) throw Errors.internal(`fn_set_sale_note: ${error.message}`);
+    },
+
     async updateExitDate(id, exitDate) {
       const { error } = await db
         .from('sales')
@@ -2850,23 +2883,267 @@ function raiseSupplierError(error: { code?: string; message?: string }, fn: stri
   }
 }
 
-export function createSupplierRepository(db: SupabaseClient): SupplierRepository {
+/**
+ * مستودع حساب المحلات.
+ *
+ * ⚠ العمليتين اللي بتغيّروا أرقام (`consign` و`recordPayment`)
+ * بيتنادوا كدوال في القاعدة، مش إدخال مباشر. كل واحدة بتكتب
+ * في جدولين أو تلاتة، وأي فصل بينهم بيسيب النظام في حالة
+ * بتبان كأنها نجاح.
+ */
+export function createShopRepository(db: SupabaseClient): ShopRepository {
   return {
     async listBalances(tenantId) {
-      const { data, error } = await db.rpc('fn_supplier_balances', { p_tenant_id: tenantId });
-      if (error) raiseSupplierError(error, 'fn_supplier_balances');
+      const { data, error } = await db.rpc('fn_shop_balances', { p_tenant_id: tenantId });
+      if (error) throw Errors.internal(`shop balances: ${error.message}`);
+
+      return ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        shopId: String(r.shop_id),
+        name: String(r.name),
+        contactName: (r.contact_name as string | null) ?? null,
+        phone: (r.phone as string | null) ?? null,
+        totalOut: Number(r.total_out ?? 0),
+        totalPaid: Number(r.total_paid ?? 0),
+        balancePiastres: Number(r.balance_piastres ?? 0),
+        lastMovement: (r.last_movement as string | null) ?? null,
+      }));
+    },
+
+    async create(data) {
+      const { data: row, error } = await db
+        .from('shop_accounts')
+        .insert({
+          tenant_id: data.tenantId,
+          branch_id: data.branchId,
+          name: data.name,
+          contact_name: data.contactName,
+          phone: data.phone,
+          notes: data.notes,
+          created_by_id: data.createdById,
+        })
+        .select('id')
+        .single();
+
+      if (error || !row) {
+        // 23505 = تكرار الاسم جوّه نفس المحل
+        if (error?.code === '23505') throw Errors.validation('فيه حساب بالاسم ده بالفعل.');
+        throw Errors.internal(`shop insert: ${error?.message}`);
+      }
+      return { id: row.id as string };
+    },
+
+    async update(id, data) {
+      const row: Record<string, unknown> = {};
+      if (data.name !== undefined) row.name = data.name;
+      if (data.contactName !== undefined) row.contact_name = data.contactName;
+      if (data.phone !== undefined) row.phone = data.phone;
+      if (Object.keys(row).length === 0) return;
+
+      const { error } = await db
+        .from('shop_accounts')
+        .update(row)
+        .eq('id', id)
+        .is('deleted_at', null);
+
+      if (error) {
+        if (error.code === '23505') throw Errors.validation('فيه حساب بالاسم ده بالفعل.');
+        throw Errors.internal(`shop update: ${error.message}`);
+      }
+    },
+
+    async findById(id) {
+      const { data, error } = await db
+        .from('shop_accounts')
+        .select('id, tenant_id, name')
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (error) throw Errors.internal(`shop findById: ${error.message}`);
+      if (!data) return null;
+      return {
+        id: String(data.id),
+        tenantId: String(data.tenant_id),
+        name: String(data.name),
+      };
+    },
+
+    async consign(input) {
+      const { data, error } = await db.rpc('fn_shop_consign', {
+        p_shop_id: input.shopId,
+        p_actor_id: input.actorId,
+        // ⚠ الأسماء بصيغة القاعدة (snake_case) لأن الدالة
+        // بتقرا الـjsonb بالمفتاح مباشرةً.
+        p_items: input.items.map((line) => ({
+          product_id: line.productId,
+          quantity: line.quantity,
+          unit_price: line.unitPricePiastres,
+        })),
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseShopError(error, 'fn_shop_consign');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_shop_consign: مفيش نتيجة');
+      return {
+        movementId: String(row.movement_id),
+        totalPiastres: Number(row.total_piastres ?? 0),
+        newBalance: Number(row.new_balance ?? 0),
+      };
+    },
+
+    async recordPayment(input) {
+      const { data, error } = await db.rpc('fn_shop_payment', {
+        p_shop_id: input.shopId,
+        p_actor_id: input.actorId,
+        p_treasury_id: input.treasuryId,
+        p_amount: input.amountPiastres,
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseShopError(error, 'fn_shop_payment');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_shop_payment: مفيش نتيجة');
+      return {
+        movementId: String(row.movement_id),
+        treasuryMovementId: String(row.treasury_movement_id),
+        newBalance: Number(row.new_balance ?? 0),
+      };
+    },
+  };
+}
+
+/**
+ * ترجمة أخطاء دوال المحلات.
+ *
+ * ⚠ الرسايل العربية اللي الدالة بترميها بتوصل للمستخدم زي ما
+ * هي (الكمية المتاحة، المحل غير موجود). أي حاجة تانية بتتحوّل
+ * لخطأ داخلي — تسريب نص خطأ القاعدة بيدّي خريطة للنظام.
+ */
+function raiseShopError(error: { message?: string; code?: string }, fn: string): never {
+  const detail = error.message ?? '';
+  if (detail.includes('غير موجود') || detail.includes('الكمية') || detail.includes('اختر')) {
+    throw Errors.validation(detail);
+  }
+  throw Errors.internal(`${fn}: ${detail}`);
+}
+
+export function createSupplierRepository(db: SupabaseClient): SupplierRepository {
+  return {
+    /**
+     * الأرصدة + توزيعها على الفروع.
+     *
+     * ══ ⚠ نداءين مش واحد، وده مقصود ══
+     * `fn_supplier_balances` بتتنادى من جوّه دالة الدين ودالة
+     * السداد عشان ترجّع الرصيد الجديد. تعديل شكل ردّها كان
+     * هيكسر التلاتة مع بعض.
+     *
+     * فسبناها زي ما هي، والتوزيع في دالة لوحدها، والدمج هنا.
+     * رحلة شبكة زيادة أرخص من كسر تلات دوال شغّالة.
+     *
+     * ⚠ ومدير الفرع بياخد أرقام **فرعه** في الأعمدة الكلية،
+     * مش إجمالي المحل. عرض إجمالي المحل عليه كان هيوريه رقم
+     * هو مش مسؤول عنه ولا بيقدر يسدّده.
+     */
+    async listBalances(tenantId, branchId) {
+      const [balances, breakdown] = await Promise.all([
+        db.rpc('fn_supplier_balances', { p_tenant_id: tenantId }),
+        db.rpc('fn_supplier_branch_balances', {
+          p_tenant_id: tenantId,
+          p_branch_id: branchId,
+        }),
+      ]);
+
+      if (balances.error) raiseSupplierError(balances.error, 'fn_supplier_balances');
+      if (breakdown.error) raiseSupplierError(breakdown.error, 'fn_supplier_branch_balances');
+
+      // ⚠ التوزيع بيتلمّ بالمورّد قبل الدمج. اللفّ جوّه اللفّ
+      // كان هيبقى عدد الموردين × عدد الصفوف — وده بيبان بطيء
+      // بعد سنة من الحركات مش دلوقتي.
+      const bySupplier = new Map<string, SupplierBranchBalance[]>();
+      for (const raw of (breakdown.data as Array<Record<string, unknown>> | null) ?? []) {
+        const key = String(raw.supplier_id);
+        const list = bySupplier.get(key) ?? [];
+        list.push({
+          branchId: raw.branch_id ? String(raw.branch_id) : null,
+          branchName: raw.branch_name ? String(raw.branch_name) : null,
+          debtPiastres: Number(raw.debt_piastres),
+          paidPiastres: Number(raw.paid_piastres),
+          balancePiastres: Number(raw.balance_piastres),
+          movementCount: Number(raw.movement_count),
+          lastMovement: raw.last_movement ? String(raw.last_movement).slice(0, 10) : null,
+        });
+        bySupplier.set(key, list);
+      }
+
+      return ((balances.data as Array<Record<string, unknown>> | null) ?? []).map((row) => {
+        const id = String(row.supplier_id);
+        const branches = bySupplier.get(id) ?? [];
+
+        // ⚠ صاحب المحل بياخد الإجمالي من الدالة القديمة.
+        // مدير الفرع بياخده **مجموع فرعه** — والدالة القديمة
+        // مالهاش فلتر فرع أصلاً، فالجمع هنا هو الطريق الوحيد.
+        const scoped = branchId !== null;
+        const sum = (pick: (b: SupplierBranchBalance) => number): number =>
+          branches.reduce((total, b) => total + pick(b), 0);
+
+        return {
+          supplierId: id,
+          name: String(row.name),
+          phone: row.phone ? String(row.phone) : null,
+          notes: row.notes ? String(row.notes) : null,
+          isActive: Boolean(row.is_active),
+          productCount: Number(row.product_count),
+          debtPiastres: scoped ? sum((b) => b.debtPiastres) : Number(row.debt_piastres),
+          paidPiastres: scoped ? sum((b) => b.paidPiastres) : Number(row.paid_piastres),
+          balancePiastres: scoped
+            ? sum((b) => b.balancePiastres)
+            : Number(row.balance_piastres),
+          lastMovement: row.last_movement ? String(row.last_movement).slice(0, 10) : null,
+          branches,
+        };
+      });
+    },
+
+    /**
+     * دفتر المورّد.
+     *
+     * ⚠ كل سطر بيجاوب على أربع أسئلة: إمتى · على إيه · مين · بكام.
+     * والاسم بيتقرا من سجل المنتج مش من الملاحظة، عشان يفضل صح
+     * لو الجهاز اتغيّر اسمه بعدين.
+     */
+    async listMovements(supplierId, tenantId, branchId, limit = 200) {
+      const { data, error } = await db.rpc('fn_supplier_movements', {
+        p_supplier_id: supplierId,
+        // ⚠ فلتر الفرع في الاستعلام مش بعده — مدير الفرع
+        // ما بيشوفش حركات فرع تاني أصلاً، مش بيشوفها وتتشال.
+        p_branch_id: branchId,
+        // ⚠ المحل بيتبعت للدالة نفسها مش بيتفلتر هنا. لو فلترنا
+        // بعد الرد، الصفوف كانت هتسافر على الشبكة الأول —
+        // والتسريب بيحصل قبل الفلترة مش بعدها.
+        p_tenant_id: tenantId,
+        p_limit: limit,
+      });
+      if (error) raiseSupplierError(error, 'fn_supplier_movements');
 
       return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
-        supplierId: String(row.supplier_id),
-        name: String(row.name),
-        phone: row.phone ? String(row.phone) : null,
-        notes: row.notes ? String(row.notes) : null,
-        isActive: Boolean(row.is_active),
-        productCount: Number(row.product_count),
-        debtPiastres: Number(row.debt_piastres),
-        paidPiastres: Number(row.paid_piastres),
-        balancePiastres: Number(row.balance_piastres),
-        lastMovement: row.last_movement ? String(row.last_movement).slice(0, 10) : null,
+        id: String(row.id),
+        direction: String(row.direction) === 'DEBT' ? ('DEBT' as const) : ('PAYMENT' as const),
+        isDiscount: Boolean(row.is_discount),
+        amountPiastres: Number(row.amount_piastres),
+        note: row.note ? String(row.note) : null,
+        occurredAt: String(row.occurred_at).slice(0, 10),
+        branchId: row.branch_id ? String(row.branch_id) : null,
+        branchName: row.branch_name ? String(row.branch_name) : null,
+        productId: row.product_id ? String(row.product_id) : null,
+        itemName: row.item_name ? String(row.item_name) : null,
+        entryDate: row.entry_date ? String(row.entry_date).slice(0, 10) : null,
+        serialNumber: row.serial_number ? String(row.serial_number) : null,
+        actorName: String(row.actor_name ?? '—'),
+        actorRole: String(row.actor_role ?? '—'),
+        treasuryName: row.treasury_name ? String(row.treasury_name) : null,
       }));
     },
 
@@ -2912,6 +3189,28 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
       return { id: String(row.id), tenantId: String(row.tenant_id), name: String(row.name) };
     },
 
+    /**
+     * ⚠ نفس نمط الدين بالظبط، والفرق الوحيد إن الدالة دي
+     * **ما بتلمسش الخزنة**. الحساب كله جوّه القاعدة.
+     */
+    async recordDiscount(input) {
+      const { data, error } = await db.rpc('fn_supplier_discount', {
+        p_supplier_id: input.supplierId,
+        p_actor_id: input.actorId,
+        p_amount: input.amountPiastres,
+        p_note: input.note,
+        p_date: input.date,
+        // ⚠ بيتجاهل جوّه القاعدة لغير صاحب المحل — الفرع
+        // بيتاخد من جلسة المنفّذ هناك، مش من السطر ده.
+        p_branch_id: input.branchId,
+      });
+      if (error) raiseSupplierError(error, 'fn_supplier_discount');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_supplier_discount: مفيش نتيجة');
+      return { movementId: String(row.movement_id), newBalance: Number(row.new_balance) };
+    },
+
     async recordDebt(input) {
       const { data, error } = await db.rpc('fn_supplier_debt', {
         p_supplier_id: input.supplierId,
@@ -2919,6 +3218,9 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
         p_amount: input.amountPiastres,
         p_note: input.note,
         p_date: input.date,
+        // ⚠ بيتجاهل جوّه القاعدة لغير صاحب المحل — الفرع
+        // بيتاخد من جلسة المنفّذ هناك، مش من السطر ده.
+        p_branch_id: input.branchId,
       });
       if (error) raiseSupplierError(error, 'fn_supplier_debt');
 
@@ -3155,14 +3457,21 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
     },
 
     async findTicket(id) {
+      // ⚠ الحالة داخلة في الاختيار عشان فحص المرتجع.
+      // عمود واحد زيادة في نفس الرحلة أرخص من رحلة تانية.
       const { data, error } = await db
-        .from('repair_tickets').select('id, tenant_id, branch_id')
+        .from('repair_tickets').select('id, tenant_id, branch_id, status')
         .eq('id', id).is('deleted_at', null).maybeSingle();
 
       if (error) raiseMaintError(error, 'repair_tickets.find');
       if (!data) return null;
       const r = data as Record<string, unknown>;
-      return { id: String(r.id), tenantId: String(r.tenant_id), branchId: String(r.branch_id) };
+      return {
+        id: String(r.id),
+        tenantId: String(r.tenant_id),
+        branchId: String(r.branch_id),
+        status: String(r.status),
+      };
     },
 
     /**
