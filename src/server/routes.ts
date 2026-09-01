@@ -1814,6 +1814,7 @@ supplierRoutes.post(
       note?: string;
       date?: string;
       treasuryId?: string;
+      branchId?: string;
     }>(c);
 
     const kind = String(body.kind ?? '');
@@ -1830,6 +1831,9 @@ supplierRoutes.post(
       note: body.note ?? null,
       date: body.date ?? null,
       treasuryId: body.treasuryId,
+      // ⚠ بيتقرا لصاحب المحل بس. حالة الاستخدام بتتجاهله لغيره
+      // وبتاخد الفرع من الجلسة، والقاعدة بتعمل نفس الحاجة تاني.
+      branchId: body.branchId ?? null,
     };
 
     const result =
