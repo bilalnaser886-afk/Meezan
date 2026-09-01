@@ -3542,6 +3542,12 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
         occurredAt: String(r.occurred_at).slice(0, 10),
         paymentGroupId: r.payment_group_id ? String(r.payment_group_id) : null,
         createdByName: r.created_by_name ? String(r.created_by_name) : null,
+        // ⚠ محسوبين في الدالة مش مخزّنين في الجدول.
+        // القيمة الافتراضية هنا حارس: لو الدالة رجعت لنسختها
+        // القديمة (تراجع مايجريشن ٥٤)، الشاشة بتقول "زيارة 1"
+        // بدل "زيارة undefined".
+        isRevisit: Boolean(r.is_revisit),
+        visitNumber: Number(r.visit_number ?? 1),
       }));
     },
 
