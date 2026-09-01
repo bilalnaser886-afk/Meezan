@@ -42,6 +42,21 @@ import type {
   TreasuryRepository,
 } from '../ports';
 
+/**
+ * نطاق الفرع.
+ *
+ * ⚠ صاحب المحل بياخد null — يعني كل الفروع موزّعة قدّامه.
+ * غيره بياخد فرعه، ولو مالوش فرع بياخد `__none__` فما بيشوفش
+ * حاجة. fail-closed: عند الشك اقفل مش افتح.
+ *
+ * ودي نفس القاعدة الموجودة في التقارير والمنتجات والعملاء —
+ * نسخة تانية منها هنا عشان الملف يقرا لوحده.
+ */
+function branchScope(actor: AuthenticatedUser): string | null {
+  if (actor.roleKey === 'SUPER_ADMIN') return null;
+  return actor.branchId ?? '__none__';
+}
+
 export interface SupplierDeps {
   suppliers: SupplierRepository;
   treasuries: TreasuryRepository;
@@ -72,7 +87,7 @@ export async function listSuppliers(
   actor: AuthenticatedUser,
 ): Promise<SupplierBalance[]> {
   assertSupplierAccess(actor);
-  return deps.suppliers.listBalances(actor.tenantId);
+  return deps.suppliers.listBalances(actor.tenantId, branchScope(actor));
 }
 
 /**
@@ -100,7 +115,7 @@ export async function listSupplierMovements(
   // مورّد محل تاني = غير موجود بالنسبة لك
   if (!supplier || supplier.tenantId !== actor.tenantId) throw Errors.notFound('المورّد');
 
-  return deps.suppliers.listMovements(supplierId, actor.tenantId, limit);
+  return deps.suppliers.listMovements(supplierId, actor.tenantId, branchScope(actor), limit);
 }
 
 // ─────────── الكتابة ───────────
@@ -203,6 +218,38 @@ export interface MovementRequest {
   date?: string | null;
   /** للسداد فقط */
   treasuryId?: string;
+  /**
+   * ⚠ لصاحب المحل وحده — غيره الفرع بيتاخد من جلسته.
+   *
+   * والسداد ما بيستخدمهاش خالص: فرعه بيتحدّد من **الخزنة**
+   * اللي الفلوس خرجت منها، لأن الدرج المادي تابع لفرع بالتعريف.
+   */
+  branchId?: string | null;
+}
+
+/**
+ * الفرع اللي الحركة هتتعلّم بيه.
+ *
+ * ⚠ القيمة اللي في الطلب بتتقرا **لصاحب المحل بس**. غيره
+ * بياخد فرع جلسته، وأي قيمة بعتها بتتجاهل — نفس نمط المنتجات
+ * والعملاء والمستخدمين بالحرف.
+ *
+ * ⚠ والقاعدة دي مكرّرة جوّه دالة قاعدة البيانات كمان. التكرار
+ * مقصود: لو الطبقة دي اتشالت يومًا ما بالغلط، اللي جنب البيانات
+ * بتفضل واقفة.
+ */
+function resolveMovementBranch(
+  actor: AuthenticatedUser,
+  requested: string | null | undefined,
+): string | null {
+  if (actor.roleKey !== 'SUPER_ADMIN') {
+    if (!actor.branchId) throw Errors.forbidden('branch scope');
+    return actor.branchId;
+  }
+
+  const branchId = String(requested ?? '').trim();
+  if (!branchId) throw Errors.validation('اختر الفرع اللي الحركة دي عليه.');
+  return branchId;
 }
 
 /**
@@ -226,12 +273,15 @@ export async function recordSupplierDebt(
   const date = readDate(input.date);
   const note = readNotes(input.note);
 
+  const branchId = resolveMovementBranch(actor, input.branchId);
+
   const result = await deps.suppliers.recordDebt({
     supplierId,
     actorId: actor.id,
     amountPiastres,
     note,
     date,
+    branchId,
   });
 
   await deps.audit.record({
@@ -239,7 +289,10 @@ export async function recordSupplierDebt(
     action: 'supplier.debt',
     entity: 'Supplier',
     entityId: supplierId,
-    metadata: { name: supplier.name, amountPiastres, newBalance: result.newBalance, date, note },
+    metadata: {
+      name: supplier.name, amountPiastres, newBalance: result.newBalance,
+      branchId, date, note,
+    },
   });
 
   return result;
@@ -278,12 +331,15 @@ export async function recordSupplierDiscount(
   const note = readNotes(input.note);
   if (!note) throw Errors.validation('اكتب سبب الخصم.');
 
+  const branchId = resolveMovementBranch(actor, input.branchId);
+
   const result = await deps.suppliers.recordDiscount({
     supplierId,
     actorId: actor.id,
     amountPiastres,
     note,
     date,
+    branchId,
   });
 
   await deps.audit.record({
@@ -291,7 +347,10 @@ export async function recordSupplierDiscount(
     action: 'supplier.discount',
     entity: 'Supplier',
     entityId: supplierId,
-    metadata: { name: supplier.name, amountPiastres, newBalance: result.newBalance, date, note },
+    metadata: {
+      name: supplier.name, amountPiastres, newBalance: result.newBalance,
+      branchId, date, note,
+    },
   });
 
   return result;
