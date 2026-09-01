@@ -1363,6 +1363,30 @@ export interface MaintenanceRepository {
 
 // ─────────── الموردين والديون ───────────
 
+/**
+ * رصيد المورّد عند فرع واحد.
+ *
+ * ══ ⚠ ليه التوزيع أصلاً؟ ══
+ * البضاعة بتدخل فرع معيّن، والسداد بيخرج من خزنة فرع معيّن.
+ * البُعد ده موجود على الأرض سواء سجّلناه أو لأ.
+ *
+ * ولما ما نسجّلوش: مدير الفرع الأول بيسدّد دين بضاعة دخلت
+ * الفرع التاني، والدفتر بيقول "تمام" — وخزنة فرعه ناقصة فلوس
+ * مش بتاعته ومفيش رقم بيقول كده.
+ *
+ * ⚠ و`branchId` فاضي معناه **غير موزّع** مش "كل الفروع": دي
+ * حركات قديمة ما اتحدّدش فرعها، وبتتعرض في مجموعة مستقلة.
+ */
+export interface SupplierBranchBalance {
+  branchId: string | null;
+  branchName: string | null;
+  debtPiastres: number;
+  paidPiastres: number;
+  balancePiastres: number;
+  movementCount: number;
+  lastMovement: string | null;
+}
+
 export interface SupplierBalance {
   supplierId: string;
   name: string;
@@ -1375,6 +1399,15 @@ export interface SupplierBalance {
   /** الدين = الزيادات ناقص السداد. ناتج جمع مش رقم مخزّن. */
   balancePiastres: number;
   lastMovement: string | null;
+  /**
+   * التوزيع على الفروع.
+   *
+   * ⚠ مجموع `balancePiastres` بتوعهم = `balancePiastres` فوق
+   * بالظبط. الاتنين بيتعرضوا مع بعض عن قصد: الخوف الأصلي في
+   * ملف ٢٢ كان من ضياع الإجمالي، والحل إنك توري الاتنين مش
+   * إنك تختار واحد.
+   */
+  branches: SupplierBranchBalance[];
 }
 
 /**
@@ -1397,6 +1430,9 @@ export interface SupplierMovement {
   note: string | null;
   /** تاريخ العملية — للدين ده تاريخ دخول البضاعة */
   occurredAt: string;
+  branchId: string | null;
+  /** اسم الفرع، أو فاضي لو الحركة غير موزّعة */
+  branchName: string | null;
   productId: string | null;
   itemName: string | null;
   /** تاريخ دخول الجهاز المخزن، لو الحركة مربوطة بجهاز */
@@ -1410,7 +1446,15 @@ export interface SupplierMovement {
 }
 
 export interface SupplierRepository {
-  listBalances(tenantId: string): Promise<SupplierBalance[]>;
+  /**
+   * ⚠ `branchId` هنا **فلتر نطاق** مش اختيار عرض.
+   *
+   * صاحب المحل بيبعت null فبيشوف كل الفروع موزّعة. مدير الفرع
+   * بيبعت فرعه، وساعتها الأرقام الكلية بتتحسب من فرعه وحده —
+   * مش إجمالي المحل مع تفصيل جزئي، لأن ده كان هيوريه رقم أكبر
+   * من اللي هو مسؤول عنه.
+   */
+  listBalances(tenantId: string, branchId: string | null): Promise<SupplierBalance[]>;
   /**
    * دفتر حركات مورّد واحد.
    *
@@ -1420,6 +1464,7 @@ export interface SupplierRepository {
   listMovements(
     supplierId: string,
     tenantId: string,
+    branchId: string | null,
     limit?: number,
   ): Promise<SupplierMovement[]>;
   create(data: {
@@ -1450,6 +1495,14 @@ export interface SupplierRepository {
     amountPiastres: number;
     note: string;
     date: string | null;
+    /**
+     * ⚠ بيتجاهل تمامًا لغير صاحب المحل.
+     *
+     * دالة قاعدة البيانات بتاخد الفرع من **جلسة المنفّذ** لو
+     * كان ليه فرع، وما بتبصّش على القيمة دي أصلاً. فمدير الفرع
+     * مالوش أي طريقة يعلّم خصم على فرع تاني حتى لو عدّل الطلب.
+     */
+    branchId: string | null;
   }): Promise<{ movementId: string; newBalance: number }>;
   /** دين — ما بيمسّش الخزنة */
   recordDebt(input: {
@@ -1458,6 +1511,8 @@ export interface SupplierRepository {
     amountPiastres: number;
     note: string | null;
     date: string | null;
+    /** ⚠ بيتجاهل لغير صاحب المحل — الفرع من الجلسة جوّه القاعدة */
+    branchId: string | null;
   }): Promise<{ movementId: string; newBalance: number }>;
   /**
    * سداد — **بيمسّ الخزنة ذريًا**.
