@@ -2010,48 +2010,17 @@ maintenanceRoutes.get('/', requireAuth(VIEW), async (c) => {
   const container = buildContainer(c.env);
   const user = c.get('user');
 
-  // ══ ⚠ نطاقين مختلفين، والشاشة بتبعت واحد ══
+  // ⚠ نطاق التذاكر ونطاق أجهزة المحل مختلفين في القيم
+  // المسموحة (DELIVERED مقابل RETURNED)، فبنترجم مرة هنا.
   //
-  // أجهزة المحل بتعرف: OPEN · RETURNED · ALL
-  // تذاكر العملاء بتعرف: OPEN · DELIVERED · REVISIT · ALL
+  // ⚠⚠ و'RETURNED' بتعدّي للاتنين زي ما هي عن قصد:
+  //   أجهزة المحل  →  جهاز رجع من الورشة
+  //   التذاكر      →  جهاز عميل رجع تاني بعد إصلاح ما نفعش
   //
-  // ══ 🔴 والترجمة القديمة كانت في اتجاه واحد بس ══
-  // كانت `scope === 'DELIVERED' ? 'RETURNED' : scope` — يعني
-  // بتصلّح DELIVERED وبتسيب أي قيمة تانية تعدّي زي ما هي.
-  //
-  // فلما الشاشة بعتت `RETURNED` (المرتجعات)، القيمة دي عدّت
-  // للتذاكر وهي مش في قايمتها، والتذاكر رفضت — و`Promise.all`
-  // بيسقط **كله** لو واحد رفض. فالشاشة بتقول «النطاق غير صحيح»
-  // ومفيش ولا قايمة بتتحدّث، لا التذاكر ولا أجهزة المحل ولا
-  // الورش.
-  //
-  // ⚠ الدرس: الترجمة اللي بتعالج حالة واحدة وبتسيب الباقي
-  // بتشتغل صح لحد ما تتضاف حالة جديدة — وساعتها بتقع بصمت
-  // في الكود وبصوت عالي في وش المستخدم.
-  //
-  // دلوقتي كل نطاق ليه خريطة كاملة، والقيمة اللي مش في
-  // الخريطة بتقع على الافتراضي بدل ما تتسرّب.
-  const requested = c.req.query('scope') ?? 'OPEN';
-
-  /** نطاق تذاكر العملاء — القيم اللي `listTickets` بتقبلها */
-  const ticketScope =
-    requested === 'DELIVERED' || requested === 'REVISIT' || requested === 'ALL'
-      ? requested
-      : 'OPEN';
-
-  /**
-   * نطاق أجهزة المحل.
-   *
-   * ⚠ «المرتجعات» مفهوم في التذاكر بس — جهاز عميل رجع تاني
-   * بعد إصلاح ما نفعش. أجهزة المحل مالهاش المعنى ده أصلاً،
-   * فبنوريها كلها بدل ما نفلترها بمعيار مالوش لازمة عندها.
-   */
-  const recordScope =
-    requested === 'DELIVERED'
-      ? 'RETURNED'
-      : requested === 'REVISIT' || requested === 'ALL'
-        ? 'ALL'
-        : 'OPEN';
+  // الكلمة واحدة والمعنى مختلف، والاتنين في قايمة المسموح
+  // بتاعهم. متغيّرهاش لكلمة تانية — هي نفس القيمة اللي
+  // `fn_tickets` بتعرفها في مايجريشن ٥٢.
+  const scope = c.req.query('scope') ?? 'OPEN';
 
   const shared = {
     search: c.req.query('q') ?? null,
@@ -2062,8 +2031,11 @@ maintenanceRoutes.get('/', requireAuth(VIEW), async (c) => {
 
   const [shops, records, tickets] = await Promise.all([
     listRepairShops(container.maintenance, user),
-    listMaintenanceRecords(container.maintenance, user, { ...shared, scope: recordScope }),
-    listTickets(container.maintenance, user, { ...shared, scope: ticketScope }),
+    listMaintenanceRecords(container.maintenance, user, {
+      ...shared,
+      scope: scope === 'DELIVERED' ? 'RETURNED' : scope,
+    }),
+    listTickets(container.maintenance, user, { ...shared, scope }),
   ]);
 
   return c.json({ ok: true, shops, records, tickets });
