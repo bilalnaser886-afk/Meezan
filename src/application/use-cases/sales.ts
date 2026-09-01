@@ -92,6 +92,16 @@ export interface CreateSaleRequest {
    * نفس الحاجة.
    */
   warrantyDays?: number | null;
+  /**
+   * ملاحظة على الفاتورة.
+   *
+   * ⚠ الكلام اللي بيتقال على الكاونتر ومالوش خانة: "اتفقنا
+   * يرجع يغيّر اللون"، "الجهاز فيه خربوشة ووافق".
+   *
+   * ⚠ وما تتحطّش فيها فلوس. "دفع 500 والباقي بكرة" ملاحظة
+   * مفيدة، بس الرقم ده مش داخل أي حساب — ولا المفروض يدخل.
+   */
+  note?: string | null;
 }
 
 /** سقف السلة — نفس الرقم الموجود في دالة قاعدة البيانات */
@@ -182,6 +192,9 @@ export async function createSale(
   // ─── الضمان ───
   const warrantyDays = readWarrantyDays(input.warrantyDays);
 
+  // ─── الملاحظة ───
+  const note = trimOrNull(input.note, 500, 'الملاحظة أطول من الحد المسموح.');
+
   // ─── التنفيذ ───
   // ⚠ أهم سطر في الملف: `staffId` بيتاخد من **الجلسة** مش من
   // جسم الطلب. لو أخدناه من الطلب، أي موظّف يقدر يسجّل بيع باسم
@@ -198,6 +211,22 @@ export async function createSale(
     warrantyDays,
   });
 
+  // ══ ⚠ الملاحظة بعد الفاتورة، مش جوّه معاملتها ══
+  //
+  // دالة البيع بتقفل صفوف المخزون وبتكتب حركة الخزنة — معاملة
+  // حسّاسة. والملاحظة نص وبس: ما بتقفلش صف وما بتحسبش مبلغ.
+  //
+  // ⚠ ولو فشلت، الفاتورة بتفضل سليمة والملاحظة بس اللي ضاعت.
+  // ده فشل مقبول، على عكس نص فاتورة — عشان كده الـcatch هنا
+  // بيبلع الخطأ عن قصد بدل ما يوقّع البيعة كلها.
+  if (note) {
+    try {
+      await deps.sales.setNote(result.saleId, actor.id, note);
+    } catch (error) {
+      console.error('[sale] تعذّر حفظ الملاحظة', result.saleId, error);
+    }
+  }
+
   await deps.audit.record({
     actorId: actor.id,
     action: 'sale.create',
@@ -211,6 +240,7 @@ export async function createSale(
       movementId: result.movementId,
       exitDate,
       warrantyDays,
+      hasNote: note !== null,
     },
   });
 
