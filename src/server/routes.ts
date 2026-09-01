@@ -9,6 +9,13 @@
  */
 
 import { Hono } from 'hono';
+import {
+  consignToShop,
+  createShopAccount,
+  listShopAccounts,
+  recordShopPayment,
+  updateShopAccount,
+} from '../application/use-cases/shops';
 import { getCookie } from 'hono/cookie';
 import type { Context } from 'hono';
 import {
@@ -92,9 +99,12 @@ import {
 } from '../application/use-cases/maintenance';
 import {
   createSupplier,
+  listSupplierMovements,
   listSuppliers,
   recordSupplierDebt,
+  recordSupplierDiscount,
   recordSupplierPayment,
+  updateSupplier,
 } from '../application/use-cases/suppliers';
 import {
   createTransfer,
@@ -617,7 +627,7 @@ userRoutes.post(
 );
 
 
-// ═══════════════════ 5) الخزينة ═══════════════════
+// ═══════════════════ 5) الخزنة ═══════════════════
 
 export const treasuryRoutes = new Hono<AppBindings>();
 
@@ -670,7 +680,7 @@ treasuryRoutes.post(
 treasuryRoutes.post('/movements', requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }), async (c) => {
   const body = await readJson<MovementBody>(c);
 
-  if (!body.treasuryId) throw Errors.validation('اختر الخزينة.');
+  if (!body.treasuryId) throw Errors.validation('اختر الخزنة.');
   if (!MOVEMENT_TYPES.includes(body.type as ManualMovementType)) {
     throw Errors.validation('نوع الحركة غير معروف.');
   }
@@ -777,11 +787,11 @@ treasuryRoutes.get(
 );
 
 /**
- * إنشاء خزينة — صاحب المحل وحده.
+ * إنشاء خزنة — صاحب المحل وحده.
  *
  * ⚠ الحارس هنا بـ`EXPENSE_CREATE` بس؛ فحص الدور جوّه حالة
  * الاستخدام وجوّه دالة القاعدة. مفيش صلاحية مخصّصة لإنشاء
- * الخزائن، وعمل واحدة عشان فعل بيحصل مرة كل شهور كان هيزوّد
+ * الخزن، وعمل واحدة عشان فعل بيحصل مرة كل شهور كان هيزوّد
  * الكتالوج بلا فايدة.
  */
 treasuryRoutes.post(
@@ -803,14 +813,14 @@ treasuryRoutes.post(
       provider: body.provider ?? null,
     });
 
-    return c.json({ ok: true, ...created, message: 'تمت إضافة الخزينة.' }, 201);
+    return c.json({ ok: true, ...created, message: 'تمت إضافة الخزنة.' }, 201);
   },
 );
 
 /**
- * تعديل خزينة.
+ * تعديل خزنة.
  *
- * ⚠ مفيش حقل للنوع هنا عن قصد. تحويل خزينة من نقدي لمحفظة بعد
+ * ⚠ مفيش حقل للنوع هنا عن قصد. تحويل خزنة من نقدي لمحفظة بعد
  * ما اتسجّل عليها حركات معناه إن كل حركة قديمة بقت في مكان غير
  * اللي حصلت فيه — والدفتر بيكدب بأثر رجعي.
  */
@@ -819,7 +829,7 @@ treasuryRoutes.patch(
   requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE] }),
   async (c) => {
     const id = c.req.param('id');
-    if (!id) throw Errors.validation('معرّف الخزينة مفقود.');
+    if (!id) throw Errors.validation('معرّف الخزنة مفقود.');
 
     const body = await readJson<{
       name?: string | null;
@@ -835,7 +845,7 @@ treasuryRoutes.patch(
 );
 
 /**
- * تحويل بين خزينتين.
+ * تحويل بين خزنتين.
  *
  * ⚠ الطلب بياخد **طلع كام** و**وصل كام** — مفيش خانة للعمولة.
  * هي الفرق بينهم، بتتحسب في القاعدة وبيحرسها قيد.
@@ -896,12 +906,12 @@ treasuryRoutes.get(
 );
 
 
-// ═══════════════════ 6) المنتجات ═══════════════════
+// ═══════════════════ 6) البضاعة ═══════════════════
 
 export const productRoutes = new Hono<AppBindings>();
 
 /**
- * قائمة المنتجات.
+ * قائمة البضاعة.
  *
  * ⚠ التكلفة بتتحدّد في حالة الاستخدام من صلاحية `profit.view_real`،
  * والحجب بيحصل في طبقة قاعدة البيانات. المسار ده ما بيعملش أي
@@ -917,7 +927,7 @@ productRoutes.get(
   },
 );
 
-// ═══════════════════ أدراج المنتجات ═══════════════════
+// ═══════════════════ أدراج البضاعة ═══════════════════
 //
 // ⚠ المسارات دي تحت `/api/products/categories`، وترتيبها قبل
 // `/:id` **مقصود**: هونو بيطابق أول مسار مناسب، فلو حطّيناها
@@ -986,11 +996,14 @@ productRoutes.post(
   '/models',
   requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
   async (c) => {
-    const body = await readJson<{ name?: string; brand?: string | null }>(c);
+    const body = await readJson<{ name?: string; brand?: string | null; family?: unknown }>(c);
     const container = buildContainer(c.env);
     const created = await createModel(container.products, c.get('user'), {
       name: String(body.name ?? ''),
       brand: body.brand ?? null,
+      // ⚠ بتتمرّر خام. الفحص في حالة الاستخدام مش هنا — عشان
+      // أي مسار تاني يوصل لنفس الدالة يعدّي من نفس الحارس.
+      family: body.family,
     });
     return c.json({ ok: true, id: created.id }, 201);
   },
@@ -1000,7 +1013,7 @@ productRoutes.patch(
   '/models/:id',
   requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST] }),
   async (c) => {
-    const body = await readJson<{ name?: string; brand?: string | null }>(c);
+    const body = await readJson<{ name?: string; brand?: string | null; family?: unknown }>(c);
     const container = buildContainer(c.env);
     await updateModel(container.products, c.get('user'), c.req.param('id'), body);
     return c.json({ ok: true });
@@ -1017,7 +1030,7 @@ productRoutes.delete(
   },
 );
 
-// ═══════════════════ ألوان المنتجات ═══════════════════
+// ═══════════════════ ألوان البضاعة ═══════════════════
 //
 // ⚠ قبل `/:id` زي الأدراج والموديلات.
 
@@ -1081,6 +1094,10 @@ interface ProductBody {
   name?: string;
   productType?: string;
   serialNumber?: string | null;
+  serialUnavailable?: boolean;
+  supplierId?: string | null;
+  settle?: 'NONE' | 'PAID' | 'CREDIT';
+  treasuryId?: string | null;
   source?: string | null;
   entryDate?: string | null;
   price?: string;
@@ -1125,6 +1142,26 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
   let costPiastres: number;
   let quantity: number;
 
+  // ══ ⚠ التكلفة الفاضية مرفوضة، والصفر مقبول ══
+  //
+  // الفحص هنا مش في حالة الاستخدام، والسبب إن **الفرق بين
+  // الاتنين موجود في النص الخام بس**: `parseCostToPiastres`
+  // بترجّع صفر للفاضي وللصفر، فبعدها مفيش طريقة تفرّق.
+  //
+  // ══ وليه التفرقة دي مهمة؟ ══
+  // الخانة الفاضية بتسيب سؤال معلّق للأبد: الموظّف نسي، ولا
+  // الجهاز فعلاً جه بلا تكلفة؟ بعد شهرين محدش هيعرف.
+  //
+  // والصفر المكتوب صراحةً **قرار**: عيّنة، أو هدية من المورّد،
+  // أو جهاز مشترى بلا مقابل.
+  //
+  // ⚠ ودي نفس تفريقة «غير متاح» في السريال بالحرف، ونفس
+  // تفريقة صحة البطارية: فاضي بلا علامة = نسيان (مرفوض)،
+  // وقيمة صريحة = قرار.
+  if (String(body.cost ?? '').trim() === '') {
+    throw Errors.validation('اكتب التكلفة. لو الجهاز جالك بلا تكلفة، اكتب صفر.');
+  }
+
   try {
     pricePiastres = readOptionalPrice(body.price);
     costPiastres = parseCostToPiastres(body.cost);
@@ -1140,7 +1177,12 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     name: body.name ?? '',
     productType: (body.productType ?? 'accessory') as ProductType,
     serialNumber: body.serialNumber ?? null,
+    serialUnavailable: body.serialUnavailable === true,
     source: body.source ?? null,
+    supplierId: body.supplierId ?? null,
+    // ⚠ خام. الفحص في حالة الاستخدام مش هنا.
+    settle: body.settle,
+    treasuryId: body.treasuryId ?? null,
     entryDate: body.entryDate ?? null,
     pricePiastres,
     costPiastres,
@@ -1175,6 +1217,7 @@ productRoutes.post(
       isActive?: boolean;
       source?: string | null;
       serialNumber?: string | null;
+      serialUnavailable?: boolean;
       entryDate?: string | null;
       reorderPoint?: number | null;
       customsCleared?: boolean;
@@ -1199,6 +1242,9 @@ productRoutes.post(
       if (typeof body.isActive === 'boolean') patch.isActive = body.isActive;
       if (body.source !== undefined) patch.source = body.source;
       if (body.serialNumber !== undefined) patch.serialNumber = body.serialNumber;
+      if (body.serialUnavailable !== undefined) {
+        patch.serialUnavailable = body.serialUnavailable === true;
+      }
       if (body.entryDate !== undefined) patch.entryDate = body.entryDate;
 
       // ── مواصفات الجهاز والحد الأدنى ──
@@ -1284,6 +1330,7 @@ interface SaleBody {
   customerName?: string | null;
   customerPhone?: string | null;
   exitDate?: string | null;
+  note?: string | null;
   /**
    * ⚠ `undefined` (الحقل مش مبعوت) غير `null` (اتبعت فاضي).
    *
@@ -1331,6 +1378,7 @@ saleRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.SALES_CREATE] }), as
     customerPhone: body.customerPhone ?? null,
     exitDate: body.exitDate ?? null,
     warrantyDays: readWarrantyInput(body.warrantyDays),
+    note: body.note ?? null,
   });
 
   return c.json(
@@ -1729,6 +1777,27 @@ supplierRoutes.get(
   },
 );
 
+/**
+ * دفتر المورّد — الحركات سطر سطر.
+ *
+ * ⚠ `touchActivity: false` زي قايمة الموردين بالظبط.
+ *
+ * الدفتر بيتفتح مع فتح كارت المورّد، يعني بينادى من غير ما
+ * المستخدم يعمل حاجة. لو حدّثنا ختم النشاط منه، الموظّف اللي
+ * سايب الشاشة مفتوحة هيفضل "نشط" وهو رايح — ومهلة الخمول
+ * بتبقى بلا معنى.
+ */
+supplierRoutes.get(
+  '/:id/movements',
+  requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE], touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    const container = buildContainer(c.env);
+    const movements = await listSupplierMovements(container.suppliers, c.get('user'), id);
+    return c.json({ ok: true, movements });
+  },
+);
+
 supplierRoutes.post(
   '/',
   requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE] }),
@@ -1748,7 +1817,7 @@ supplierRoutes.post(
  * حركة على حساب المورّد.
  *
  * ⚠ النوعين في مسار واحد عن قصد: الاتنين بيغيّروا نفس الرصيد،
- * والفرق بينهم إن السداد بيمسّ الخزينة كمان. فصلهم لمسارين كان
+ * والفرق بينهم إن السداد بيمسّ الخزنة كمان. فصلهم لمسارين كان
  * هيخلّي الواجهة تختار المسار — والاختيار ده منطق مالي مكانه
  * الخادم.
  */
@@ -1765,10 +1834,14 @@ supplierRoutes.post(
       note?: string;
       date?: string;
       treasuryId?: string;
+      branchId?: string;
     }>(c);
 
     const kind = String(body.kind ?? '');
-    if (kind !== 'DEBT' && kind !== 'PAYMENT') {
+    // ⚠ التلاتة في مسار واحد: كلهم بيغيّروا نفس الرصيد.
+    // الفرق إن السداد بيمسّ الخزنة، والخصم لأ — والاختيار ده
+    // منطق مالي مكانه الخادم مش الواجهة.
+    if (kind !== 'DEBT' && kind !== 'PAYMENT' && kind !== 'DISCOUNT') {
       throw Errors.validation('نوع الحركة غير صحيح.');
     }
 
@@ -1778,16 +1851,147 @@ supplierRoutes.post(
       note: body.note ?? null,
       date: body.date ?? null,
       treasuryId: body.treasuryId,
+      // ⚠ بيتقرا لصاحب المحل بس. حالة الاستخدام بتتجاهله لغيره
+      // وبتاخد الفرع من الجلسة، والقاعدة بتعمل نفس الحاجة تاني.
+      branchId: body.branchId ?? null,
     };
 
     const result =
       kind === 'DEBT'
         ? await recordSupplierDebt(container.suppliers, c.get('user'), id, input)
-        : await recordSupplierPayment(container.suppliers, c.get('user'), id, input);
+        : kind === 'DISCOUNT'
+          ? await recordSupplierDiscount(container.suppliers, c.get('user'), id, input)
+          : await recordSupplierPayment(container.suppliers, c.get('user'), id, input);
 
     return c.json({ ok: true, ...result });
   },
 );
+
+/**
+ * تعديل بيانات المورّد — الاسم والتليفون بس.
+ *
+ * ⚠ الرصيد مش هنا ولا في أي مسار. هو ناتج جمع الحركات، وأي
+ * مسار يعدّله مباشرةً بيخلّي الدفتر يقول رقم والحركات تقول
+ * رقم تاني. التعديل بيتم بحركة دين أو خصم بسبب مكتوب.
+ */
+supplierRoutes.patch(
+  '/:id',
+  requireAuth({ requireAll: [PERMISSIONS.SUPPLIER_MANAGE] }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف المورّد مفقود.');
+
+    const body = await readJson<{
+      name?: string;
+      phone?: string | null;
+      notes?: string | null;
+    }>(c);
+
+    const container = buildContainer(c.env);
+    await updateSupplier(container.suppliers, c.get('user'), id, body);
+    return c.json({ ok: true });
+  },
+);
+
+
+// ═══════════════════ 7.85) حساب المحلات ═══════════════════
+//
+// ⚠ نفس صلاحية الموردين. ده دفتر ديون، والديون معلومة مالية
+// سواء كانت عليك أو ليك.
+
+export const shopRoutes = new Hono<AppBindings>();
+
+const SHOP_GUARD = { requireAll: [PERMISSIONS.SUPPLIER_MANAGE] };
+
+shopRoutes.get(
+  '/',
+  requireAuth({ ...SHOP_GUARD, touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+    const shops = await listShopAccounts(container.shops, c.get('user'));
+    return c.json({ ok: true, shops });
+  },
+);
+
+shopRoutes.post('/', requireAuth(SHOP_GUARD), async (c) => {
+  const body = await readJson<{
+    name?: string;
+    contactName?: string | null;
+    phone?: string | null;
+    notes?: string | null;
+  }>(c);
+
+  const container = buildContainer(c.env);
+  const created = await createShopAccount(container.shops, c.get('user'), {
+    name: String(body.name ?? ''),
+    contactName: body.contactName ?? null,
+    phone: body.phone ?? null,
+    notes: body.notes ?? null,
+  });
+  return c.json({ ok: true, ...created }, 201);
+});
+
+shopRoutes.patch('/:id', requireAuth(SHOP_GUARD), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الحساب مفقود.');
+
+  const body = await readJson<{
+    name?: string;
+    contactName?: string | null;
+    phone?: string | null;
+  }>(c);
+
+  const container = buildContainer(c.env);
+  await updateShopAccount(container.shops, c.get('user'), id, body);
+  return c.json({ ok: true });
+});
+
+/**
+ * خروج بضاعة أجل.
+ *
+ * ⚠ البنود بتتبعت خام. الفحص كله في حالة الاستخدام وقاعدة
+ * البيانات — عشان أي مسار تاني يوصل لنفس الدالة يعدّي من نفس
+ * الحارس.
+ */
+shopRoutes.post('/:id/consign', requireAuth(SHOP_GUARD), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الحساب مفقود.');
+
+  const body = await readJson<{
+    items?: Array<{ productId?: string; quantity?: unknown; unitPrice?: string }>;
+    note?: string | null;
+    date?: string | null;
+  }>(c);
+
+  const container = buildContainer(c.env);
+  const result = await consignToShop(container.shops, c.get('user'), id, {
+    items: body.items ?? [],
+    note: body.note ?? null,
+    date: body.date ?? null,
+  });
+  return c.json({ ok: true, ...result });
+});
+
+shopRoutes.post('/:id/payment', requireAuth(SHOP_GUARD), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف الحساب مفقود.');
+
+  const body = await readJson<{
+    amount?: string;
+    treasuryId?: string;
+    note?: string | null;
+    date?: string | null;
+  }>(c);
+
+  const container = buildContainer(c.env);
+  const result = await recordShopPayment(container.shops, c.get('user'), id, {
+    amount: String(body.amount ?? ''),
+    treasuryId: body.treasuryId,
+    note: body.note ?? null,
+    date: body.date ?? null,
+  });
+  return c.json({ ok: true, ...result });
+});
 
 
 // ═══════════════════ 7.9) الصيانة ═══════════════════
@@ -1906,6 +2110,7 @@ maintenanceRoutes.post('/tickets', requireAuth({ requireAll: [PERMISSIONS.MAINTE
       repairShopId: body.repairShopId ?? null,
       cost: body.cost ?? null,
       promisedDate: body.promisedDate ?? null,
+      receivedDate: body.receivedDate ?? null,
       parentTicketId: body.parentTicketId ?? null,
       branchId: body.branchId ?? null,
     });
@@ -2346,16 +2551,16 @@ platformRoutes.post('/bootstrap', async (c) => {
 // ═══════════════════════════════════════════════════════════
 //  شراء البضاعة
 //
-//  ⚠ مسار منفصل عن الخزينة رغم إن النتيجة حركة خزينة.
+//  ⚠ مسار منفصل عن الخزنة رغم إن النتيجة حركة خزنة.
 //
 //  السبب: العملية دي بتكتب **صفّين** في معاملة واحدة (الحركة
 //  والبيان). لو حطّيناها في `treasuryRoutes` كنوع مصروف، كان
-//  لازم شاشة الخزينة تعرف تفرّق بين مصروف عادي ومصروف بيان —
+//  لازم شاشة الخزنة تعرف تفرّق بين مصروف عادي ومصروف بيان —
 //  ومن غير ما تفرّق، مصروف "شراء بضاعة" يتسجّل بلا بيان وترجع
 //  المشكلة الأصلية.
 //
 //  ⚠ ولاحظ إن ده ما بيزوّدش المخزون. التوريد لسه من شاشة
-//  المنتجات بإيدك.
+//  البضاعة بإيدك.
 // ═══════════════════════════════════════════════════════════
 
 export const purchaseRoutes = new Hono<AppBindings>();
@@ -2423,7 +2628,7 @@ purchaseRoutes.post(
         ...result,
         message:
           result.status === 'APPROVED'
-            ? 'تم تسجيل الشراء وخصمه من الخزينة.'
+            ? 'تم تسجيل الشراء وخصمه من الخزنة.'
             : 'تم تسجيل الشراء. مستنّي اعتماد المدير ولسه ما اتخصمش.',
       },
       201,
