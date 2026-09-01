@@ -952,8 +952,15 @@ const PRINT_SHARED_JS = `
     // ─── الطريق الأول: المدمج في المتصفح ───
     if ('BarcodeDetector' in window) {
       try {
+        // ⚠ qr_code متشالة من القايمة بطلبك.
+        //
+        // الماسح بيفضل شغّال على الباركود الخطي زي ما هو —
+        // ومسح السريال بيمشي عادي، لأن ملصقاتك بـCode 39.
+        //
+        // ⚠ والقايمة دي مش تجميل: الكاشف بيفحص كل صيغة فيها
+        // على كل إطار. تقليلها بيسرّع القراءة كمان.
         var det = new window.BarcodeDetector({
-          formats: ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'qr_code']
+          formats: ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a']
         });
         var nativeWorked = await new Promise(function (resolve) {
           var fails = 0;
@@ -1024,8 +1031,13 @@ const PRINT_SHARED_JS = `
     // ⚠ الحل: نرسم الإطار على لوحة إحنا مالكينها، وننادي
     // القارئ عليها. مفيش أي اعتماد على دورة حياة الفيديو.
     var hints = new Map();
+    // ⚠ QR_CODE متشالة هنا كمان.
+    //
+    // مكانين لنفس القرار، ولازم يفضلوا متطابقين: ده الكاشف
+    // البديل اللي بيشتغل لما المدمج مش موجود. لو شلناها من
+    // واحد بس، الماسح كان هيقرا QR على متصفح ويرفضه على
+    // التاني — وده أوحش من إنه يقراه في الاتنين.
     hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
-      ZX.BarcodeFormat.QR_CODE,
       ZX.BarcodeFormat.CODE_128,
       ZX.BarcodeFormat.CODE_39,
       ZX.BarcodeFormat.EAN_13,
@@ -1140,11 +1152,62 @@ const PRINT_SHARED_JS = `
    */
   window.exportXls = function (opts) {
     var G = '#16211D', B = '#B08D3D', L = '#E6E4D8';
+    var n = opts.columns.length;
+
+    // ══ ⚠ عرض الأعمدة بيتحسب من المحتوى ══
+    //
+    // ══ اللي كان بيحصل ══
+    // الأعمدة كانت بتطلع بعرض إكسل الافتراضي (8 حروف تقريبًا)،
+    // والبيان فيه اسم جهاز وملاحظة — فبيتقصّ، وتقعد توسّع كل
+    // عمود بإيدك كل مرة تصدّر.
+    //
+    // ⚠ وخاصية منع اللفّ لوحدها مكانتش بتحل: هي بتمنع اللفّ، مش
+    // بتوسّع العمود. النص بيفضل مقصوص لكن في سطر واحد.
+    //
+    // بنقيس أطول قيمة في كل عمود ونحوّلها لبكسل. والحدود
+    // موجودة عشان عمود مالوش غير كلمة ما يبقاش أضيق من
+    // عنوانه، وملاحظة طويلة ما تعملش عمود بعرض الشاشة.
+    var widths = [];
+    for (var w = 0; w < n; w++) {
+      var longest = String(opts.columns[w] || '').length;
+      for (var q = 0; q < opts.rows.length; q++) {
+        var cell = opts.rows[q][w];
+        var len = (cell === null || cell === undefined) ? 0 : String(cell).length;
+        if (len > longest) longest = len;
+      }
+      // ⚠ العربي أعرض من اللاتيني في نفس عدد الحروف، فبنضرب
+      // في 9 مش 7. الرقم ده اتظبط بالتجربة على أسماء الأجهزة.
+      widths.push(Math.min(420, Math.max(90, (longest + 2) * 9)));
+    }
+
+    var cols = '';
+    for (var cw = 0; cw < n; cw++) {
+      cols += '<col style="width:' + widths[cw] + 'px">';
+    }
+
+    // ══ ⚠ العنوان جوّه الجدول مش فوقه ══
+    //
+    // كان عنوان h3 بره الجدول، فإكسل بيحطّه في الخلية A1 لوحدها
+    // — والنص الأطول من الخلية بيتقصّ عند حدود العمود اللي
+    // بعده لأنه مش فاضي.
+    //
+    // دلوقتي صف مدموج على عرض الجدول كله، فالعنوان بيتمدّ
+    // على الأعمدة ومستحيل يتاكل.
+    var titleRow =
+      '<tr><td colspan="' + n + '" style="background:' + G + ';color:#fff;' +
+      'padding:12px;font-size:16px;font-weight:bold;text-align:right">' +
+      (opts.title || '') + '</td></tr>';
+
+    var subRow = opts.subtitle
+      ? '<tr><td colspan="' + n + '" style="background:#F7F6EF;color:#555;' +
+        'padding:7px;font-size:11px;text-align:right">' + opts.subtitle + '</td></tr>'
+      : '';
 
     var head = '';
-    for (var i = 0; i < opts.columns.length; i++) {
-      head += '<th style="background:' + G + ';color:#fff;padding:8px;' +
-        'border:1px solid ' + G + ';font-weight:bold">' + opts.columns[i] + '</th>';
+    for (var i = 0; i < n; i++) {
+      head += '<th style="background:' + G + ';color:#fff;padding:9px;' +
+        'border:1px solid ' + G + ';font-weight:bold;text-align:right">' +
+        opts.columns[i] + '</th>';
     }
 
     var body = '';
@@ -1155,8 +1218,12 @@ const PRINT_SHARED_JS = `
       for (var c = 0; c < opts.rows[r].length; c++) {
         var v = opts.rows[r][c];
         var num = typeof v === 'number';
-        body += '<td style="background:' + bg + ';padding:6px;border:1px solid ' + L +
-          ';text-align:' + (num ? 'left' : 'right') + '">' +
+        body += '<td style="background:' + bg + ';padding:7px;border:1px solid ' + L +
+          ';text-align:' + (num ? 'left' : 'right') +
+          // ⚠ نصّ صريح على خلايا البيان: من غيره إكسل بيحاول
+          // يفسّر "12 ماكس" أو تاريخ مكتوب بشرطة كرقم أو تاريخ،
+          // وبيغيّر شكله من غير ما يقول.
+          ';mso-number-format:\\@">' +
           (v === null || v === undefined ? '' : String(v)) + '</td>';
       }
       body += '</tr>';
@@ -1166,9 +1233,10 @@ const PRINT_SHARED_JS = `
     if (opts.totals) {
       totalRow = '<tr>';
       for (var t = 0; t < opts.totals.length; t++) {
-        totalRow += '<td style="background:' + B + ';color:#fff;padding:8px;' +
-          'border:1px solid ' + B + ';font-weight:bold">' +
-          (opts.totals[t] === null ? '' : String(opts.totals[t])) + '</td>';
+        totalRow += '<td style="background:' + B + ';color:#fff;padding:9px;' +
+          'border:1px solid ' + B + ';font-weight:bold;text-align:right">' +
+          (opts.totals[t] === null || opts.totals[t] === undefined
+            ? '' : String(opts.totals[t])) + '</td>';
       }
       totalRow += '</tr>';
     }
@@ -1177,13 +1245,14 @@ const PRINT_SHARED_JS = `
       '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head>' +
       '<meta charset="UTF-8">' +
       '<style>table{border-collapse:collapse;font-family:Arial;font-size:12px}' +
-      'td,th{white-space:nowrap}</style></head>' +
+      'td,th{white-space:nowrap;vertical-align:middle}</style></head>' +
       '<body dir="rtl">' +
-      '<h3 style="font-family:Arial">' + (opts.title || '') + '</h3>' +
-      (opts.subtitle ? '<p style="font-family:Arial;font-size:11px;color:#555">' +
-        opts.subtitle + '</p>' : '') +
-      '<table><thead><tr>' + head + '</tr></thead>' +
-      '<tbody>' + body + totalRow + '</tbody></table></body></html>';
+      '<table>' + cols +
+      '<tbody>' + titleRow + subRow +
+      // صف فاصل: بيبعد العنوان عن الجدول في الورقة
+      '<tr><td colspan="' + n + '" style="height:6px"></td></tr>' +
+      '<tr>' + head + '</tr>' +
+      body + totalRow + '</tbody></table></body></html>';
 
     // ⚠ BOM في أول الملف — من غيره إكسل بيقرا العربي رموز
     var blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel' });
@@ -4668,9 +4737,14 @@ export function posPage(data: PosPageData): Html {
                       تاريخ الخروج
                     </button>`
                   : ''}
-                <button class="btn-mini" type="button" data-print-sale="${s.id}">
-                  طباعة
-                </button>
+                <!-- ⚠ زرار «طباعة» متشال مؤقتًا بطلبك.
+                     المعالج data-print-sale ودالة الطباعة وبناء
+                     الفاتورة كلهم مكانهم زي ما هم، فالرجوع =
+                     زرار واحد يترجع من غير أي تعديل تاني.
+
+                     ⚠ والحذف صريح مش تعليق: القالب فيه علامات
+                     backtick، وتعليقها جوّه نص قالب بيقفل القالب
+                     ويكسر الصفحة كلها. -->
                 ${data.canRefund
                   ? html`<button class="btn-mini" type="button" data-ret-open="${s.id}">
                       استرجاع
@@ -6625,10 +6699,9 @@ export function productsPage(data: ProductsPageData): Html {
                     : ''}
 
                   <div class="prod-edit-actions">
-                    ${isDevice && p.serialNumber
-                      ? html`<button class="btn-mini" type="button"
-                          data-label="${p.id}">طباعة ملصق</button>`
-                      : ''}
+                    <!-- ⚠ «طباعة ملصق» متشال مؤقتًا بطلبك.
+                         مولّد الملصق والرمز والمعالج data-label
+                         كلهم مكانهم. -->
                     ${isDevice
                       ? html`<button class="btn-mini" type="button" data-save-details="${p.id}">
                           حفظ البيانات
@@ -7074,8 +7147,10 @@ export function productsPage(data: ProductsPageData): Html {
         <button class="tool" type="button" data-tool="flt">فلتر</button>
         <!-- ⚠ أداة معايرة، مش وظيفة يومية.
              بتطبع ورقة فيها نفس الكود بأربع مقاسات عشان تقيس
-             أصغر مقاس طابعتك بتقراه فعلاً — بدل ما نخمّن. -->
+             أصغر مقاس طابعتك بتقراه فعلاً — بدل ما نخمّن.
+             متشالة مؤقتًا مع باقي أزرار الطباعة.
         <button class="tool" type="button" data-qr-calib>معايرة الرمز</button>
+        -->
       </div>
 
       <!-- ⚠ أدوات الفلتر بتتغيّر بالدرج المفتوح:
@@ -8105,31 +8180,16 @@ ${MENU_JS}
             //
             // تشبيه: زي ما تشرب كوباية وترجع تدوّر على نفس المية
             // فيها. مش هتلاقيها — وهي اتشربت مش ضاعت.
+            // ⚠ سؤال «تطبع ملصق؟» متشال مؤقتًا مع باقي أزرار
+            // الطباعة. مولّد الملصق ودالة الطباعة مكانهم، فالرجوع
+            // بإرجاع النداء هنا وبس.
+            //
+            // ⚠ والمعرّف سايبينه: بيتقرا من الجسم اللي اتقري
+            // فوق، وكان أصل عطل قديم (قراية الاستجابة مرتين
+            // وهي مجرى بيتقرا مرة واحدة). سيبه مكتوب
+            // عشان اللي يرجّع الزرار ما يعيدش الغلطة.
             var newId = data && data.id ? data.id : '';
-
-            var wantLabel = confirm('تمت الإضافة. تطبع ملصق للمنتج؟');
-            if (wantLabel) {
-              window.printHtml(labelHtml({
-                id: newId,
-                name: isDevice ? modelName : document.getElementById('np-name').value,
-                // ⚠ فاضي لو "غير متاح" — والملصق بيطلع بالرمز
-                // من غير سطر السريال. الرمز نفسه موجود دايمًا،
-                // فالجهاز بيتمسح عادي حتى وهو بلا رقم.
-                serial: isDevice && !(noSnEl && noSnEl.checked)
-                  ? document.getElementById('np-serial').value.trim()
-                  : '',
-                isDevice: isDevice,
-                storage: isDevice ? document.getElementById('np-storage').value : '',
-                battery: isDevice ? document.getElementById('np-battery').value : '',
-                customs: isDevice
-                  && document.getElementById('np-customs').value === 'true',
-                entry: document.getElementById('np-entry').value || '',
-                price: document.getElementById('np-price').value || ''
-              }), [LABEL_W_MM, LABEL_H_MM]);
-              // مهلة تكفي حوار الطباعة يفتح قبل ما الصفحة تروح
-              setTimeout(function () { window.location.reload(); }, 2500);
-              return;
-            }
+            if (newId) { /* الملصق موقوف مؤقتًا */ }
           } catch (labelErr) {
             // ⚠ فشل الملصق ما يصحّش يبلّع نجاح الإضافة.
             // المنتج **اتسجّل فعلاً** في القاعدة؛ ورقة ما طلعتش
@@ -11926,6 +11986,9 @@ ${MENU_JS}
    * إعادة رسم، والعلامة بتروح معاه فما بيفضلش عندنا ذاكرة
    * بتقول "اتحمّل" وهو مش موجود أصلاً.
    */
+  /** حركات كل مورّد بعد تحميلها — مصدر واحد للشاشة والتصدير */
+  var SUP_LED = {};
+
   async function loadLedger(id) {
     var box = document.getElementById('sled-' + id);
     if (!box || box.getAttribute('data-loaded') === '1') return;
@@ -11947,6 +12010,11 @@ ${MENU_JS}
         box.setAttribute('data-loaded', '1');
         return;
       }
+
+      // ⚠ بنحتفظ بالحركات عشان التصدير يستخدم **نفس** اللي
+      // معروض. لو التصدير جاب الحركات لوحده، الملف والشاشة
+      // كانوا هيختلفوا يوم ما — والاختلاف بيتكتشف عند العميل.
+      SUP_LED[id] = list;
 
       var out = '';
       for (var i = 0; i < list.length; i++) out += ledRow(list[i]);
@@ -12131,50 +12199,68 @@ ${MENU_JS}
 
   // ══════════ التصدير ══════════
   //
-  // ⚠ الاتنين محليّين بالكامل — مفيش مكتبة ومفيش طلب شبكة.
+  // ══ 🔴 اتغيّر بالكامل ══
   //
-  // الإكسل ملف CSV. إكسل بيفتحه عادي، وبناء ملف xlsx حقيقي
-  // كان محتاج مكتبة تتحمّل من الإنترنت عشان جدول من خمس أعمدة.
+  // ══ اللي كان ══
+  // الإكسل كان **أربع سطور** فيها الاسم والرصيد والإجمالي —
+  // بلا ولا حركة واحدة. يعني ملف بيقولك الرقم اللي شايفه على
+  // الشاشة أصلاً، وما بيقولش جه منين.
+  // والـPDF كان نفس الأربع سطور بلا جدول ولا لون.
   //
-  // ⚠ وعلامة الترتيب في أوله مش زينة: من غيرها إكسل بيقرا
-  // العربي كرموز مبعثرة على ويندوز العربي.
-  function exportCsv(sp) {
-    var lines = [
-      'المورّد,' + (sp.name || ''),
-      'الرصيد,' + (sp.balancePiastres / 100),
-      'إجمالي الدين,' + (sp.debtPiastres / 100),
-      'إجمالي السداد,' + (sp.paidPiastres / 100),
-      ''
-    ];
-    var csv = '\\uFEFF' + lines.join('\\r\\n');
-    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'حساب-' + (sp.name || 'مورّد') + '.csv';
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-  }
+  // ══ اللي بقى ══
+  // كشف كامل بالحركات، بنفس مصدّر شاشة الصيانة بالحرف.
+  //
+  // ⚠ وبنستخدم exportXls و exportPdf المشتركين مش مصدّر
+  // محلّي: نسخة تانية معناها إن ملف الموردين شكله يختلف عن
+  // ملف الصيانة، وأي تحسين في واحد يسيب التاني وراه. عرض
+  // الأعمدة اللي اتظبط دلوقتي وصل للاتنين من غير أي شغل.
+  //
+  // ⚠ والتصدير بيشتغل على الحركات **المحمّلة**. لو الكارت
+  // ما اتفتحش، الدفتر ما اتحمّلش — فبنحمّله الأول.
 
-  // ⚠ الـPDF بيتعمل بحوار الطباعة بتاع المتصفح ("طباعة كـPDF").
-  // نفس آلية الفاتورة والملصق — مفيش محرّك PDF جديد يتصان.
-  function exportPdf(sp) {
-    if (typeof window.printHtml !== 'function') {
-      say('الطباعة غير متاحة على هذا المتصفح.', false);
-      return;
+  function supExportRows(sp) {
+    var list = SUP_LED[sp.supplierId] || [];
+    var rows = [];
+
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      var kind = m.direction === 'DEBT' ? 'دين' : (m.isDiscount ? 'خصم' : 'سداد');
+
+      var bits = [];
+      if (IS_OWNER) bits.push(m.branchName || 'غير موزّع');
+      if (m.serialNumber) bits.push(m.serialNumber);
+      if (m.treasuryName) bits.push('من ' + m.treasuryName);
+      if (m.note && m.note !== (m.itemName || '')) bits.push(m.note);
+
+      rows.push([
+        m.occurredAt,
+        m.itemName || m.note || kind,
+        kind,
+        bits.join(' · ') || '—',
+        (m.direction === 'DEBT' ? '+' : '-') + money(m.amountPiastres)
+      ]);
     }
-    window.printHtml(
-      '<div class="pr-doc">' +
-        '<h3>حساب المورّد</h3>' +
-        '<p>' + (sp.name || '') + '</p>' +
-        '<p>الرصيد: ' + money(sp.balancePiastres) + ' ج.م</p>' +
-        '<p>إجمالي الدين: ' + money(sp.debtPiastres) + ' ج.م</p>' +
-        '<p>إجمالي السداد: ' + money(sp.paidPiastres) + ' ج.م</p>' +
-      '</div>'
-    );
+    return rows;
   }
 
-  document.addEventListener('click', function (e) {
+  function supExportOpts(sp) {
+    return {
+      title: 'حساب ' + (sp.name || 'مورّد'),
+      subtitle: 'كشف حساب مورّد · ' + new Date().toISOString().slice(0, 10),
+      columns: ['التاريخ', 'البيان', 'النوع', 'التفاصيل', 'المبلغ'],
+      rows: supExportRows(sp),
+      totals: [
+        'الرصيد',
+        'دين ' + money(sp.debtPiastres) + ' · سداد ' + money(sp.paidPiastres),
+        '', '',
+        money(sp.balancePiastres)
+      ],
+      filename: 'حساب-' + (sp.name || 'مورّد') + '-' +
+        new Date().toISOString().slice(0, 10)
+    };
+  }
+
+  document.addEventListener('click', async function (e) {
     var csvBtn = e.target.closest ? e.target.closest('[data-sup-csv]') : null;
     var pdfBtn = e.target.closest ? e.target.closest('[data-sup-pdf]') : null;
     if (!csvBtn && !pdfBtn) return;
@@ -12186,8 +12272,18 @@ ${MENU_JS}
     }
     if (!sp) { say('تعذّر تجهيز الملف.', false); return; }
 
-    if (csvBtn) exportCsv(sp);
-    else exportPdf(sp);
+    // ⚠ ضمانة إن الدفتر موجود قبل ما نصدّر. الزرار جوّه الكارت
+    // فالدفتر بيكون اتحمّل غالبًا، بس "غالبًا" مش كفاية لملف
+    // بيروح لتاجر.
+    await loadLedger(id);
+
+    if (pdfBtn && typeof window.printHtml !== 'function') {
+      say('الطباعة غير متاحة على هذا المتصفح.', false);
+      return;
+    }
+
+    var opts = supExportOpts(sp);
+    if (csvBtn) window.exportXls(opts); else window.exportPdf(opts);
   });
 
   document.getElementById('sup-add').addEventListener('click', async function () {
@@ -12547,9 +12643,23 @@ ${MENU_JS}
 
   // ══ التصدير ══
   //
-  // ⚠ الاتنين محليّين: الإكسل ملف CSV بعلامة ترتيب (من غيرها
-  // العربي بيطلع رموز مبعثرة في إكسل)، والـPDF بحوار الطباعة.
-  // مفيش مكتبة ومفيش طلب شبكة.
+  // ⚠ بنستخدم exportXls و exportPdf المشتركين — نفس اللي
+  // بيستخدمه الموردين وحساب الورش. ملوّن ومنظّم وعرض الأعمدة
+  // بيتحسب من المحتوى.
+  //
+  // ══ ⚠⚠ وفرق لازم تعرفه ══
+  // الملف ده **ملخّص مش كشف**، على عكس الموردين والورش.
+  //
+  // السبب مش كسل: شاشة المحلات مالهاش دفتر حركات أصلاً —
+  // مفيش مسار بيرجّع حركات المحل الواحد، فمفيش حاجة نعرضها
+  // ولا نصدّرها. اللي موجود هو الأرصدة بس.
+  //
+  // ⚠ يعني الملف بيقول «باقي عليه كذا» وما بيقولش الرقم ده
+  // اتكوّن من أنهي بضاعة. ولو التاجر اختلف معاك على رقم،
+  // الملف ده مش هيحسم الخلاف.
+  //
+  // الحل الكامل محتاج دالة حركات في القاعدة ومسار وشاشة —
+  // نفس اللي عملناه للورش بالظبط.
   document.addEventListener('click', function (e) {
     var csvBtn = e.target.closest ? e.target.closest('[data-sh-csv]') : null;
     var pdfBtn = e.target.closest ? e.target.closest('[data-sh-pdf]') : null;
@@ -12562,38 +12672,25 @@ ${MENU_JS}
     }
     if (!sh) { say('تعذّر تجهيز الملف.', false); return; }
 
-    if (csvBtn) {
-      var lines = [
-        'المحل,' + (sh.name || ''),
-        'خرج بالأجل,' + (sh.totalOut / 100),
-        'المحصّل,' + (sh.totalPaid / 100),
-        'الباقي,' + (sh.balancePiastres / 100),
-        ''
-      ];
-      var blob = new Blob(['\\uFEFF' + lines.join('\\r\\n')],
-        { type: 'text/csv;charset=utf-8' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'حساب-' + (sh.name || 'محل') + '.csv';
-      a.click();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-      return;
-    }
-
-    if (typeof window.printHtml !== 'function') {
+    if (pdfBtn && typeof window.printHtml !== 'function') {
       say('الطباعة غير متاحة على هذا المتصفح.', false);
       return;
     }
-    window.printHtml(
-      '<div class="pr-doc">' +
-        '<h3>حساب محل</h3>' +
-        '<p>' + (sh.name || '') + '</p>' +
-        '<p>خرج بالأجل: ' + money(sh.totalOut) + ' ج.م</p>' +
-        '<p>المحصّل: ' + money(sh.totalPaid) + ' ج.م</p>' +
-        '<p>الباقي: ' + money(sh.balancePiastres) + ' ج.م</p>' +
-      '</div>'
-    );
+
+    var stamp = new Date().toISOString().slice(0, 10);
+    var opts = {
+      title: 'حساب ' + (sh.name || 'محل'),
+      subtitle: 'ملخّص حساب محل · ' + stamp,
+      columns: ['البند', 'القيمة'],
+      rows: [
+        ['خرج بالأجل', money(sh.totalOut)],
+        ['المحصّل', money(sh.totalPaid)]
+      ],
+      totals: ['الباقي عليه', money(sh.balancePiastres)],
+      filename: 'حساب-' + (sh.name || 'محل') + '-' + stamp
+    };
+
+    if (csvBtn) window.exportXls(opts); else window.exportPdf(opts);
   });
 
   document.getElementById('sh-add').addEventListener('click', async function () {
