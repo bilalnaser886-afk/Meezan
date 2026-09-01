@@ -3457,14 +3457,21 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
     },
 
     async findTicket(id) {
+      // ⚠ الحالة داخلة في الاختيار عشان فحص المرتجع.
+      // عمود واحد زيادة في نفس الرحلة أرخص من رحلة تانية.
       const { data, error } = await db
-        .from('repair_tickets').select('id, tenant_id, branch_id')
+        .from('repair_tickets').select('id, tenant_id, branch_id, status')
         .eq('id', id).is('deleted_at', null).maybeSingle();
 
       if (error) raiseMaintError(error, 'repair_tickets.find');
       if (!data) return null;
       const r = data as Record<string, unknown>;
-      return { id: String(r.id), tenantId: String(r.tenant_id), branchId: String(r.branch_id) };
+      return {
+        id: String(r.id),
+        tenantId: String(r.tenant_id),
+        branchId: String(r.branch_id),
+        status: String(r.status),
+      };
     },
 
     /**
