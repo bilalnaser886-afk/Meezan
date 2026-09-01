@@ -897,6 +897,29 @@ const PRINT_SHARED_JS = `
       });
       video.srcObject = stream;
       await video.play();
+
+      // ══ ⚠ تكبير من الكاميرا نفسها ══
+      //
+      // الملصق بتاعنا 3×2 سم، والرمز جواه أصغر. على بُعد ١٠ سم
+      // بيملا سُبع عرض الإطار — والقارئ محتاج تفاصيل مربّعات
+      // الرمز، مش صورة الملصق.
+      //
+      // ⚠ والتكبير ده **من الكاميرا** مش من الصورة: يعني تفاصيل
+      // حقيقية زيادة، مش تمديد لبيكسلات موجودة.
+      //
+      // ⚠ وبيتعمل في try منفصل عن قصد: أغلب الكاميرات على
+      // الأيفون ما بتدعمش الخاصية دي، والفشل هنا ما يصحّش
+      // يقفل الماسح كله — بنكمّل بالتكبير الافتراضي.
+      try {
+        var track0 = stream.getVideoTracks()[0];
+        var caps = track0.getCapabilities ? track0.getCapabilities() : null;
+        if (caps && caps.zoom && caps.zoom.max > caps.zoom.min) {
+          var want = Math.min(2, caps.zoom.max);
+          if (want > caps.zoom.min) {
+            await track0.applyConstraints({ advanced: [{ zoom: want }] });
+          }
+        }
+      } catch (zerr) { /* الكاميرا ما بتدعمش التكبير — عادي */ }
     } catch (err) {
       cleanup();
       throw new Error('تعذّر فتح الكاميرا. تأكّد من السماح بالوصول إليها.');
@@ -1011,9 +1034,33 @@ const PRINT_SHARED_JS = `
         // الإطار لسه ما وصلش — نستنّى من غير ما نعدّ محاولة
         if (!w || !h) return;
 
-        canvas.width = w;
-        canvas.height = h;
-        ctx.drawImage(video, 0, 0, w, h);
+        // ══ ⚠ إطار كامل وإطار مقصوص بالتناوب ══
+        //
+        // الإطار الكامل بيلاقي الرمز الكبير القريب. والمقصوص
+        // بياخد نص الصورة من النص ويرسمه بالحجم الكامل — يعني
+        // الرمز الصغير بيبقى ضِعف حجمه في البيانات اللي القارئ
+        // بيشوفها.
+        //
+        // ⚠ والتناوب مش الاتنين مع بعض: كل فك ترميز بياخد وقت،
+        // والاتنين في نفس الدورة بيخلّوا الحلقة تلحق إطارين في
+        // الثانية بدل أربعة — والإيد بتهتز في الوقت ده.
+        var half = (frames % 2) === 1;
+
+        if (half) {
+          var cw = Math.round(w * 0.55);
+          var ch = Math.round(h * 0.55);
+          canvas.width = cw * 2;
+          canvas.height = ch * 2;
+          ctx.drawImage(
+            video,
+            Math.round((w - cw) / 2), Math.round((h - ch) / 2), cw, ch,
+            0, 0, canvas.width, canvas.height
+          );
+        } else {
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(video, 0, 0, w, h);
+        }
 
         try {
           var result = reader.decodeFromCanvas(canvas);
@@ -1034,7 +1081,15 @@ const PRINT_SHARED_JS = `
         // الواحد يفتكر إنه باظ ويقفله.
         frames++;
         if (frames === 24 && hintEl) {
-          hintEl.textContent = 'قرّب الكاميرا 10 سم وثبّتها، وخلّي الإضاءة على الرمز.';
+          hintEl.textContent = 'قرّب 10 سم وثبّت الإيد، وخلّي الرمز في نص الشاشة.';
+        }
+        // ⚠ تلميحة تانية بعد 15 ثانية بتوجّه لمخرج مختلف.
+        //
+        // اللي فضل نص دقيقة بيصوّب مش هيلاقي بالتصويب. تكرار
+        // نفس النصيحة بيخلّيه يقفل ويكتب بإيده — والرقم مطبوع
+        // تحت الرمز أصلاً، فالقراءة البصرية أقرب طريق.
+        if (frames === 60 && hintEl) {
+          hintEl.textContent = 'الرمز مش راضي؟ جرّب «اقرا الرقم بالكاميرا» — الرقم مطبوع تحته.';
         }
       }, 250);
     });
