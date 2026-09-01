@@ -655,19 +655,25 @@ export async function deleteModel(
  * قراءة الموديل من طلب المنتج.
  *
  * ⚠ للنوعين — على عكس الدرج اللي للإكسسوار وحده.
- * وفاضي مسموح: بضاعةك القديمة مالهاش موديل.
+ * وفاضي مسموح **للإكسسوار وحده**؛ الجهاز بيترفض تحت.
+ *
+ * ══ ⚠ وبترجّع السجل نفسه مش المعرّف ══
+ * السبب إن اسم الجهاز بيتولّد من الاسم اللي جوّه السجل ده.
+ * لو رجّعنا المعرّف بس، كنا هنحتاج رحلة تانية للقاعدة عشان
+ * نقرا الاسم — أو نصدّق الاسم اللي جاي في الطلب، وهو بالظبط
+ * الباب اللي بنقفله.
  */
 async function resolveModel(
   deps: ProductDeps,
   actor: AuthenticatedUser,
   raw: unknown,
-): Promise<string | null> {
+): Promise<DeviceModel | null> {
   const modelId = String(raw ?? '').trim();
   if (!modelId) return null;
 
   const model = await deps.models.findById(modelId, actor.tenantId);
   if (!model) throw Errors.validation('الموديل المختار غير موجود.');
-  return modelId;
+  return model;
 }
 
 // ═══════════════════ الألوان ═══════════════════
@@ -844,13 +850,26 @@ export async function createProduct(
 
   const targetBranchId = await resolveBranch(deps, actor, input.branchId);
 
-  const name = input.name.trim();
-  assertName(name);
-
   const productType = input.productType;
   if (productType !== 'device' && productType !== 'accessory') {
     throw Errors.validation('اختر نوع المنتج: جهاز أو إكسسوار.');
   }
+
+  // ══ الاسم ══
+  //
+  // ⚠ اسم الجهاز **ما بيتقراش من الطلب**. بيتولّد من سجل
+  // الموديل تحت، والسطر ده هو قفل القرار ده.
+  //
+  // الشاشة كانت بتبعت اسم الموديل فعلاً، بس الشاشة لافتة مش
+  // قفل: أي طلب معدّل بإيد كان بيعدّي باسم مكتوب من الصفر —
+  // وهي دي الحالة اللي إخفاء خانة الاسم اتعمل عشانها.
+  //
+  // ⚠ والفحص هنا للإكسسوار وحده، وده مش سهو: `assertName`
+  // بيرفض الحرف الواحد، وموديلات زي «8» و«X» اسمها حرف واحد
+  // فعلاً. الجهاز بره الفحص لأن اسمه جاي من سجل **مفحوص
+  // أصلاً** — نفس القرار المكتوب على قراءة اسم الموديل.
+  let name = String(input.name ?? '').trim();
+  if (productType === 'accessory') assertName(name);
 
   // ─── قواعد النوع ───
   let serialNumber: string | null = null;
@@ -940,8 +959,24 @@ export async function createProduct(
     : null;
 
   const categoryId = await resolveCategory(deps, actor, input.categoryId, productType);
-  const modelId = await resolveModel(deps, actor, input.modelId);
+  const model = await resolveModel(deps, actor, input.modelId);
   const colorId = await resolveColor(deps, actor, input.colorId);
+
+  // ══ ⚠ الموديل إلزامي للجهاز ══
+  //
+  // مش عشان الشاشة بتطلبه — عشان اسم الجهاز **هو** اسم الموديل.
+  // جهاز بلا موديل معناه جهاز بلا اسم: ما بيظهرش في بحث، وما
+  // بينضمّش لأي درج، وبيقعد في المخزون كصفّ مالوش عنوان.
+  //
+  // ⚠ والإكسسوار بره القاعدة دي عن قصد: فيه جراب عام وشاحن
+  // بيركب على أي حاجة، وإلزامه بموديل كان هيخلّي الموظّف
+  // يختار موديل عشوائي عشان يعدّي — وده تلويث أسوأ من الفراغ.
+  if (isDevice && !model) {
+    throw Errors.validation('اختر الموديل من القائمة — اسم الجهاز بيتولّد منه.');
+  }
+  if (model && isDevice) name = model.name;
+
+  const modelId = model ? model.id : null;
 
   const created = await deps.products.create({
     tenantId: actor.tenantId,
@@ -1085,7 +1120,21 @@ export async function updateProduct(
     );
   }
   if (input.modelId !== undefined) {
-    patch.modelId = await resolveModel(deps, actor, input.modelId);
+    const model = await resolveModel(deps, actor, input.modelId);
+
+    // ⚠ نفس قاعدة الإنشاء: الجهاز ما ينفعش يفضل بلا موديل.
+    // من غير السطر ده، تعديل واحد بيقدر يفضّي الخانة ويسيب
+    // الجهاز باسم يتيم مش مربوط بأي سجل.
+    if (existing.productType === 'device' && !model) {
+      throw Errors.validation('الجهاز لازم يكون له موديل.');
+    }
+
+    patch.modelId = model ? model.id : null;
+
+    // ⚠ والاسم بيمشي مع الموديل. لو سبناه، تغيير الموديل كان
+    // بيسيب الجهاز باسم موديله القديم — والاتنين على الشاشة
+    // بيقولوا حاجتين مختلفتين.
+    if (existing.productType === 'device' && model) patch.name = model.name;
   }
   if (input.colorId !== undefined) {
     patch.colorId = await resolveColor(deps, actor, input.colorId);
@@ -1157,7 +1206,12 @@ export async function updateProduct(
     }
   }
 
-  if (input.name !== undefined) {
+  // ⚠ الاسم للإكسسوار وحده.
+  //
+  // اسم الجهاز بيتولّد من موديله فوق، وقبوله من الطلب هنا كان
+  // هيفتح نفس الباب اللي اتقفل في الإنشاء بالظبط — وأسوأ، لأنه
+  // كان بيدهس على الاسم المشتق في نفس الطلب.
+  if (input.name !== undefined && existing.productType !== 'device') {
     const name = input.name.trim();
     assertName(name);
     patch.name = name;
