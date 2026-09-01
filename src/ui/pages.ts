@@ -3784,7 +3784,7 @@ ${MENU_JS}
       .replace(/[\u0660-\u0669]/g, function (d) {
         return String(d.charCodeAt(0) - 0x0660);
       })
-      .replace(/[\s,_]/g, '');
+      .replace(/[\\s,_]/g, '');
     if (raw === '') return NaN;
     return parseFloat(raw);
   }
@@ -4553,11 +4553,11 @@ ${TIME_JS}
     var text = String(raw || '')
       .replace(/[٠-٩]/g, function (d) { return String(d.charCodeAt(0) - 0x0660); })
       .replace(/[٫،]/g, '.')
-      .replace(/[\s,_]/g, '')
+      .replace(/[\\s,_]/g, '')
       .trim();
     if (!text) return null;
 
-    var m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(text);
+    var m = /^(\\d+)(?:\\.(\\d{1,2}))?$/.exec(text);
     if (!m) return null;
 
     var piastres = parseInt(m[1], 10) * 100 + parseInt((m[2] || '0').padEnd(2, '0'), 10);
@@ -7243,7 +7243,7 @@ ${MENU_JS}
         return String(d.charCodeAt(0) - 1776);
       })
       .toLowerCase()
-      .replace(/\s+/g, '');
+      .replace(/\\s+/g, '');
   }
 
   /**
@@ -7546,7 +7546,7 @@ ${MENU_JS}
   // ده، وفحصها كان هيطلّع إنذار كاذب على رقم سليم تمامًا —
   // والإنذار الكاذب بيخلّي الواحد يبطّل يقرا الإنذارات.
   function luhnOk(raw) {
-    var digits = String(raw || '').replace(/\D/g, '');
+    var digits = String(raw || '').replace(/\\D/g, '');
     if (digits.length !== 15) return true;   // مش بشكل IMEI — مش شغلنا
 
     var sum = 0;
@@ -8911,7 +8911,7 @@ ${MENU_JS}
     // (2026-08-30). من غير السطور دي، نفس الملصق بيطلع بشكلين
     // حسب إنت طبعته منين — والاختلاف ده بيخلّي الواحد يشكّ.
     var entryText = String(o.entry || '');
-    if (/^\d{4}-\d{2}-\d{2}$/.test(entryText)) {
+    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(entryText)) {
       var parts = entryText.split('-');
       entryText = parts[2] + ' / ' + parts[1] + ' / ' + parts[0];
     }
