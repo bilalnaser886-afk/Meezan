@@ -292,6 +292,31 @@ export interface TicketInput {
   branchId?: string | null;
 }
 
+/**
+ * تذاكر العملاء.
+ *
+ * ══ 🔴 القايمة دي كانت ناقصة `RETURNED` — وده كان العطل ══
+ *
+ * الشاشة بتعرض أربع اختيارات، والقايمة هنا كانت فيها تلاتة.
+ * فاختيار «المرتجعات» كان بيترفض بـ«النطاق غير صحيح»،
+ * و`Promise.all` في المسار بيسقط **كله** لو واحد رفض — فمفيش
+ * ولا قايمة كانت بتتحدّث، لا التذاكر ولا أجهزة المحل ولا الورش.
+ *
+ * والقاعدة كانت عارفة النطاق ده من ملف ٥٢:
+ *     or (p_scope = 'RETURNED' and t.parent_ticket_id is not null)
+ *
+ * يعني الصف الوحيد الناقص كان هنا. المايجريشن اتشغّل والكود
+ * ما اتحدّثش معاه.
+ *
+ * ⚠ الدرس: قايمة القيم المسموحة في التطبيق **نسخة تانية** من
+ * قايمة موجودة في القاعدة وفي الشاشة. تلات نسخ لنفس المعلومة،
+ * ومحدش بيجبرهم يفضلوا مع بعض. أي نطاق جديد لازم يتكتب في
+ * التلاتة أو ما يتكتبش أصلاً.
+ *
+ * ══ والمرتجع عندنا **ربط** مش حالة ══
+ * تذكرة ليها زيارة سابقة. فبيفضل مرتجع سواء لسه بيتفحص أو
+ * اتسلّم من تاني — والحالة بتتغيّر والربط بيفضل.
+ */
 export async function listTickets(
   deps: MaintenanceDeps,
   actor: AuthenticatedUser,
@@ -301,7 +326,7 @@ export async function listTickets(
   return deps.maintenance.listTickets(
     actor.tenantId,
     branchScope(actor),
-    readFilter(input, ['OPEN', 'DELIVERED', 'ALL']),
+    readFilter(input, ['OPEN', 'DELIVERED', 'RETURNED', 'ALL']),
   );
 }
 
