@@ -33,6 +33,26 @@ const src = fs.readFileSync(process.argv[2], 'utf8');
 const names = [...src.matchAll(/^function (\w*Script)\(/gm)].map(m => m[1]);
 let bad = 0;
 
+// ══ ⚠ الثوابت المشتركة — النقطة العميا اللي كلّفتنا جلسة ══
+//
+// الفحص النحوي كان بيغطّي دوال `*Script` بس. والماسح بالكاميرا
+// وسكربت الطباعة والتنبيهات كلهم في ثوابت `_JS` مشتركة — يعني
+// **بره الفحص تمامًا**.
+//
+// والنتيجة: نص أحادي اتكسر جوّه PRINT_SHARED_JS، فالسكربت كله
+// وقع و`window.scanBarcode` ما اتعرّفتش. الشاشة قالت "الماسح
+// غير متاح على هذا المتصفح" — رسالة بتشاور على المتصفح والغلط
+// في سطر عندنا.
+//
+// ⚠ والفاحص كان بيقول أخضر، لأنه ما بصّش على المكان أصلاً.
+for (const m of src.matchAll(/^const (\w+_JS) = `/gm)) {
+  const from = m.index + m[0].length;
+  const to = src.indexOf('\n`;', from);
+  if (to < 0) { console.log('WARN  ' + m[1]); continue; }
+  try { new vm.Script(unescapeTemplate(strip(src.slice(from, to)))); }
+  catch (err) { bad++; console.log('FAIL نحوي ' + m[1] + ': ' + err.message); }
+}
+
 for (const n of names) {
   const i = src.indexOf('function ' + n + '(');
   const s = src.indexOf('return `', i);
@@ -187,14 +207,25 @@ let ids = 0;
 // القاعدة: أي `\` لازم توصل للمتصفح تتكتب `\\` في المصدر.
 // و`\u0660` استثناء — القالب بيحوّلها للحرف نفسه وده مقبول.
 let slashes = 0;
+
+// ⚠ القايمة بتضم الثوابت المشتركة كمان. الغلطة اللي عدّت كانت
+// في ثابت، والفحص كان بيبصّ على الدوال بس.
+const SPANS = [];
 for (const m of src.matchAll(/^function (\w*Script)\(/gm)) {
   const st = src.indexOf('return `', m.index);
   if (st < 0) continue;
   const to = src.indexOf('\n`;', st);
-  if (to < 0) continue;
+  if (to > st) SPANS.push([m[1], st + 8, to]);
+}
+for (const m of src.matchAll(/^const (\w+_JS) = `/gm)) {
+  const st = m.index + m[0].length;
+  const to = src.indexOf('\n`;', st);
+  if (to > st) SPANS.push([m[1], st, to]);
+}
 
-  const raw = src.slice(st + 8, to);
-  const base = src.slice(0, st).split('\n').length;
+for (const [label, spanFrom, spanTo] of SPANS) {
+  const raw = src.slice(spanFrom, spanTo);
+  const base = src.slice(0, spanFrom).split('\n').length;
 
   raw.split('\n').forEach((line, i) => {
     const t = line.trim();
@@ -207,7 +238,7 @@ for (const m of src.matchAll(/^function (\w*Script)\(/gm)) {
       if (s1[1] === 'u' || s1[1] === 'x') continue;
       slashes++;
       console.log('FAIL شرطة مفردة (هتتاكل قبل المتصفح) — '
-        + m[1] + ' السطر ' + (base + i) + ': ' + t.slice(0, 70));
+        + label + ' السطر ' + (base + i) + ': ' + t.slice(0, 70));
       break;
     }
   });
