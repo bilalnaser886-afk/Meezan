@@ -12630,6 +12630,18 @@ export interface MaintenancePageData {
   canUseTreasury: boolean;
   /** maintenance.manage — الحالات والتكاليف وإدارة الورش */
   canManage: boolean;
+  /**
+   * supplier.manage — حساب الورش.
+   *
+   * ⚠ صلاحية مختلفة عن `canManage` عن قصد: دي شاشة **ديون**،
+   * واللي مش مسموح له يشوف حساب الموردين مش مسموح له يشوف
+   * حساب الورش. في الأدوار الافتراضية الاتنين بيمشوا مع بعض،
+   * بس أي استثناء فردي بيفرّقهم.
+   *
+   * ⚠ وده **لافتة مش قفل**: الحارس الحقيقي على المسار وجوّه
+   * حالة الاستخدام. إخفاء اللوحة بيريّح الشاشة وبس.
+   */
+  canLedger: boolean;
   /** فروع المحل — للمالك بس، فاضية لغيره لأنه مقفول على فرعه */
   branches: Array<{ id: string; name: string }>;
   today: string;
@@ -12766,8 +12778,16 @@ export function maintenancePage(data: MaintenancePageData): Html {
         <!-- ⚠ المرتجع بيتحدّد **بالربط** مش بالحالة: تذكرة
              مربوطة بزيارة سابقة. فبيفضل مرتجع سواء لسه بيتفحص
              أو اتسلّم من تاني.
-             وكل صف هنا معناه إصلاح ما نفعش من أول مرة. -->
-        <option value="RETURNED">المرتجعات</option>
+             وكل صف هنا معناه إصلاح ما نفعش من أول مرة.
+
+             ══ 🔴 والقيمة كانت RETURNED — ودي كانت العطل ══
+             الكلمة دي متحجوزة في نطاق **أجهزة المحل** بمعنى
+             تاني خالص (جهاز رجع من الورشة)، ونطاق التذاكر
+             مكانش بيعرفها، فالطلب كله كان بيترفض برسالة
+             «النطاق غير صحيح».
+             ⚠ اسم واحد بمعنيين في نطاقين = عطل مستني ميعاده.
+             REVISIT مالهاش أي معنى تاني في النظام. -->
+        <option value="REVISIT">المرتجعات</option>
         <option value="ALL">الكل</option>
       </select>
 
@@ -12817,6 +12837,26 @@ export function maintenancePage(data: MaintenancePageData): Html {
             autocomplete="off">
           <button class="btn-mini" type="button" id="rs-add">إضافة</button>
           <div id="rs-rows"></div>
+        </div>
+      </details>`
+    : ''}
+
+  <!-- ══ حساب محلات الصيانة ══
+       المرآة التالتة: الموردين دين عليك، المحلات دين ليك،
+       والورش دين عليك برضه.
+
+       ⚠ اللوحة مقفولة افتراضيًا (من غير open) وبتتحمّل أول ما
+       تتفتح. السبب إن نداء الأرصدة بيعدّي على كل الحركات، ومش
+       من حق شاشة الصيانة تدفع تمنه وهي بتفتح للاستلام. -->
+  ${data.canLedger
+    ? html`<details class="panel" id="acc-panel">
+        <summary>حساب محلات الصيانة <span id="acc-total"></span></summary>
+        <div class="panel-body">
+          <p class="field-hint">
+            الدين بيتسجّل أول ما الجهاز يرجع من الورشة أو يتسلّم للعميل.
+            اللي لسه في الورشة مش محسوب.
+          </p>
+          <div id="acc-rows"><p class="field-hint">جارٍ التحميل…</p></div>
         </div>
       </details>`
     : ''}
@@ -13698,6 +13738,373 @@ ${MENU_JS}
   ['tk-scope', 'tk-shop-filter', 'tk-from', 'tk-to'].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.addEventListener('change', load);
+  });
+
+  // ══════════ حساب محلات الصيانة ══════════
+  //
+  // ⚠ بيتحمّل لما اللوحة تتفتح بس — مش مع كل فتح للشاشة.
+  // نداء الأرصدة بيمرّ على كل حركات الدفتر، ومحدش بيدفع تمنه
+  // وهو داخل يستلم جهاز من زبون.
+  var ACC = [];
+  var ACC_TRE = [];
+  var accLoaded = false;
+
+  function accShop(id) {
+    for (var i = 0; i < ACC.length; i++) if (ACC[i].shopId === id) return ACC[i];
+    return null;
+  }
+
+  async function loadAccounts(force) {
+    if (accLoaded && !force) return;
+    var host = document.getElementById('acc-rows');
+    if (!host) return;
+
+    try {
+      var res = await fetch('/api/maintenance/accounts', { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+
+      if (!res.ok || !d || !d.ok) {
+        // ⚠ 403 معناه إن الصلاحية مش موجودة فعلاً — بنخفي
+        // اللوحة كلها بدل ما نسيبها بتزعّق كل مرة تتفتح.
+        var panel = document.getElementById('acc-panel');
+        if (res.status === 403 && panel) { panel.hidden = true; return; }
+        host.textContent = '';
+        var er = document.createElement('p');
+        er.className = 'field-hint';
+        er.textContent = (d && d.error && d.error.message) || 'تعذّر تحميل الحساب.';
+        host.appendChild(er);
+        return;
+      }
+
+      ACC = d.accounts || [];
+      ACC_TRE = d.treasuries || [];
+      accLoaded = true;
+      renderAccounts();
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    }
+  }
+
+  function renderAccounts() {
+    var host = document.getElementById('acc-rows');
+    if (!host) return;
+    host.textContent = '';
+
+    // ⚠ المجموع بيتحسب من المعروض. القايمة دي كل ورش المحل
+    // (مفيش سقف عليها)، فالرقم صادق — على عكس عدّ المخزون
+    // اللي محدود بـ500 صف.
+    var total = 0;
+    for (var t = 0; t < ACC.length; t++) total += ACC[t].balancePiastres;
+
+    var cnt = document.getElementById('acc-total');
+    if (cnt) cnt.textContent = ACC.length ? '(' + money(total) + ')' : '';
+
+    if (ACC.length === 0) {
+      var e = document.createElement('p');
+      e.className = 'field-hint';
+      e.textContent = 'مفيش ورش مسجّلة.';
+      host.appendChild(e);
+      return;
+    }
+
+    for (var i = 0; i < ACC.length; i++) {
+      var a = ACC[i];
+
+      var open = [];
+      if (a.openDevices) open.push(a.openDevices + ' جهاز محل');
+      if (a.openTickets) open.push(a.openTickets + ' جهاز زبون');
+
+      var r = row(a.name, money(a.balancePiastres) + ' ج.م');
+      host.appendChild(r);
+
+      // ⚠ التقسيم اللي طلبته: النوعين مفصولين، والمجموع تحتهم.
+      var det = document.createElement('div');
+      det.className = 'field-hint';
+      det.textContent =
+        'أجهزة المحل ' + money(a.deviceDebt) +
+        ' · أجهزة الزباين ' + money(a.ticketDebt) +
+        (a.manualDebt ? ' · يدوي ' + money(a.manualDebt) : '') +
+        ' · مدفوع ' + money(a.paidPiastres);
+      host.appendChild(det);
+
+      // ⚠ الشغل اللي لسه في الورشة بيتكتب **بره الرصيد**
+      // وبنقول كده صراحةً. من غير السطر ده، الرقم بيبان أقل
+      // من مديونيتك الحقيقية ومحدش عارف ليه.
+      if (open.length) {
+        var op = document.createElement('div');
+        op.className = 'field-hint';
+        op.textContent = 'لسه عنده: ' + open.join(' · ') + ' — مش في الرصيد';
+        host.appendChild(op);
+      }
+
+      var acts = document.createElement('div');
+      acts.className = 'prod-edit-actions';
+
+      var led = document.createElement('button');
+      led.className = 'btn-mini'; led.type = 'button';
+      led.textContent = 'كشف الحساب';
+      led.setAttribute('data-acc-ledger', a.shopId);
+      acts.appendChild(led);
+
+      var pay = document.createElement('button');
+      pay.className = 'btn-mini'; pay.type = 'button';
+      pay.textContent = 'سداد';
+      pay.setAttribute('data-acc-pay', a.shopId);
+      acts.appendChild(pay);
+
+      var dbt = document.createElement('button');
+      dbt.className = 'btn-mini'; dbt.type = 'button';
+      dbt.textContent = 'دين يدوي';
+      dbt.setAttribute('data-acc-debt', a.shopId);
+      acts.appendChild(dbt);
+
+      host.appendChild(acts);
+
+      var slot = document.createElement('div');
+      slot.className = 'exit-edit';
+      slot.id = 'accbox-' + a.shopId;
+      slot.hidden = true;
+      host.appendChild(slot);
+    }
+
+    var sum = document.createElement('div');
+    sum.className = 'prod-row';
+    var sm = document.createElement('div');
+    sm.className = 'prod-row-main';
+    var sa = document.createElement('span');
+    sa.className = 'prod-row-name'; sa.textContent = 'إجمالي الحساب';
+    var sb = document.createElement('span');
+    sb.className = 'prod-row-sub'; sb.textContent = money(total) + ' ج.م';
+    sm.appendChild(sa); sm.appendChild(sb); sum.appendChild(sm);
+    host.appendChild(sum);
+  }
+
+  /** بيقفل أي لوحة مفتوحة تانية — واحدة في المرة أوضح على الموبايل */
+  function accSlot(shopId) {
+    var all = document.querySelectorAll('[id^="accbox-"]');
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].id !== 'accbox-' + shopId) { all[i].hidden = true; all[i].textContent = ''; }
+    }
+    return document.getElementById('accbox-' + shopId);
+  }
+
+  function accField(host, label, id, type, ph) {
+    var l = document.createElement('label');
+    l.className = 'field-label'; l.setAttribute('for', id); l.textContent = label;
+    host.appendChild(l);
+    var inp = document.createElement('input');
+    inp.className = 'field-input'; inp.id = id; inp.type = type || 'text';
+    if (type === 'text') inp.setAttribute('inputmode', 'decimal');
+    if (ph) inp.placeholder = ph;
+    inp.setAttribute('autocomplete', 'off');
+    host.appendChild(inp);
+    return inp;
+  }
+
+  function showAccPay(shopId) {
+    var box = accSlot(shopId);
+    var a = accShop(shopId);
+    if (!box || !a) return;
+
+    box.hidden = false;
+    box.textContent = '';
+
+    var head = document.createElement('p');
+    head.className = 'field-hint';
+    // ⚠ بنقول القسمة **قبل** الدفع مش بعده. المبلغ بيتوزّع
+    // على حركتين خزنة، والموظّف اللي بيشوف حركتين وهو دفع
+    // مرة بيفتكر إنه دفع مرتين.
+    head.textContent =
+      'المبلغ بيتقسّم تلقائيًا: جزء على أجهزة المحل (بيتحسب مخزون) ' +
+      'وجزء على أجهزة الزباين (بيتحسب مصروف).';
+    box.appendChild(head);
+
+    var amt = accField(box, 'المبلغ', 'acc-amt', 'text', money(a.balancePiastres));
+
+    var tl = document.createElement('label');
+    tl.className = 'field-label'; tl.setAttribute('for', 'acc-tre');
+    tl.textContent = 'الخزنة';
+    box.appendChild(tl);
+
+    var sel = document.createElement('select');
+    sel.className = 'field-input'; sel.id = 'acc-tre';
+    var ph = document.createElement('option');
+    ph.value = ''; ph.textContent = '— اختر —';
+    sel.appendChild(ph);
+    for (var i = 0; i < ACC_TRE.length; i++) {
+      var o = document.createElement('option');
+      o.value = ACC_TRE[i].treasuryId;
+      o.textContent = ACC_TRE[i].name;
+      sel.appendChild(o);
+    }
+    box.appendChild(sel);
+
+    accField(box, 'ملاحظة (اختياري)', 'acc-note', 'text');
+
+    var go = document.createElement('button');
+    go.className = 'btn-mini'; go.type = 'button';
+    go.textContent = 'تسجيل السداد';
+    go.setAttribute('data-acc-pay-go', shopId);
+    box.appendChild(go);
+
+    amt.focus();
+  }
+
+  function showAccDebt(shopId) {
+    var box = accSlot(shopId);
+    if (!box) return;
+
+    box.hidden = false;
+    box.textContent = '';
+
+    var head = document.createElement('p');
+    head.className = 'field-hint';
+    head.textContent =
+      'دين بره الأجهزة — قطع غيار مثلاً. ما بيمسّش الخزنة، والسبب إلزامي.';
+    box.appendChild(head);
+
+    accField(box, 'المبلغ', 'acc-damt', 'text');
+    accField(box, 'السبب', 'acc-dnote', 'text', 'قطع غيار · شغل خارج النظام');
+
+    var go = document.createElement('button');
+    go.className = 'btn-mini'; go.type = 'button';
+    go.textContent = 'تسجيل الدين';
+    go.setAttribute('data-acc-debt-go', shopId);
+    box.appendChild(go);
+  }
+
+  var LEDGER_KIND = { DEVICE: 'جهاز محل', TICKET: 'جهاز زبون', MANUAL: 'يدوي' };
+
+  async function showAccLedger(shopId) {
+    var box = accSlot(shopId);
+    if (!box) return;
+
+    box.hidden = false;
+    box.textContent = 'جارٍ التحميل…';
+
+    var res = await fetch('/api/maintenance/accounts/' + encodeURIComponent(shopId),
+      { credentials: 'same-origin' });
+    var d = await res.json().catch(function () { return null; });
+
+    box.textContent = '';
+    if (!res.ok || !d || !d.ok) {
+      say((d && d.error && d.error.message) || 'تعذّر تحميل الكشف.', false);
+      return;
+    }
+
+    var list = d.movements || [];
+    if (list.length === 0) {
+      var e = document.createElement('p');
+      e.className = 'field-hint';
+      e.textContent = 'مفيش حركات على الحساب ده.';
+      box.appendChild(e);
+      return;
+    }
+
+    // ⚠ السداد الواحد بيرجع من القاعدة سطرين (مخزون + خدمة).
+    // بنجمّعهم برقم المجموعة عشان الشاشة توري دفعة واحدة —
+    // الموظّف دفع مرة، والتقسيم تفصيلة محاسبية مش واقعة تانية.
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      var amount = m.amountPiastres;
+
+      if (m.paymentGroupId) {
+        if (seen[m.paymentGroupId]) continue;
+        seen[m.paymentGroupId] = true;
+        for (var j = 0; j < list.length; j++) {
+          if (j !== i && list[j].paymentGroupId === m.paymentGroupId) {
+            amount += list[j].amountPiastres;
+          }
+        }
+      }
+
+      var label = m.direction === 'PAYMENT'
+        ? 'سداد'
+        : (LEDGER_KIND[m.sourceKind] || 'دين');
+
+      var sign = m.direction === 'PAYMENT' ? '-' : '+';
+
+      var r = document.createElement('div');
+      r.className = 'prod-row';
+      var main = document.createElement('div');
+      main.className = 'prod-row-main';
+      var nm = document.createElement('span');
+      nm.className = 'prod-row-name';
+      nm.textContent = label + (m.note ? ' — ' + m.note : '');
+      var sb2 = document.createElement('span');
+      sb2.className = 'prod-row-sub';
+      sb2.textContent = sign + money(amount) + ' · ' + m.occurredAt;
+      main.appendChild(nm); main.appendChild(sb2);
+      r.appendChild(main);
+      box.appendChild(r);
+    }
+  }
+
+  var accPanel = document.getElementById('acc-panel');
+  if (accPanel) {
+    accPanel.addEventListener('toggle', function () {
+      if (accPanel.open) loadAccounts(false);
+    });
+  }
+
+  document.addEventListener('click', async function (e) {
+    var el = e.target;
+    if (!el || !el.closest) return;
+
+    var lg = el.closest('[data-acc-ledger]');
+    if (lg) { showAccLedger(lg.getAttribute('data-acc-ledger')); return; }
+
+    var pv = el.closest('[data-acc-pay]');
+    if (pv) { showAccPay(pv.getAttribute('data-acc-pay')); return; }
+
+    var dv = el.closest('[data-acc-debt]');
+    if (dv) { showAccDebt(dv.getAttribute('data-acc-debt')); return; }
+
+    var payGo = el.closest('[data-acc-pay-go]');
+    if (payGo) {
+      var sid = payGo.getAttribute('data-acc-pay-go');
+      var amt = (document.getElementById('acc-amt') || {}).value || '';
+      var tre = (document.getElementById('acc-tre') || {}).value || '';
+      if (!tre) { say('اختر الخزنة.', false); return; }
+
+      var res = await send(
+        '/api/maintenance/accounts/' + encodeURIComponent(sid) + '/payment',
+        {
+          amount: amt,
+          treasuryId: tre,
+          note: (document.getElementById('acc-note') || {}).value || null
+        },
+        payGo, 'جارٍ…');
+
+      if (res) {
+        // ⚠ القسمة بتتقال في الرسالة. من غيرها، الموظّف
+        // بيلاقي حركتين في الخزنة ومش فاهم مين عملهم.
+        say('تم السداد — ' + money(res.inventoryPiastres) + ' أجهزة محل و'
+            + money(res.servicePiastres) + ' أجهزة زباين. الرصيد: '
+            + money(res.newBalance), true);
+        await loadAccounts(true);
+      }
+      return;
+    }
+
+    var debtGo = el.closest('[data-acc-debt-go]');
+    if (debtGo) {
+      var sid2 = debtGo.getAttribute('data-acc-debt-go');
+      var res2 = await send(
+        '/api/maintenance/accounts/' + encodeURIComponent(sid2) + '/debt',
+        {
+          amount: (document.getElementById('acc-damt') || {}).value || '',
+          note: (document.getElementById('acc-dnote') || {}).value || ''
+        },
+        debtGo, 'جارٍ…');
+
+      if (res2) {
+        say('اتسجّل. الرصيد: ' + money(res2.newBalance), true);
+        await loadAccounts(true);
+      }
+      return;
+    }
   });
 
   var clearBtn = document.getElementById('tk-clear');
