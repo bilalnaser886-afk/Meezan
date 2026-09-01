@@ -63,6 +63,7 @@ import type {
   MaintenanceRecord,
   MaintenanceRepository,
   ShopRepository,
+  SupplierBranchBalance,
   SupplierRepository,
   TicketStatus,
   TransferRepository,
@@ -3031,22 +3032,79 @@ function raiseShopError(error: { message?: string; code?: string }, fn: string):
 
 export function createSupplierRepository(db: SupabaseClient): SupplierRepository {
   return {
-    async listBalances(tenantId) {
-      const { data, error } = await db.rpc('fn_supplier_balances', { p_tenant_id: tenantId });
-      if (error) raiseSupplierError(error, 'fn_supplier_balances');
+    /**
+     * الأرصدة + توزيعها على الفروع.
+     *
+     * ══ ⚠ نداءين مش واحد، وده مقصود ══
+     * `fn_supplier_balances` بتتنادى من جوّه دالة الدين ودالة
+     * السداد عشان ترجّع الرصيد الجديد. تعديل شكل ردّها كان
+     * هيكسر التلاتة مع بعض.
+     *
+     * فسبناها زي ما هي، والتوزيع في دالة لوحدها، والدمج هنا.
+     * رحلة شبكة زيادة أرخص من كسر تلات دوال شغّالة.
+     *
+     * ⚠ ومدير الفرع بياخد أرقام **فرعه** في الأعمدة الكلية،
+     * مش إجمالي المحل. عرض إجمالي المحل عليه كان هيوريه رقم
+     * هو مش مسؤول عنه ولا بيقدر يسدّده.
+     */
+    async listBalances(tenantId, branchId) {
+      const [balances, breakdown] = await Promise.all([
+        db.rpc('fn_supplier_balances', { p_tenant_id: tenantId }),
+        db.rpc('fn_supplier_branch_balances', {
+          p_tenant_id: tenantId,
+          p_branch_id: branchId,
+        }),
+      ]);
 
-      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
-        supplierId: String(row.supplier_id),
-        name: String(row.name),
-        phone: row.phone ? String(row.phone) : null,
-        notes: row.notes ? String(row.notes) : null,
-        isActive: Boolean(row.is_active),
-        productCount: Number(row.product_count),
-        debtPiastres: Number(row.debt_piastres),
-        paidPiastres: Number(row.paid_piastres),
-        balancePiastres: Number(row.balance_piastres),
-        lastMovement: row.last_movement ? String(row.last_movement).slice(0, 10) : null,
-      }));
+      if (balances.error) raiseSupplierError(balances.error, 'fn_supplier_balances');
+      if (breakdown.error) raiseSupplierError(breakdown.error, 'fn_supplier_branch_balances');
+
+      // ⚠ التوزيع بيتلمّ بالمورّد قبل الدمج. اللفّ جوّه اللفّ
+      // كان هيبقى عدد الموردين × عدد الصفوف — وده بيبان بطيء
+      // بعد سنة من الحركات مش دلوقتي.
+      const bySupplier = new Map<string, SupplierBranchBalance[]>();
+      for (const raw of (breakdown.data as Array<Record<string, unknown>> | null) ?? []) {
+        const key = String(raw.supplier_id);
+        const list = bySupplier.get(key) ?? [];
+        list.push({
+          branchId: raw.branch_id ? String(raw.branch_id) : null,
+          branchName: raw.branch_name ? String(raw.branch_name) : null,
+          debtPiastres: Number(raw.debt_piastres),
+          paidPiastres: Number(raw.paid_piastres),
+          balancePiastres: Number(raw.balance_piastres),
+          movementCount: Number(raw.movement_count),
+          lastMovement: raw.last_movement ? String(raw.last_movement).slice(0, 10) : null,
+        });
+        bySupplier.set(key, list);
+      }
+
+      return ((balances.data as Array<Record<string, unknown>> | null) ?? []).map((row) => {
+        const id = String(row.supplier_id);
+        const branches = bySupplier.get(id) ?? [];
+
+        // ⚠ صاحب المحل بياخد الإجمالي من الدالة القديمة.
+        // مدير الفرع بياخده **مجموع فرعه** — والدالة القديمة
+        // مالهاش فلتر فرع أصلاً، فالجمع هنا هو الطريق الوحيد.
+        const scoped = branchId !== null;
+        const sum = (pick: (b: SupplierBranchBalance) => number): number =>
+          branches.reduce((total, b) => total + pick(b), 0);
+
+        return {
+          supplierId: id,
+          name: String(row.name),
+          phone: row.phone ? String(row.phone) : null,
+          notes: row.notes ? String(row.notes) : null,
+          isActive: Boolean(row.is_active),
+          productCount: Number(row.product_count),
+          debtPiastres: scoped ? sum((b) => b.debtPiastres) : Number(row.debt_piastres),
+          paidPiastres: scoped ? sum((b) => b.paidPiastres) : Number(row.paid_piastres),
+          balancePiastres: scoped
+            ? sum((b) => b.balancePiastres)
+            : Number(row.balance_piastres),
+          lastMovement: row.last_movement ? String(row.last_movement).slice(0, 10) : null,
+          branches,
+        };
+      });
     },
 
     /**
@@ -3056,9 +3114,12 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
      * والاسم بيتقرا من سجل المنتج مش من الملاحظة، عشان يفضل صح
      * لو الجهاز اتغيّر اسمه بعدين.
      */
-    async listMovements(supplierId, tenantId, limit = 200) {
+    async listMovements(supplierId, tenantId, branchId, limit = 200) {
       const { data, error } = await db.rpc('fn_supplier_movements', {
         p_supplier_id: supplierId,
+        // ⚠ فلتر الفرع في الاستعلام مش بعده — مدير الفرع
+        // ما بيشوفش حركات فرع تاني أصلاً، مش بيشوفها وتتشال.
+        p_branch_id: branchId,
         // ⚠ المحل بيتبعت للدالة نفسها مش بيتفلتر هنا. لو فلترنا
         // بعد الرد، الصفوف كانت هتسافر على الشبكة الأول —
         // والتسريب بيحصل قبل الفلترة مش بعدها.
@@ -3074,6 +3135,8 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
         amountPiastres: Number(row.amount_piastres),
         note: row.note ? String(row.note) : null,
         occurredAt: String(row.occurred_at).slice(0, 10),
+        branchId: row.branch_id ? String(row.branch_id) : null,
+        branchName: row.branch_name ? String(row.branch_name) : null,
         productId: row.product_id ? String(row.product_id) : null,
         itemName: row.item_name ? String(row.item_name) : null,
         entryDate: row.entry_date ? String(row.entry_date).slice(0, 10) : null,
@@ -3137,6 +3200,9 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
         p_amount: input.amountPiastres,
         p_note: input.note,
         p_date: input.date,
+        // ⚠ بيتجاهل جوّه القاعدة لغير صاحب المحل — الفرع
+        // بيتاخد من جلسة المنفّذ هناك، مش من السطر ده.
+        p_branch_id: input.branchId,
       });
       if (error) raiseSupplierError(error, 'fn_supplier_discount');
 
@@ -3152,6 +3218,9 @@ export function createSupplierRepository(db: SupabaseClient): SupplierRepository
         p_amount: input.amountPiastres,
         p_note: input.note,
         p_date: input.date,
+        // ⚠ بيتجاهل جوّه القاعدة لغير صاحب المحل — الفرع
+        // بيتاخد من جلسة المنفّذ هناك، مش من السطر ده.
+        p_branch_id: input.branchId,
       });
       if (error) raiseSupplierError(error, 'fn_supplier_debt');
 
