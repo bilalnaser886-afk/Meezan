@@ -4643,14 +4643,30 @@ ${TIME_JS}
         //
         // ⚠ والمستمع متعلّق على العنصر وقت إنشائه، فبيتولد مع
         // كل سطر جديد وبيموت معاه. مفيش تراكم.
-        priceInput.addEventListener('input', function () { applyManual(priceInput); });
+        priceInput.addEventListener('input', function (ev) { applyManual(ev.target); });
+        priceInput.addEventListener('change', function (ev) { applyManual(ev.target); });
 
-        // ⚠ و«change» كمان: بيقع عند الخروج من الخانة، فحتى لو
-        // المتصفح ما طلّعش أي حدث أثناء الكتابة، أول ما الكاشير
-        // يلمس أي حاجة تانية الرقم بيتسجّل.
-        priceInput.addEventListener('change', function () { applyManual(priceInput); });
+        // ══ ⚠ زرار التثبيت — وده اللي بيشتغل أكيد ══
+        //
+        // أحداث الكتابة مش بتوصل على كل جهاز. اتجرّبت بالتفويض
+        // على المستند، وبالربط المباشر على الخانة، والاتنين
+        // سكتوا: الكاشير بيكتب الرقم والإجمالي بيفضل صفر ومفيش
+        // ولا رسالة خطأ.
+        //
+        // والضغط **مثبت إنه شغّال** على نفس الجهاز: زرار الإضافة
+        // و«+» و«−» كلهم بيشتغلوا من نفس المستمع.
+        //
+        // ⚠ فالزرار ده مش رفاهية — هو الطريق الوحيد المضمون.
+        // والمستمعين فوق سايبينهم: لو الأحداث اشتغلت، الرقم
+        // بيتسجّل قبل ما توصل للزرار أصلاً.
+        var priceGo = document.createElement('button');
+        priceGo.type = 'button';
+        priceGo.className = 'btn-mini';
+        priceGo.setAttribute('data-price-apply', id);
+        priceGo.textContent = 'تثبيت';
 
         priceWrap.appendChild(priceInput);
+        priceWrap.appendChild(priceGo);
         priceWrap.appendChild(priceNote);
         main.appendChild(priceWrap);
       }
@@ -4739,6 +4755,26 @@ ${TIME_JS}
   document.addEventListener('click', function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
+
+    // ══ ⚠ تثبيت السعر — قبل أي فرع تاني ══
+    //
+    // الزرار جوّه سطر السلة، والسطر مالوش سمة الإضافة، فمفيش
+    // تصادم. بس بنحطّه الأول عشان أي إضافة مستقبلية ما تسبقهوش.
+    var priceBtn = t.closest('[data-price-apply]');
+    if (priceBtn) {
+      var pid = priceBtn.getAttribute('data-price-apply');
+      var pRow = priceBtn.closest('.cart-line');
+      var pIn = pRow ? pRow.querySelector('[data-price-for]') : null;
+
+      if (pIn && cart[pid]) {
+        cart[pid].manual = pIn.value;
+        // ⚠ إعادة بناء كاملة هنا مقبولة، على عكس الكتابة:
+        // الكاشير خلص كتابة وضغط، فضياع التركيز مش مشكلة —
+        // بالعكس، ده اللي بيأكّدله إن الرقم اتسجّل.
+        render();
+      }
+      return;
+    }
 
     var addBtn = t.closest('[data-add]');
     if (addBtn) { add(addBtn); return; }
