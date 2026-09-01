@@ -10656,7 +10656,10 @@ ${MENU_JS}
           '</div>' +
           '<p class="field-hint">' +
             'الرصيد ناتج جمع الحركات، مش رقم مخزّن. تعديله بيتم بدين أو خصم.' +
-          '</p>';
+          '</p>' +
+          '<div id="sled-' + sp.supplierId + '">' +
+            '<p class="field-hint">جارٍ فتح الدفتر…</p>' +
+          '</div>';
 
         rows.appendChild(panel);
       }
@@ -10665,12 +10668,131 @@ ${MENU_JS}
     }
   }
 
+  // ══════════ الدفتر ══════════
+  //
+  // ⚠ المجموع لوحده ما بيخليكش تعمل حاجة.
+  //
+  // "عليك 47,000 لأحمد" رقم بتصدّقه أو تختلف عليه وبس. الدفتر
+  // بيرد على الأربع أسئلة اللي بتسألها فعلاً وإنت واقف قدّامه:
+  // إمتى · على إيه · مين سجّلها · بكام.
+
+  /**
+   * ⚠ تهريب قبل الحقن.
+   * أسماء الأجهزة والملاحظات بيكتبها المستخدم، وحقنها في
+   * innerHTML من غير تهريب بيخلّي علامة أقلّ من واحدة تكسر
+   * الدفتر كله.
+   */
+  function escLed(raw) {
+    return String(raw == null ? '' : raw)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** مفتاح الدور بيتترجم هنا مش في الخادم — الكلمة قرار واجهة */
+  function roleWord(key) {
+    if (key === 'SUPER_ADMIN') return 'صاحب المحل';
+    if (key === 'BRANCH_MANAGER') return 'مدير الفرع';
+    if (key === 'STAFF') return 'مندوب مبيعات';
+    return 'غير معروف';
+  }
+
+  /**
+   * رسم سطر واحد.
+   *
+   * ⚠ الاتجاه بلون: الدين بلون المنصرف (زاد عليك)، والسداد
+   * والخصم بلون الوارد (نقص). نفس ترميز شاشة الخزنة بالظبط —
+   * العين اتعوّدت عليه ومش هتحتاج تقرا الكلمة.
+   */
+  function ledRow(m) {
+    var kind = m.direction === 'DEBT'
+      ? 'دين'
+      : (m.isDiscount ? 'خصم' : 'سداد');
+
+    // ⚠ العنوان: اسم الجهاز الأول، والملاحظة احتياطي.
+    // الحركات القديمة والدين اليدوي مالهمش جهاز مربوط.
+    var title = m.itemName || m.note || kind;
+
+    var bits = [m.occurredAt];
+    if (m.entryDate && m.entryDate !== m.occurredAt) bits.push('دخل ' + m.entryDate);
+    if (m.serialNumber) bits.push(m.serialNumber);
+    if (m.treasuryName) bits.push('من ' + m.treasuryName);
+    bits.push(m.actorName + ' — ' + roleWord(m.actorRole));
+
+    // ⚠ الملاحظة بتتعرض لوحدها لما تكون **زيادة** على العنوان.
+    // لو العنوان هو الملاحظة نفسها، تكرارها بيملا السطر بلا فايدة.
+    if (m.note && m.note !== title) bits.push(m.note);
+
+    return '<div class="mv-row">' +
+      '<div class="mv-main">' +
+        '<span class="mv-title">' + escLed(kind + ' · ' + title) + '</span>' +
+        '<span class="mv-sub">' + escLed(bits.join(' · ')) + '</span>' +
+      '</div>' +
+      '<div class="mv-side">' +
+        '<span class="mv-amount" data-dir="' +
+          (m.direction === 'DEBT' ? 'OUT' : 'IN') + '">' +
+          money(m.amountPiastres) +
+        '</span>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /**
+   * تحميل الدفتر.
+   *
+   * ⚠ مرة واحدة لكل مورّد. الحالة متعلّمة على العنصر نفسه
+   * (سمة data-loaded) مش في متغيّر جنبه — العنصر بيتمسح مع أي
+   * إعادة رسم، والعلامة بتروح معاه فما بيفضلش عندنا ذاكرة
+   * بتقول "اتحمّل" وهو مش موجود أصلاً.
+   */
+  async function loadLedger(id) {
+    var box = document.getElementById('sled-' + id);
+    if (!box || box.getAttribute('data-loaded') === '1') return;
+
+    try {
+      var res = await fetch('/api/suppliers/' + encodeURIComponent(id) + '/movements', {
+        credentials: 'same-origin'
+      });
+      var data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        box.innerHTML = '<p class="field-hint">تعذّر فتح الدفتر.</p>';
+        return;
+      }
+
+      var list = data.movements || [];
+      if (!list.length) {
+        box.innerHTML = '<p class="field-hint">مفيش حركات على الحساب ده لسه.</p>';
+        box.setAttribute('data-loaded', '1');
+        return;
+      }
+
+      var out = '';
+      for (var i = 0; i < list.length; i++) out += ledRow(list[i]);
+      box.innerHTML = out;
+      box.setAttribute('data-loaded', '1');
+    } catch (err) {
+      box.innerHTML = '<p class="field-hint">تعذّر الاتصال بالخادم.</p>';
+    }
+  }
+
   // فتح/قفل لوحة الحركة
+  //
+  // ⚠ الدفتر بيتحمّل عند **الفتح** مش مع الصفحة.
+  //
+  // تحميله لكل مورّد مع الصفحة معناه عشرين رحلة شبكة عشان
+  // تبصّ على واحد. والفتح هو اللحظة اللي المستخدم بيقول فيها
+  // إنه مهتم بالمورّد ده تحديدًا.
   document.addEventListener('click', function (e) {
     var btn = e.target.closest ? e.target.closest('[data-sup-open]') : null;
     if (!btn) return;
-    var panel = document.getElementById('supp-' + btn.getAttribute('data-sup-open'));
-    if (panel) panel.hidden = !panel.hidden;
+    var id = btn.getAttribute('data-sup-open');
+    var panel = document.getElementById('supp-' + id);
+    if (!panel) return;
+
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) loadLedger(id);
   });
 
   // ══════════ البحث ══════════
