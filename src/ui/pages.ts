@@ -13516,13 +13516,6 @@ ${MENU_JS}
           '<label class="field-label">تاريخ استلام المرتجع</label>' +
           '<input class="field-input" id="rv-date" type="date" dir="ltr"' +
             ' value="' + TODAY + '">' +
-          // ⚠ سطر الرسالة **جوّه النافذة**.
-          //
-          // ══ العطل اللي اتصلّح ══
-          // الرسايل كانت بتروح لشريط الصفحة، والنافذة دي غطّاه.
-          // فالخادم كان بيرفض برسالة واضحة، والموظّف بيشوف زرار
-          // بيتضغط وما بيعملش حاجة — ويضغط تاني وتالت.
-          '<p class="field-hint" id="rv-msg" style="color:var(--debit)"></p>' +
           '<div class="prod-edit-actions" style="margin-top:14px">' +
             '<button class="btn-mini" type="button" data-rv-go>تسجيل المرتجع</button>' +
             '<button class="btn-mini" type="button" data-rv-close>إلغاء</button>' +
@@ -13533,65 +13526,37 @@ ${MENU_JS}
       function closeRv() { if (rw.parentNode) rw.parentNode.removeChild(rw); }
       rw.querySelector('[data-rv-close]').addEventListener('click', closeRv);
 
-      var rvMsg = rw.querySelector('#rv-msg');
-      function rvSay(text) { if (rvMsg) rvMsg.textContent = text; }
-
       rw.querySelector('[data-rv-go]').addEventListener('click', async function () {
-        var goBtn = this;
         var cmp = rw.querySelector('#rv-complaint').value.trim();
-        if (cmp.length < 3) { rvSay('اكتب الشكوى الجديدة.'); return; }
+        if (cmp.length < 3) {
+          say('اكتب الشكوى الجديدة.', false);
+          return;
+        }
 
-        rvSay('');
-        goBtn.disabled = true;
-        var label = goBtn.textContent;
-        goBtn.textContent = 'جارٍ التسجيل…';
+        // ⚠ بيانات الجهاز بتتنقل من التذكرة القديمة زي ما هي.
+        // مفيش خانة يعدّلها الموظّف هنا — الجهاز هو هو.
+        var okRv = await send('/api/maintenance/tickets', {
+          customerName: old.customerName || '',
+          customerPhone: old.customerPhone || '',
+          deviceName: old.deviceName || '',
+          serialNumber: old.serialNumber || '',
+          deviceColor: old.deviceColor || '',
+          conditionNote: '',
+          complaint: cmp,
+          unlockKind: 'NONE',
+          unlockValue: '',
+          repairShopId: '',
+          cost: '',
+          promisedDate: '',
+          receivedDate: rw.querySelector('#rv-date').value,
+          parentTicketId: old.id,
+          branchId: (document.getElementById('tk-branch') || {}).value || null
+        }, this, 'جارٍ التسجيل…');
 
-        try {
-          // ⚠ الطلب هنا بإيدنا مش عبر `send`، عشان نقرا رسالة
-          // الخادم ونعرضها جوّه النافذة. `send` بيعرضها في شريط
-          // الصفحة — وهو مغطّى دلوقتي.
-          //
-          // ⚠ والفرع **مش بيتبعت**: الخادم بياخده من الزيارة
-          // السابقة. قراءته من نموذج الاستلام كانت بتبعت فاضي
-          // وتخلّي الطلب يترفض.
-          var res = await fetch('/api/maintenance/tickets', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              customerName: old.customerName || '',
-              customerPhone: old.customerPhone || '',
-              deviceName: old.deviceName || '',
-              serialNumber: old.serialNumber || '',
-              deviceColor: old.deviceColor || '',
-              conditionNote: '',
-              complaint: cmp,
-              unlockKind: 'NONE',
-              unlockValue: '',
-              repairShopId: '',
-              cost: '',
-              promisedDate: '',
-              receivedDate: rw.querySelector('#rv-date').value,
-              parentTicketId: old.id
-            })
-          });
-
-          var out = await res.json();
-
-          if (!res.ok || !out.ok) {
-            rvSay((out && out.error && out.error.message) || 'تعذّر التسجيل.');
-            goBtn.disabled = false;
-            goBtn.textContent = label;
-            return;
-          }
-
+        if (okRv) {
           closeRv();
           say('اتسجّل المرتجع.', true);
           setTimeout(function () { window.location.reload(); }, 900);
-        } catch (err) {
-          rvSay('تعذّر الاتصال بالخادم.');
-          goBtn.disabled = false;
-          goBtn.textContent = label;
         }
       });
       return;
@@ -14301,8 +14266,3 @@ ${TIME_JS}
 
   if (branchEl) branchEl.addEventListener('change', loadPreview);
 
-  loadPreview();
-  loadList();
-})();
-`;
-}
