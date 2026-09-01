@@ -12653,6 +12653,7 @@ export function maintenancePage(data: MaintenancePageData): Html {
       data.idleWarningSeconds,
       data.idleAction,
       data.canManage,
+      data.today,
     ),
     body: html`${appBar({
       fullName: data.fullName,
@@ -12739,6 +12740,15 @@ export function maintenancePage(data: MaintenancePageData): Html {
       <label class="field-label" for="tk-cost">التكلفة المتوقّعة</label>
       <input class="field-input" id="tk-cost" type="text" inputmode="decimal" dir="ltr">
 
+      <!-- ══ ⚠ تاريخ الاستلام — النهاردة افتراضيًا وقابل للتعديل ══
+           الجهاز بيتسلّم على الكاونتر وبيتسجّل بعدين. الموظّف
+           اللي بيسجّل الصبح جهاز دخل امبارح لازم يقدر يقول كده،
+           وإلا «مفتوح من كام يوم» بيقول رقم أقل من الحقيقة.
+           ⚠ والمستقبل مرفوض من الخادم: جهاز ما بيدخلش الورشة بكرة. -->
+      <label class="field-label" for="tk-received">تاريخ الاستلام</label>
+      <input class="field-input" id="tk-received" type="date" dir="ltr"
+        value="${data.today}">
+
       <label class="field-label" for="tk-promised">تاريخ التسليم المتوقّع</label>
       <input class="field-input" id="tk-promised" type="date" dir="ltr">
 
@@ -12753,6 +12763,11 @@ export function maintenancePage(data: MaintenancePageData): Html {
       <select class="field-input" id="tk-scope">
         <option value="OPEN">عندنا الآن</option>
         <option value="DELIVERED">سُلِّمت للعملاء</option>
+        <!-- ⚠ المرتجع بيتحدّد **بالربط** مش بالحالة: تذكرة
+             مربوطة بزيارة سابقة. فبيفضل مرتجع سواء لسه بيتفحص
+             أو اتسلّم من تاني.
+             وكل صف هنا معناه إصلاح ما نفعش من أول مرة. -->
+        <option value="RETURNED">المرتجعات</option>
         <option value="ALL">الكل</option>
       </select>
 
@@ -12823,6 +12838,9 @@ function maintenanceScript(
   warnAt: number,
   action: 'LOGOUT' | 'LOCK',
   canManage: boolean,
+  /** ⚠ تاريخ **القاهرة** من الخادم — مش من ساعة الجهاز.
+      موبايل بتوقيت غلط كان هيسجّل استلام بتاريخ تاني. */
+  today: string,
 ): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
@@ -12831,6 +12849,8 @@ function maintenanceScript(
   return `
 ${shared}
 ${MENU_JS}
+  // ⚠ تاريخ القاهرة من الخادم — مش من ساعة الجهاز.
+  var TODAY = ${JSON.stringify(today)};
 (function () {
   var CAN_MANAGE = ${JSON.stringify(canManage)};
 
@@ -13089,10 +13109,26 @@ ${MENU_JS}
 
   var TICKETS = {};
 
+  /**
+   * ⚠ تهريب قبل الحقن.
+   *
+   * أسماء العملاء والأجهزة والشكاوى بيكتبها المستخدم، وحقنها
+   * في innerHTML من غير تهريب بيخلّي علامة أقلّ من واحدة تكسر
+   * الشاشة كلها.
+   */
+  function esc(raw) {
+    return String(raw == null ? '' : raw)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function detailLine(label, value) {
     if (!value && value !== 0) return '';
+    // ⚠ القيمة بتتهرّب — دي بتيجي من بيانات المستخدم.
     return '<div class="mv-row"><span class="mv-sub">' + label +
-      '</span><span>' + value + '</span></div>';
+      '</span><span>' + esc(value) + '</span></div>';
   }
 
   function showTicket(id) {
@@ -13131,7 +13167,19 @@ ${MENU_JS}
       '<div class="prod-edit-actions" style="margin-top:14px">' +
         '<button class="btn-mini" type="button" data-unlock="' + t.id + '">' +
           (t.hasUnlock ? 'بيانات الفتح' : 'إضافة بيانات فتح') + '</button>' +
-        '<button class="btn-mini" type="button" data-tk-again="' + t.id + '">رجع تاني</button>' +
+        // ══ ⚠ «رجع تاني» للمسلَّم وحده ══
+        //
+        // الجهاز اللي لسه عندنا مش «رجع» — هو ما خرجش أصلاً.
+        // وفتح زيارة تانية عليه بيعمل تذكرتين مفتوحتين لنفس
+        // الجهاز في نفس الوقت، والمرتجعات بتعدّ حاجة ما حصلتش.
+        //
+        // ⚠ والإخفاء هنا لافتة مش قفل: الخادم لسه بيقبل أي
+        // معرّف الزيارة الأب. القفل الحقيقي محتاج فحص في حالة
+        // الاستخدام، وهيتضاف مع تاريخ الاستلام.
+        (t.status === 'DELIVERED'
+          ? '<button class="btn-mini" type="button" data-tk-again="' + t.id + '">' +
+              'رجع تاني</button>'
+          : '') +
         '<button class="btn-mini" type="button" data-close>إغلاق</button>' +
       '</div>';
 
@@ -13431,21 +13479,86 @@ ${MENU_JS}
       var old = TICKETS[againBtn.getAttribute('data-tk-again')];
       if (!old) return;
 
-      // بيانات الجهاز بتتنقل، والشكوى بتفضل فاضية — دي زيارة
-      // جديدة بمشكلة جديدة مش نسخة من القديمة
-      document.getElementById('tk-cname').value = old.customerName || '';
-      document.getElementById('tk-cphone').value = old.customerPhone || '';
-      document.getElementById('tk-device').value = old.deviceName || '';
-      document.getElementById('tk-serial').value = old.serialNumber || '';
-      document.getElementById('tk-color').value = old.deviceColor || '';
-      document.getElementById('tk-complaint').value = '';
-      document.getElementById('tk-add').setAttribute('data-parent', old.id);
-
+      // ══ ⚠ شاشة صغيرة بدل ملء النموذج من فوق ══
+      //
+      // ══ اللي كان بيحصل ══
+      // كنا بنملا نموذج الاستلام ونقول للموظّف "اكتب الشكوى"
+      // ونودّيه لأول الصفحة. وده فيه تلات مشاكل:
+      //
+      //   • الموظّف بيلاقي نموذج فيه ١٠ خانات مليانة ومش عارف
+      //     أنهي واحدة المطلوبة منه
+      //   • ممكن يغيّر اسم الجهاز أو السريال بالغلط، والزيارة
+      //     التانية تبقى لجهاز تاني خالص
+      //   • ولو ساب الصفحة، الربط بيفضل معلّق على الزرار
+      //     وأول استلام جديد بيتربط بالتذكرة القديمة بالغلط
+      //
+      // ⚠ التالتة دي الأخطر: عطل صامت بيربط جهاز غريب بزيارة
+      // مالهاش علاقة بيه.
+      //
+      // الشاشة دي بتسأل حاجتين بس، والباقي بيتنقل من التذكرة
+      // القديمة بلا لمس.
       var modalA = againBtn.closest('[data-ticket-modal]');
       if (modalA && modalA.parentNode) modalA.parentNode.removeChild(modalA);
 
-      say('اكتب الشكوى الجديدة — الجهاز مربوط بزيارته السابقة.', true);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      var rw = document.createElement('div');
+      rw.className = 'unlock-wrap';
+      rw.innerHTML =
+        '<div class="unlock-panel">' +
+          '<div class="unlock-title">رجع تاني — ' + esc(old.deviceName || '') + '</div>' +
+          '<div style="text-align:right">' +
+            detailLine('العميل', old.customerName) +
+            detailLine('السريال', old.serialNumber) +
+            detailLine('الزيارة السابقة', old.complaint) +
+          '</div>' +
+          '<label class="field-label" style="margin-top:12px">الشكوى الجديدة</label>' +
+          '<input class="field-input" id="rv-complaint" type="text"' +
+            ' placeholder="إيه اللي رجّعه؟">' +
+          '<label class="field-label">تاريخ استلام المرتجع</label>' +
+          '<input class="field-input" id="rv-date" type="date" dir="ltr"' +
+            ' value="' + TODAY + '">' +
+          '<div class="prod-edit-actions" style="margin-top:14px">' +
+            '<button class="btn-mini" type="button" data-rv-go>تسجيل المرتجع</button>' +
+            '<button class="btn-mini" type="button" data-rv-close>إلغاء</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(rw);
+
+      function closeRv() { if (rw.parentNode) rw.parentNode.removeChild(rw); }
+      rw.querySelector('[data-rv-close]').addEventListener('click', closeRv);
+
+      rw.querySelector('[data-rv-go]').addEventListener('click', async function () {
+        var cmp = rw.querySelector('#rv-complaint').value.trim();
+        if (cmp.length < 3) {
+          say('اكتب الشكوى الجديدة.', false);
+          return;
+        }
+
+        // ⚠ بيانات الجهاز بتتنقل من التذكرة القديمة زي ما هي.
+        // مفيش خانة يعدّلها الموظّف هنا — الجهاز هو هو.
+        var okRv = await send('/api/maintenance/tickets', {
+          customerName: old.customerName || '',
+          customerPhone: old.customerPhone || '',
+          deviceName: old.deviceName || '',
+          serialNumber: old.serialNumber || '',
+          deviceColor: old.deviceColor || '',
+          conditionNote: '',
+          complaint: cmp,
+          unlockKind: 'NONE',
+          unlockValue: '',
+          repairShopId: '',
+          cost: '',
+          promisedDate: '',
+          receivedDate: rw.querySelector('#rv-date').value,
+          parentTicketId: old.id,
+          branchId: (document.getElementById('tk-branch') || {}).value || null
+        }, this, 'جارٍ التسجيل…');
+
+        if (okRv) {
+          closeRv();
+          say('اتسجّل المرتجع.', true);
+          setTimeout(function () { window.location.reload(); }, 900);
+        }
+      });
       return;
     }
 
@@ -13514,6 +13627,7 @@ ${MENU_JS}
         repairShopId: document.getElementById('tk-shop').value,
         cost: document.getElementById('tk-cost').value,
         promisedDate: document.getElementById('tk-promised').value,
+        receivedDate: document.getElementById('tk-received').value,
         parentTicketId: addBtn.getAttribute('data-parent'),
         branchId: (document.getElementById('tk-branch') || {}).value || null
       }, addBtn, 'جارٍ الاستلام…');
