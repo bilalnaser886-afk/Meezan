@@ -729,6 +729,17 @@ app.get('/suppliers', requireAuth({ redirectOnFail: true }), async (c) => {
     .listBalances(user.tenantId, user.roleKey === 'SUPER_ADMIN' ? null : user.branchId)
     .catch(() => []);
 
+  // ⚠ الفروع لصاحب المحل وحده.
+  //
+  // هو اللي بيختار الفرع وقت تسجيل دين أو خصم، وبيفلتر بيه
+  // الخزائن وقت السداد. مدير الفرع مالوش اختيار أصلاً — فرعه
+  // بيتاخد من جلسته، وإرسال القايمة له كان هيدّي إحساس كاذب
+  // بإنه يقدر يختار.
+  const supplierBranches =
+    user.roleKey === 'SUPER_ADMIN'
+      ? await container.branches.listActive(user.tenantId).catch(() => [])
+      : [];
+
   return c.html(
     suppliersPage({
       fullName: user.fullName,
@@ -739,7 +750,15 @@ app.get('/suppliers', requireAuth({ redirectOnFail: true }), async (c) => {
       canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
       canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
       canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
-      treasuries: treasuries.map((t) => ({ treasuryId: t.treasuryId, name: t.name })),
+      // ⚠ الفرع بيتبعت مع كل خزنة عشان الشاشة تفلتر بيه.
+      // من غيره، صاحب المحل بيختار فرع المعادي ويلاقي خزائن
+      // فيصل في القايمة — والسداد بينزل من دين الفرع الغلط.
+      treasuries: treasuries.map((t) => ({
+        treasuryId: t.treasuryId,
+        name: t.name,
+        branchId: t.branchId,
+      })),
+      branches: supplierBranches.map((b) => ({ branchId: b.id, name: b.name })),
       today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
