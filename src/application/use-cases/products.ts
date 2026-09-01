@@ -1,5 +1,5 @@
 /**
- * المنتجات
+ * البضاعة
  *
  * ══ المبدأ اللي بيحكم الملف كله ══
  * التكلفة سرّ. السعر مش سرّ.
@@ -29,6 +29,7 @@
 
 import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
+import { normalizeDigits } from '../../domain/money';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
   AuditLogger,
@@ -38,6 +39,7 @@ import type {
   Clock,
   ColorRepository,
   DeviceModel,
+  ModelFamily,
   ModelRepository,
   ProductCategory,
   ProductColor,
@@ -51,7 +53,7 @@ import type {
 
 export interface ProductDeps {
   products: ProductRepository;
-  /** أدراج المنتجات — التنظيم فوق النوع مش بدلاً منه */
+  /** أدراج البضاعة — التنظيم فوق النوع مش بدلاً منه */
   categories: CategoryRepository;
   /** سجل موديلات الموبايل — البُعد التاني جنب الدرج */
   models: ModelRepository;
@@ -68,7 +70,33 @@ export interface CreateProductRequest {
   name: string;
   productType: ProductType;
   serialNumber?: string | null;
+  /**
+   * ⚠ "مش متاح سريال" — قرار صريح، مش خانة فاضية.
+   *
+   * الفرق بين الاتنين هو الفرق بين **غياب** و**قرار**. الخانة
+   * الفاضية بتسيب سؤال معلّق: الموظّف نسي، ولا الجهاز فعلاً
+   * مالوش؟ محدش هيعرف بعد شهرين.
+   *
+   * نفس تفريقة `batteryHealth` بالظبط: فاضي = ما اتقاسش،
+   * وصفر = بطارية خربانة. حاجتين مختلفتين.
+   *
+   * والقيد في قاعدة البيانات بقى: سريال **أو** العلامة دي.
+   * الحالة التالتة (فاضي وبلا علامة) لسه مرفوضة — وهي اللي
+   * بتمسك النسيان.
+   */
+  serialUnavailable?: boolean;
   source?: string | null;
+  /** مورّد من السجل. بديل `source` النص الحر. */
+  supplierId?: string | null;
+  /**
+   * تسوية التكلفة.
+   *
+   * ⚠ 'PAID' بتطلّع فلوس من الخزنة، و'CREDIT' بتزوّد دين
+   * المورّد. الافتراضي 'NONE' — يعني تسجيل مخزون وبس، زي ما
+   * كان النظام شغّال قبل كده.
+   */
+  settle?: 'NONE' | 'PAID' | 'CREDIT';
+  treasuryId?: string | null;
   entryDate?: string | null;
   /** null = المنتج دخل من غير ما يتسعّر بعد */
   pricePiastres: number | null;
@@ -109,6 +137,8 @@ export interface UpdateProductRequest {
   isActive?: boolean;
   source?: string | null;
   serialNumber?: string | null;
+  /** ⚠ بتتشال لوحدها أول ما يتكتب سريال — شوف updateProduct */
+  serialUnavailable?: boolean;
   entryDate?: string | null;
   /** ⚠ محكوم بصلاحية منفصلة — شوف updateProduct */
   reorderPoint?: number | null;
@@ -217,7 +247,7 @@ export async function listSellableProducts(
 // ═══════════════════ الأدراج ═══════════════════
 
 /**
- * أدراج المنتجات.
+ * أدراج البضاعة.
  *
  * ══ إيه اللي بتحلّه ══
  * كل حاجة مش جهاز كانت في كومة واحدة: جرابات وشواحن وسماعات
@@ -324,7 +354,7 @@ export async function createCategory(
  *
  * ⚠ المزروع **بيتسمّى عادي**. القفل على الحذف بس — تقدر تسمّي
  * "مكملات" باسم تاني يناسب محلّك، وما تقدرش تمسحها وتسيب
- * منتجاتها بلا مكان.
+ * بضاعةها بلا مكان.
  */
 export async function renameCategory(
   deps: ProductDeps,
@@ -372,7 +402,7 @@ export async function deleteCategory(
   if (!existing) throw Errors.notFound('الدرج');
 
   // 2) المزروع محصّن.
-  //    القسم الرئيسي لو اتمسح، كل أدراجه ومنتجاتها تبقى بلا مكان
+  //    القسم الرئيسي لو اتمسح، كل أدراجه وبضاعةها تبقى بلا مكان
   //    ومفيش طريق رجوع من الشاشة. ده باب مسدود مش مخاطرة.
   if (existing.isSystem) {
     throw Errors.validation('الأدراج الأساسية لا تُحذف. يمكنك إعادة تسميتها.');
@@ -415,7 +445,7 @@ export async function deleteCategory(
  *
  * ⚠ والدرج لازم يكون **درج** مش قسم رئيسي: "إكسسوار" مكان
  * تجميع، والمنتج بيتحطّ في "جرابات". لو سمحنا بالقسم، هتلاقي
- * نص المنتجات في الجذر ونصها في الأدراج.
+ * نص البضاعة في الجذر ونصها في الأدراج.
  */
 async function resolveCategory(
   deps: ProductDeps,
@@ -468,9 +498,19 @@ export async function listModels(
 const MODEL_NAME_MAX = 60;
 
 function readModelName(raw: unknown): string {
-  const name = String(raw ?? '').trim();
-  if (name.length < 2 || name.length > MODEL_NAME_MAX) {
-    throw Errors.validation(`اسم الموديل من حرفين إلى ${MODEL_NAME_MAX} حرفًا.`);
+  // ⚠ الأرقام العربية بتتحوّل قبل أي فحص.
+  //
+  // موديل اسمه "١٢ برو ماكس" و"12 برو ماكس" لازم يبقوا واحد،
+  // وإلا هيبقى عندنا نسختين حسب لوحة مفاتيح اللي سجّل — نفس
+  // غلطة عمود المصدر النص الحر.
+  const name = normalizeDigits(String(raw ?? '')).trim();
+
+  // ⚠ حرف واحد مسموح.
+  //
+  // كان الحد حرفين، والموديل اللي اسمه رقم واحد ("8" · "X")
+  // كان بيترفض بلا سبب مفهوم — والاسم ده شائع في الأجهزة.
+  if (name.length < 1 || name.length > MODEL_NAME_MAX) {
+    throw Errors.validation(`اسم الموديل من حرف إلى ${MODEL_NAME_MAX} حرفًا.`);
   }
   return name;
 }
@@ -490,10 +530,28 @@ function readBrand(raw: unknown): string | null {
  * في المالك معناه إن الموظّف هيسيب الموديل فاضي ويكمّل شغله،
  * والسجل يفضل فاضي للأبد.
  */
+/**
+ * قراءة عيلة الموديل.
+ *
+ * ⚠ بنرفض أي قيمة مش معروفة بدل ما نتجاهلها بصمت — نفس قاعدة
+ * `readRoles` في تقفيل اليومية.
+ *
+ * التجاهل الصامت كان هيخلّي المستخدم يختار عيلة، ويحفظ، ويلاقي
+ * الموديل مش ظاهر في أي درج — ومفيش رسالة تقوله ليه.
+ */
+function readFamily(raw: unknown): ModelFamily {
+  const value = String(raw ?? '').trim().toUpperCase();
+  if (!value) return null;
+  if (value !== 'IPHONE' && value !== 'ANDROID') {
+    throw Errors.validation('العيلة: آيفون أو أندرويد.');
+  }
+  return value;
+}
+
 export async function createModel(
   deps: ProductDeps,
   actor: AuthenticatedUser,
-  input: { name: string; brand?: string | null },
+  input: { name: string; brand?: string | null; family?: unknown },
 ): Promise<{ id: string }> {
   if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
     throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
@@ -501,15 +559,18 @@ export async function createModel(
 
   const name = readModelName(input.name);
   const brand = readBrand(input.brand);
+  // ⚠ فاضية مسموحة: الموظّف اللي بيسجّل جهاز على السريع مش
+  // لازم يعرف يصنّفه. التصنيف بيتعمل بعدين من الشريط.
+  const family = readFamily(input.family);
 
-  const created = await deps.models.create({ tenantId: actor.tenantId, name, brand });
+  const created = await deps.models.create({ tenantId: actor.tenantId, name, brand, family });
 
   await deps.audit.record({
     actorId: actor.id,
     action: 'model.create',
     entity: 'DeviceModel',
     entityId: created.id,
-    metadata: { name, brand, tenantId: actor.tenantId },
+    metadata: { name, brand, family, tenantId: actor.tenantId },
   });
 
   return created;
@@ -519,7 +580,7 @@ export async function updateModel(
   deps: ProductDeps,
   actor: AuthenticatedUser,
   modelId: string,
-  input: { name?: unknown; brand?: unknown },
+  input: { name?: unknown; brand?: unknown; family?: unknown },
 ): Promise<void> {
   if (!actor.permissions.includes(PERMISSIONS.INVENTORY_ADJUST)) {
     throw Errors.forbidden(PERMISSIONS.INVENTORY_ADJUST);
@@ -529,9 +590,10 @@ export async function updateModel(
   // موديل محل تاني = غير موجود بالنسبة لك
   if (!existing) throw Errors.notFound('الموديل');
 
-  const patch: { name?: string; brand?: string | null } = {};
+  const patch: { name?: string; brand?: string | null; family?: ModelFamily } = {};
   if (input.name !== undefined) patch.name = readModelName(input.name);
   if (input.brand !== undefined) patch.brand = readBrand(input.brand);
+  if (input.family !== undefined) patch.family = readFamily(input.family);
   if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
 
   await deps.models.update(modelId, actor.tenantId, patch);
@@ -593,19 +655,25 @@ export async function deleteModel(
  * قراءة الموديل من طلب المنتج.
  *
  * ⚠ للنوعين — على عكس الدرج اللي للإكسسوار وحده.
- * وفاضي مسموح: منتجاتك القديمة مالهاش موديل.
+ * وفاضي مسموح **للإكسسوار وحده**؛ الجهاز بيترفض تحت.
+ *
+ * ══ ⚠ وبترجّع السجل نفسه مش المعرّف ══
+ * السبب إن اسم الجهاز بيتولّد من الاسم اللي جوّه السجل ده.
+ * لو رجّعنا المعرّف بس، كنا هنحتاج رحلة تانية للقاعدة عشان
+ * نقرا الاسم — أو نصدّق الاسم اللي جاي في الطلب، وهو بالظبط
+ * الباب اللي بنقفله.
  */
 async function resolveModel(
   deps: ProductDeps,
   actor: AuthenticatedUser,
   raw: unknown,
-): Promise<string | null> {
+): Promise<DeviceModel | null> {
   const modelId = String(raw ?? '').trim();
   if (!modelId) return null;
 
   const model = await deps.models.findById(modelId, actor.tenantId);
   if (!model) throw Errors.validation('الموديل المختار غير موجود.');
-  return modelId;
+  return model;
 }
 
 // ═══════════════════ الألوان ═══════════════════
@@ -758,7 +826,7 @@ async function resolveColor(
   return colorId;
 }
 
-// ═══════════════════ المنتجات ═══════════════════
+// ═══════════════════ البضاعة ═══════════════════
 
 // ─────────── الكتابة ───────────
 
@@ -782,24 +850,51 @@ export async function createProduct(
 
   const targetBranchId = await resolveBranch(deps, actor, input.branchId);
 
-  const name = input.name.trim();
-  assertName(name);
-
   const productType = input.productType;
   if (productType !== 'device' && productType !== 'accessory') {
     throw Errors.validation('اختر نوع المنتج: جهاز أو إكسسوار.');
   }
 
+  // ══ الاسم ══
+  //
+  // ⚠ اسم الجهاز **ما بيتقراش من الطلب**. بيتولّد من سجل
+  // الموديل تحت، والسطر ده هو قفل القرار ده.
+  //
+  // الشاشة كانت بتبعت اسم الموديل فعلاً، بس الشاشة لافتة مش
+  // قفل: أي طلب معدّل بإيد كان بيعدّي باسم مكتوب من الصفر —
+  // وهي دي الحالة اللي إخفاء خانة الاسم اتعمل عشانها.
+  //
+  // ⚠ والفحص هنا للإكسسوار وحده، وده مش سهو: `assertName`
+  // بيرفض الحرف الواحد، وموديلات زي «8» و«X» اسمها حرف واحد
+  // فعلاً. الجهاز بره الفحص لأن اسمه جاي من سجل **مفحوص
+  // أصلاً** — نفس القرار المكتوب على قراءة اسم الموديل.
+  let name = String(input.name ?? '').trim();
+  if (productType === 'accessory') assertName(name);
+
   // ─── قواعد النوع ───
   let serialNumber: string | null = null;
+  let serialUnavailable = false;
   let quantityOnHand: number;
 
   if (productType === 'device') {
+    serialUnavailable = Boolean(input.serialUnavailable);
     serialNumber = (input.serialNumber ?? '').trim();
-    if (!serialNumber) {
-      throw Errors.validation('اكتب الرقم التسلسلي للجهاز.');
+
+    // ⚠ السريال بيغلب العلامة، مش العكس.
+    //
+    // لو المستخدم علّم "مش متاح" وكتب سريال برضه، الصح إن
+    // السريال يتسجّل والعلامة تتشال — لأن الرقم موجود قدامنا
+    // فعلاً. العكس كان هيرمي رقم صحيح في الزبالة.
+    if (serialNumber) {
+      assertSerial(serialNumber);
+      serialUnavailable = false;
+    } else if (serialUnavailable) {
+      serialNumber = null;
+    } else {
+      // ⚠ الحالة التالتة لسه مرفوضة: لا رقم ولا قرار.
+      // دي بالظبط حالة النسيان، وهي اللي الرفض هنا بيمسكها.
+      throw Errors.validation('اكتب الرقم التسلسلي، أو علّم «غير متاح».');
     }
-    assertSerial(serialNumber);
 
     // الكمية مقفولة على واحد — مش بنسأل المستخدم أصلاً.
     // لو سمحنا بغيرها، هيبقى عندنا "جهازين بنفس السريال" وده
@@ -808,6 +903,11 @@ export async function createProduct(
   } else {
     if ((input.serialNumber ?? '').trim()) {
       throw Errors.validation('الرقم التسلسلي للأجهزة فقط.');
+    }
+    // ⚠ والعلامة كمان للأجهزة بس. الإكسسوار مالوش سريال أصلاً،
+    // فـ"مش متاح" عليه جملة بلا معنى.
+    if (input.serialUnavailable) {
+      throw Errors.validation('علامة «غير متاح» للأجهزة فقط.');
     }
     assertQuantity(input.quantityOnHand);
     quantityOnHand = input.quantityOnHand;
@@ -818,6 +918,66 @@ export async function createProduct(
   assertCost(input.costPiastres);
 
   const source = trimOrNull(input.source, 80, 'اسم المصدر طويل جدًا.');
+
+  // ══ تسوية التكلفة ══
+  //
+  // ⚠ الفحوصات هنا رسايل عربية واضحة. الحراسة الحقيقية
+  // (الخزنة تبع المحل · صلاحية الاعتماد · المورّد موجود)
+  // جوّه دوال قاعدة البيانات جنب البيانات.
+  const rawSettle = String(input.settle ?? '').trim().toUpperCase();
+
+  // ══ ⚠ التسوية إلزامية لما يكون فيه تكلفة ══
+  //
+  // الافتراضي القديم كان `'NONE'`، ومعناه إن الطلب اللي مفيهوش
+  // تسوية بيعدّي كـ«تسجيل مخزون بس». يعني تكلفة ٥٠ ألف بتتسجّل،
+  // والفلوس ما تخرجش من الخزنة ومحدش يبقى مديون بيها.
+  //
+  // ⚠ والعطل ده **بيبان كأنه نجاح**: المنتج بيتضاف، والرسالة
+  // بتقول تمام، والرقم الغلط بيقعد في الخزنة لحد ما تعدّ الدرج.
+  //
+  // ⚠ والفحص هنا مش في الواجهة، لأن إخفاء خيار مش بيمنع حد
+  // يبعت الطلب من المتصفح — والفرق بين الاتنين هو الفرق بين
+  // لافتة وقفل.
+  //
+  // ⚠ ولاحظ الشرط: **بتكلفة بس**. لو التكلفة صفر، مفيش فلوس
+  // تتحرّك أصلاً والسؤال مالوش معنى — فبنعدّيها NONE بهدوء بدل
+  // ما نطلّع رسالة على سؤال مالوش إجابة.
+  if (!rawSettle && input.costPiastres > 0) {
+    throw Errors.validation('حدّد التكلفة دي راحت فين: مخزون بس، أو مدفوعة، أو على الحساب.');
+  }
+  if (rawSettle && rawSettle !== 'NONE' && rawSettle !== 'PAID' && rawSettle !== 'CREDIT') {
+    throw Errors.validation('نوع تسوية التكلفة غير معروف.');
+  }
+  const settle = (rawSettle || 'NONE') as 'NONE' | 'PAID' | 'CREDIT';
+  const treasuryId = String(input.treasuryId ?? '').trim() || null;
+  // ══ ⚠ المورّد إجباري ══
+  //
+  // ملف ٤٢ ساب العمود nullable عشان «شراء من زبون أو بضاعة
+  // قديمة»، والاعتراض ده كان صح: الآيفون المستعمل بيتشترى من
+  // الزبون اللي داخل الباب مش من تاجر.
+  //
+  // ⚠ والحل مش إننا نسيب الخانة تتفضّى — الحل صف مورّد اسمه
+  // «شراء من زبون» (ملف ٥١). فالخانة الفاضية بقت **نسيان**
+  // مش حالة مشروعة، والرفض هنا بيمسكه.
+  //
+  // ⚠ ولو الرسالة دي ظهرت وإنت شايف القايمة فاضية، يبقى ملف
+  // ٥١ ما اتشغّلش على المحل ده.
+  const supplierId = String(input.supplierId ?? '').trim() || null;
+  if (!supplierId) {
+    throw Errors.validation('اختر مصدر الشراء. لو مشتريها من زبون، اختر «شراء من زبون».');
+  }
+
+  // ⚠ تسوية بلا تكلفة جملة بلا معنى — ومبلغ الحركة هيبقى صفر.
+  if (settle !== 'NONE' && input.costPiastres <= 0) {
+    throw Errors.validation('اكتب التكلفة قبل تحديد طريقة السداد.');
+  }
+  if (settle === 'PAID' && !treasuryId) {
+    throw Errors.validation('اختر الخزنة اللي التكلفة اتدفعت منها.');
+  }
+  // ⚠ دين على مجهول رقم في دفتر مالوش صاحب — وما بيقفلش أبدًا.
+  if (settle === 'CREDIT' && !supplierId) {
+    throw Errors.validation('اختر المورّد قبل التحويل على حسابه.');
+  }
   const entryDate = readDate(input.entryDate);
 
   // ─── مواصفات الجهاز ───
@@ -834,8 +994,24 @@ export async function createProduct(
     : null;
 
   const categoryId = await resolveCategory(deps, actor, input.categoryId, productType);
-  const modelId = await resolveModel(deps, actor, input.modelId);
+  const model = await resolveModel(deps, actor, input.modelId);
   const colorId = await resolveColor(deps, actor, input.colorId);
+
+  // ══ ⚠ الموديل إلزامي للجهاز ══
+  //
+  // مش عشان الشاشة بتطلبه — عشان اسم الجهاز **هو** اسم الموديل.
+  // جهاز بلا موديل معناه جهاز بلا اسم: ما بيظهرش في بحث، وما
+  // بينضمّش لأي درج، وبيقعد في المخزون كصفّ مالوش عنوان.
+  //
+  // ⚠ والإكسسوار بره القاعدة دي عن قصد: فيه جراب عام وشاحن
+  // بيركب على أي حاجة، وإلزامه بموديل كان هيخلّي الموظّف
+  // يختار موديل عشوائي عشان يعدّي — وده تلويث أسوأ من الفراغ.
+  if (isDevice && !model) {
+    throw Errors.validation('اختر الموديل من القائمة — اسم الجهاز بيتولّد منه.');
+  }
+  if (model && isDevice) name = model.name;
+
+  const modelId = model ? model.id : null;
 
   const created = await deps.products.create({
     tenantId: actor.tenantId,
@@ -843,7 +1019,11 @@ export async function createProduct(
     name,
     productType,
     serialNumber,
+    serialUnavailable,
     source,
+    supplierId,
+    settle,
+    treasuryId: settle === 'PAID' ? treasuryId : null,
     entryDate,
     pricePiastres: input.pricePiastres,
     costPiastres: input.costPiastres,
@@ -867,6 +1047,12 @@ export async function createProduct(
       productType,
       branchId: targetBranchId,
       hasSerial: serialNumber !== null,
+      serialUnavailable,
+      // ⚠ التسوية في السجل كمان. "منتج اتضاف" من غير "واتدفع
+      // إزاي" بيخلّي أي مراجعة للفلوس ناقصة نصّها.
+      settle,
+      supplierId,
+      treasuryId: settle === 'PAID' ? treasuryId : null,
       hasPrice: input.pricePiastres !== null,
       quantityOnHand,
       customsCleared,
@@ -969,7 +1155,21 @@ export async function updateProduct(
     );
   }
   if (input.modelId !== undefined) {
-    patch.modelId = await resolveModel(deps, actor, input.modelId);
+    const model = await resolveModel(deps, actor, input.modelId);
+
+    // ⚠ نفس قاعدة الإنشاء: الجهاز ما ينفعش يفضل بلا موديل.
+    // من غير السطر ده، تعديل واحد بيقدر يفضّي الخانة ويسيب
+    // الجهاز باسم يتيم مش مربوط بأي سجل.
+    if (existing.productType === 'device' && !model) {
+      throw Errors.validation('الجهاز لازم يكون له موديل.');
+    }
+
+    patch.modelId = model ? model.id : null;
+
+    // ⚠ والاسم بيمشي مع الموديل. لو سبناه، تغيير الموديل كان
+    // بيسيب الجهاز باسم موديله القديم — والاتنين على الشاشة
+    // بيقولوا حاجتين مختلفتين.
+    if (existing.productType === 'device' && model) patch.name = model.name;
   }
   if (input.colorId !== undefined) {
     patch.colorId = await resolveColor(deps, actor, input.colorId);
@@ -1041,7 +1241,12 @@ export async function updateProduct(
     }
   }
 
-  if (input.name !== undefined) {
+  // ⚠ الاسم للإكسسوار وحده.
+  //
+  // اسم الجهاز بيتولّد من موديله فوق، وقبوله من الطلب هنا كان
+  // هيفتح نفس الباب اللي اتقفل في الإنشاء بالظبط — وأسوأ، لأنه
+  // كان بيدهس على الاسم المشتق في نفس الطلب.
+  if (input.name !== undefined && existing.productType !== 'device') {
     const name = input.name.trim();
     assertName(name);
     patch.name = name;
@@ -1069,16 +1274,51 @@ export async function updateProduct(
     if (parsed) patch.entryDate = parsed;
   }
 
-  // السريال يتعدّل للأجهزة بس، وما ينفعش يتفضّى.
-  // جهاز بلا سريال = صفّين متطابقين ومفيش طريقة تفرّق بينهم.
+  // ══ السريال بعد الإنشاء ══
+  //
+  // ⚠ العلامة بتتشال **لوحدها** أول ما يتكتب سريال.
+  //
+  // الجهاز اتفتح، أو الكرتونة ظهرت، فبتفتح المنتج وتكتب الرقم.
+  // لو سيبنا العلامة، هتفضل مكتوبة على صفّ ليه سريال — وده
+  // تناقض بيخلّي أي قايمة مراجعة تكدب.
+  //
+  // ومفيش تذكير ولا شاشة مستقلة: العلامة ظاهرة على الصفّ في
+  // المخزون، والبحث بيلاقيها. ده اللي اتفقنا عليه — تدوّر
+  // بنفسك مش النظام يزنّ عليك.
   if (input.serialNumber !== undefined) {
     if (existing.productType !== 'device') {
       throw Errors.validation('الرقم التسلسلي للأجهزة فقط.');
     }
     const serial = (input.serialNumber ?? '').trim();
-    if (!serial) throw Errors.validation('الجهاز لازم يكون له رقم تسلسلي.');
-    assertSerial(serial);
-    patch.serialNumber = serial;
+
+    if (serial) {
+      assertSerial(serial);
+      patch.serialNumber = serial;
+      patch.serialUnavailable = false;
+    } else {
+      // ⚠ التفضية مسموحة **بشرط** إن العلامة موجودة — في نفس
+      // الطلب أو على الصفّ أصلاً. من غير الشرط ده، أي حد يقدر
+      // يمسح سريال جهاز ويسيبه بلا هوية ولا سبب مكتوب.
+      const markedNow = input.serialUnavailable === true;
+      const markedBefore = existing.serialUnavailable === true
+        && input.serialUnavailable !== false;
+
+      if (!markedNow && !markedBefore) {
+        throw Errors.validation('لمسح الرقم التسلسلي، علّم «غير متاح» أولًا.');
+      }
+      patch.serialNumber = null;
+      patch.serialUnavailable = true;
+    }
+  } else if (input.serialUnavailable !== undefined) {
+    // العلامة اتغيّرت لوحدها من غير ما السريال يتبعت
+    if (existing.productType !== 'device') {
+      throw Errors.validation('علامة «غير متاح» للأجهزة فقط.');
+    }
+    if (input.serialUnavailable === false && !existing.serialNumber) {
+      throw Errors.validation('اكتب الرقم التسلسلي قبل رفع العلامة.');
+    }
+    patch.serialUnavailable = Boolean(input.serialUnavailable);
+    if (patch.serialUnavailable) patch.serialNumber = null;
   }
 
   // مفتاح updatedById موجود دايمًا، فبنعدّ اللي غيره
@@ -1109,7 +1349,7 @@ export async function updateProduct(
  * سجل أسعار المنتج — كان كام وبقى كام ومين غيّره.
  *
  * السجل نفسه بتكتبه قاعدة البيانات بمشغّل، مش الكود ده. الدالة
- * بتقراه وبتركّب الأسماء فوق المعرّفات، نفس نمط حركات الخزينة.
+ * بتقراه وبتركّب الأسماء فوق المعرّفات، نفس نمط حركات الخزنة.
  */
 export async function getPriceHistory(
   deps: ProductDeps,
