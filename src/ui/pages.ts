@@ -4594,7 +4594,13 @@ ${TIME_JS}
 
       var sub = document.createElement('span');
       sub.className = 'cart-line-sub';
-      sub.textContent = money(line.price) + ' × ' + line.qty;
+      // ⚠ المنتج اللي مالوش سعر كان بيقول «0 × 1».
+      //
+      // والصفر رقم — يعني الشاشة بتقول إن سعره صفر، مش إنه
+      // لسه ما اتسعّرش. والكاشير بيقرا الرقم مش الخانة اللي
+      // تحته، فبيفتكر إن فيه سعر خلاص.
+      var subPrice = line.price !== null ? line.price : manualPrice(line.manual);
+      sub.textContent = (subPrice === null ? '—' : money(subPrice)) + ' × ' + line.qty;
 
       main.appendChild(name);
       main.appendChild(sub);
@@ -4618,7 +4624,16 @@ ${TIME_JS}
 
         var priceNote = document.createElement('span');
         priceNote.className = 'cart-price-note';
-        priceNote.textContent = 'اكتب سعر البيع';
+        priceNote.setAttribute('data-price-note', id);
+        // ⚠ السطر ده بيتحوّل لتأكيد أول ما الرقم يبقى مقروء.
+        //
+        // كان بيفضل «اكتب سعر البيع» مهما كتبت — فالشاشة تقول
+        // إنها مستنية وهي مستلمة خلاص. والكاشير بيدوّر على زرار
+        // حفظ مش موجود لأن مفيش حاجة بتقوله إن السعر وصل.
+        var typedNow = manualPrice(line.manual);
+        priceNote.textContent = typedNow === null
+          ? 'اكتب سعر البيع'
+          : 'السعر: ' + money(typedNow) + ' ج.م';
 
         priceWrap.appendChild(priceInput);
         priceWrap.appendChild(priceNote);
@@ -4754,10 +4769,26 @@ ${TIME_JS}
       : 'تم البيع · ' + money(t.sum) + ' ج.م';
 
     var row = input.closest ? input.closest('.cart-line') : null;
+    var p = manualPrice(cart[id].manual);
+
     var amountEl = row ? row.querySelector('.cart-line-amount') : null;
     if (amountEl) {
-      var p = manualPrice(cart[id].manual);
       amountEl.textContent = p === null ? '—' : money(p * cart[id].qty);
+    }
+
+    // ⚠ والسطرين دول هما اللي كانوا ناقصين: التأكيد جنب الخانة
+    // نفسها. الإجمالي بيتحدّث تحت، بس الكاشير بيبصّ على السطر
+    // اللي هو بيكتب فيه — والسطر ده كان بيفضل بيطلب منه يكتب.
+    var noteEl = row ? row.querySelector('[data-price-note]') : null;
+    if (noteEl) {
+      noteEl.textContent = p === null
+        ? 'اكتب سعر البيع'
+        : 'السعر: ' + money(p) + ' ج.م';
+    }
+
+    var subEl = row ? row.querySelector('.cart-line-sub') : null;
+    if (subEl) {
+      subEl.textContent = (p === null ? '—' : money(p)) + ' × ' + cart[id].qty;
     }
   });
 
