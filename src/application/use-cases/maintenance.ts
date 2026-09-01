@@ -331,16 +331,56 @@ export async function createTicket(
    * ⚠ الدرس: عمود not null + قيمة nullable من الجلسة = عطل
    * بيظهر عند أول استخدام حقيقي مش وقت الكتابة.
    */
+  // ══ ⚠ الزيارة السابقة بتتفحص **قبل** الفرع ══
+  //
+  // السبب إن فرعها هو الافتراضي للمرتجع. لو فحصناها بعد
+  // تحديد الفرع، صاحب المحل كان لازم يختار الفرع بإيده في
+  // نافذة المرتجع — والنافذة دي أصلاً بتسأل حاجتين بس.
+  //
+  // ══ المرتجع لازم يكون على جهاز **اتسلّم** ══
+  //
+  // الشاشة بتخبّي زرار «رجع تاني» لغير المسلَّم، لكن الإخفاء
+  // لافتة مش قفل: أي طلب معدّل بإيد كان بيقدر يربط زيارة
+  // جديدة بتذكرة لسه مفتوحة.
+  //
+  // ⚠ والنتيجة مش شكلية: تذكرتين مفتوحتين لنفس الجهاز في نفس
+  // الوقت، وشاشة المرتجعات بتعدّ إصلاح ما فشلش أصلاً — لأنه
+  // ما خلصش لسه.
+  const parentTicketId = String(input.parentTicketId ?? '').trim() || null;
+  let parentBranchId: string | null = null;
+
+  if (parentTicketId) {
+    const parent = await deps.maintenance.findTicket(parentTicketId);
+    if (!parent || parent.tenantId !== actor.tenantId) {
+      throw Errors.notFound('الزيارة السابقة');
+    }
+    if (parent.status !== 'DELIVERED') {
+      throw Errors.validation('المرتجع بيتفتح على جهاز اتسلّم للعميل بس.');
+    }
+    parentBranchId = parent.branchId;
+  }
+
   let targetBranchId: string;
 
   if (actor.roleKey === 'SUPER_ADMIN') {
-    if (!input.branchId) throw Errors.validation('اختر الفرع.');
+    // ══ ⚠ المرتجع بيرث فرع زيارته السابقة ══
+    //
+    // ══ العطل اللي اتصلّح هنا ══
+    // نافذة المرتجع كانت بتقرا قائمة الفرع من نموذج الاستلام،
+    // والقائمة دي بتبدأ فاضية. فالخادم يرفض بـ«اختر الفرع»،
+    // والرسالة تظهر في شريط الصفحة **ورا النافذة** — فالزرار
+    // شكله بيتضغط وما بيعملش حاجة.
+    //
+    // ⚠ والإرث ده مش حلّ التفاف: الجهاز رجع لنفس المحل اللي
+    // سلّمه، فالفرع معروف من غير ما يتسأل.
+    const wanted = input.branchId || parentBranchId;
+    if (!wanted) throw Errors.validation('اختر الفرع.');
 
     // المحل جزء من الفحص مش سياق حواليه — من غيره، معرّف
     // مخمَّن يقدر يربط تذكرة بفرع محل تاني
-    const exists = await deps.branches.exists(actor.tenantId, input.branchId);
+    const exists = await deps.branches.exists(actor.tenantId, wanted);
     if (!exists) throw Errors.validation('الفرع المختار غير موجود.');
-    targetBranchId = input.branchId;
+    targetBranchId = wanted;
   } else {
     if (!actor.branchId) throw Errors.forbidden('branch scope');
     targetBranchId = actor.branchId;
@@ -395,26 +435,6 @@ export async function createTicket(
     receivedDate = parseDateInput(input.receivedDate);
   } catch (error) {
     throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
-  }
-
-  // ══ ⚠ المرتجع لازم يكون على جهاز **اتسلّم** ══
-  //
-  // الشاشة بتخبّي زرار «رجع تاني» لغير المسلَّم، لكن الإخفاء
-  // لافتة مش قفل: أي طلب معدّل بإيد كان بيقدر يربط زيارة
-  // جديدة بتذكرة لسه مفتوحة.
-  //
-  // ⚠ والنتيجة مش شكلية: تذكرتين مفتوحتين لنفس الجهاز في نفس
-  // الوقت، وشاشة المرتجعات بتعدّ إصلاح ما فشلش أصلاً — لأنه
-  // ما خلصش لسه.
-  const parentTicketId = String(input.parentTicketId ?? '').trim() || null;
-  if (parentTicketId) {
-    const parent = await deps.maintenance.findTicket(parentTicketId);
-    if (!parent || parent.tenantId !== actor.tenantId) {
-      throw Errors.notFound('الزيارة السابقة');
-    }
-    if (parent.status !== 'DELIVERED') {
-      throw Errors.validation('المرتجع بيتفتح على جهاز اتسلّم للعميل بس.');
-    }
   }
 
   const created = await deps.maintenance.createTicket({
