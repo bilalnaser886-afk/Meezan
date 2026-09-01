@@ -6466,8 +6466,17 @@ export function productsPage(data: ProductsPageData): Html {
             <div id="np-settle-box" hidden>
               <div class="field">
                 <label class="field-label" for="np-settle">التكلفة دي</label>
+                <!-- ══ ⚠ مفيش خيار افتراضي ══
+                     «تسجيل مخزون بس» كان أول خيار، يعني الافتراضي.
+                     والافتراضي هنا **بيحرّك فلوس بالسكوت**: تكتب
+                     تكلفة ٥٠ ألف وتدوس حفظ، فالبضاعة تدخل والفلوس
+                     ما تخرجش ومحدش يبقى مديون — وشكلها نجاح.
+
+                     دلوقتي القايمة بتبدأ فاضية، والحفظ بيترفض لحد
+                     ما تقول التكلفة دي راحت فين. -->
                 <select class="field-input" id="np-settle">
-                  <option value="NONE">— تسجيل مخزون بس، بلا حركة فلوس —</option>
+                  <option value="">— اختر —</option>
+                  <option value="NONE">تسجيل مخزون بس، بلا حركة فلوس</option>
                   <option value="PAID">اتدفعت من الخزنة</option>
                   <option value="CREDIT">على حساب المورّد (دين)</option>
                 </select>
@@ -7261,12 +7270,16 @@ ${MENU_JS}
     var hasCost = costEl.value.trim() !== '' && costEl.value.trim() !== '0';
     settleBox.hidden = !hasCost;
 
-    // ⚠ إخفاء الصندوق بيرجّع الاختيار للحياد كمان.
+    // ⚠ إخفاء الصندوق بيرجّع الاختيار **للفاضي** مش لـNONE.
+    //
     // لو سبناه على "اتدفعت" وهو مخفي، الموظّف يمسح التكلفة
     // ويفتكر إنه ألغى السداد — والحركة بتتسجّل برضه.
-    if (!hasCost && settleEl) settleEl.value = 'NONE';
+    //
+    // ⚠ والرجوع للفاضي مش لـNONE، عشان لو كتب تكلفة تاني
+    // يلاقي السؤال متسأل من الأول — مش إجابة قديمة مستنية.
+    if (!hasCost && settleEl) settleEl.value = '';
 
-    var mode = settleEl ? settleEl.value : 'NONE';
+    var mode = settleEl ? settleEl.value : '';
     if (treasuryField) treasuryField.hidden = mode !== 'PAID';
     if (settleHint) settleHint.hidden = mode !== 'CREDIT';
   }
@@ -7532,6 +7545,19 @@ ${MENU_JS}
         return;
       }
 
+      // ══ ⚠ التسوية إلزامية طول ما الصندوق ظاهر ══
+      //
+      // الصندوق بيظهر لما التكلفة تبقى أكبر من صفر — يعني فيه
+      // فلوس فعلاً. والسؤال «راحت فين؟» ما ينفعش يعدّي بإجابة
+      // افتراضية محدش قراها.
+      var settleVal = document.getElementById('np-settle');
+      var settleWrap = document.getElementById('np-settle-box');
+      if (settleWrap && !settleWrap.hidden && settleVal && !settleVal.value) {
+        say('التكلفة دي راحت فين؟ اختر واحد من التلاتة.', false);
+        settleVal.focus();
+        return;
+      }
+
       // ══ ⚠ فحص الرقم قبل الإرسال ══
       //
       // بيشتغل على أي سريال ١٥ رقم مهما جه منين: مكتوب بإيدك،
@@ -7579,7 +7605,10 @@ ${MENU_JS}
             // ⚠ التسوية بتتبعت مع نفس الطلب مش في نداء تاني.
             // نداءين معناهم إن الفشل بين الاتنين بيسيب جهاز
             // بلا دين أو دين بلا جهاز.
-            settle: settleEl ? settleEl.value : 'NONE',
+            // ⚠ الفاضي بيتبعت NONE، وده بيحصل في حالة واحدة بس:
+            // الصندوق مخفي يعني التكلفة صفر ومفيش فلوس تتحرّك.
+            // والفحص فوق بيمنع الفاضي طول ما الصندوق ظاهر.
+            settle: (settleEl && settleEl.value) || 'NONE',
             treasuryId: (settleEl && settleEl.value === 'PAID')
               ? document.getElementById('np-treasury').value
               : null,
