@@ -21,7 +21,7 @@
 
 import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
-import { MoneyError, parseCostToPiastres } from '../../domain/money';
+import { MoneyError, parseCostToPiastres, parseMoneyToPiastres } from '../../domain/money';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
   AuditLogger,
@@ -33,15 +33,28 @@ import type {
   MaintenanceRepository,
   ProductMaintenanceRow,
   RepairShop,
+  RepairShopBalance,
+  RepairShopMovement,
+  RepairShopPaymentResult,
   RepairTicket,
   ShopHistoryRow,
   TicketStatus,
+  TreasuryRepository,
 } from '../ports';
 
 export interface MaintenanceDeps {
   maintenance: MaintenanceRepository;
   /** لازم للتحقق إن الفرع اللي المالك اختاره جوّه محله */
   branches: BranchRepository;
+  /**
+   * ⚠ اتضافت مع دفتر الورش.
+   *
+   * السداد بيطلّع فلوس من الدرج، فلازم نتأكد إن الخزنة جوّه
+   * محلك وفي فرعك **قبل** ما نروح للقاعدة. الحراسة الحقيقية
+   * جوّه الدالة، والفحص هنا عشان الرسالة تبقى عربية واضحة
+   * بدل خطأ عام.
+   */
+  treasuries: TreasuryRepository;
   clock: Clock;
   audit: AuditLogger;
 }
@@ -683,4 +696,238 @@ function readFutureDate(raw: string | null | undefined): string | null {
     throw new DateError('التاريخ غير موجود في التقويم.');
   }
   return text;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  حساب محلات الصيانة
+//
+//  ══ المرآة التالتة ══
+//     الموردين  →  دين عليك    (بضاعة دخلت بالأجل)
+//     المحلات   →  دين ليك     (بضاعة خرجت بالأجل)
+//     الورش     →  دين عليك    (شغل اتعمل ولسه ما اتدفعش)
+//
+//  ══ ⚠ والدين مش بيتكتب من هنا ══
+//  ده أهم فرق عن دفتر الموردين، واقراه مرة.
+//
+//  دين الورشة بيتولّد **جوّه قاعدة البيانات** بمشغّل على
+//  الجدولين: أول ما جهاز محل يرجع من الورشة، وأول ما جهاز
+//  عميل يتسلّم. في نفس معاملة الحسم بالظبط.
+//
+//  والسبب إن الحسم بيحصل في `fn_return_from_maintenance` —
+//  دالة بترجّع الكمية للمخزون. لو كتبنا الدين من هنا بعدها،
+//  بينهم رحلة شبكة، وأي فشل بيسيب جهاز رجع المخزون ومفيش
+//  دين عليه. ومشغّل القاعدة بيمسك كمان أي `update` يدوي
+//  بيتخطّى الدالة أصلاً.
+//
+//  فالملف ده بيكتب حاجتين بس: **الدين اليدوي** و**السداد**.
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * ⚠ `supplier.manage` مش `maintenance.manage`.
+ *
+ * الشاشة دي **دفتر ديون** قبل ما تكون شاشة صيانة. واللي مش
+ * مسموح له يشوف كام إنت مديون للموردين، مش مسموح له يشوف كام
+ * إنت مديون للورش.
+ *
+ * ⚠ ونتيجتها العملية: المندوب عنده `maintenance.view` فبيشوف
+ * الأجهزة والتذاكر، وما بيشوفش الحساب. وده مقصود — الأرقام
+ * دي بتوصّل لهامش ربحك.
+ *
+ * ⚠ وصلاحية جديدة كانت هتكسر الفحص الأمني الدوري (فحص ٣)،
+ * نفس السبب المكتوب في `shops.ts` بالحرف.
+ */
+function assertLedgerAccess(actor: AuthenticatedUser): void {
+  if (actor.roleKey === 'PLATFORM_ADMIN') {
+    throw Errors.forbidden('platform admin has no shop data access');
+  }
+  if (!actor.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE)) {
+    throw Errors.forbidden(PERMISSIONS.SUPPLIER_MANAGE);
+  }
+}
+
+/**
+ * أرصدة كل الورش.
+ *
+ * ⚠ على مستوى **المحل** مش الفرع، وده مقصود.
+ *
+ * الورشة واحدة بتستقبل من كل فروعك، وبتحاسبك مرة واحدة. لو
+ * قسّمنا الحساب على الفروع، هتلاقي نفس الورشة بأربع أرصدة
+ * وهي في الحقيقة بتطلب منك رقم واحد.
+ *
+ * ⚠ وده عكس الموردين عن قصد: هناك البضاعة بتدخل فرع معيّن
+ * والسداد بيخرج من خزنته، فالتوزيع بيعكس واقع. هنا الشغل
+ * بيخرج من كل الفروع لنفس الورشة.
+ */
+export async function listRepairShopAccounts(
+  deps: MaintenanceDeps,
+  actor: AuthenticatedUser,
+): Promise<RepairShopBalance[]> {
+  assertLedgerAccess(actor);
+  return deps.maintenance.shopBalances(actor.tenantId);
+}
+
+/** كشف حساب ورشة واحدة */
+export async function getRepairShopLedger(
+  deps: MaintenanceDeps,
+  actor: AuthenticatedUser,
+  shopId: string,
+  limit = 200,
+): Promise<RepairShopMovement[]> {
+  assertLedgerAccess(actor);
+  return deps.maintenance.shopLedger(
+    shopId,
+    actor.tenantId,
+    Math.min(Math.max(limit, 1), 500),
+  );
+}
+
+export interface RepairShopDebtRequest {
+  amount: string;
+  note: string;
+  date?: string | null;
+}
+
+/**
+ * دين يدوي — قطع غيار اشتريتها منه، أو شغل بره النظام.
+ *
+ * ⚠ الملاحظة **إلزامية** هنا على عكس السداد.
+ *
+ * الدين اليدوي رقم بيزيد بلا سجل يفسّره: مفيش جهاز وراه ولا
+ * تذكرة. ومن غير سبب مكتوب، مفيش طريقة تفرّق بينه وبين غلطة
+ * أو تلاعب بعد شهرين. نفس قاعدة خصم المورّد بالحرف.
+ */
+export async function recordRepairShopDebt(
+  deps: MaintenanceDeps,
+  actor: AuthenticatedUser,
+  shopId: string,
+  input: RepairShopDebtRequest,
+): Promise<{ movementId: string; newBalance: number }> {
+  assertLedgerAccess(actor);
+
+  const note = String(input.note ?? '').trim();
+  if (note.length < 3) throw Errors.validation('اكتب سبب الدين.');
+  if (note.length > 500) throw Errors.validation('الملاحظة أطول من الحد المسموح.');
+
+  let amountPiastres: number;
+  try {
+    amountPiastres = parseMoneyToPiastres(String(input.amount ?? ''));
+  } catch (error) {
+    throw Errors.validation(error instanceof MoneyError ? error.message : 'المبلغ غير صالح.');
+  }
+
+  const result = await deps.maintenance.recordShopDebt({
+    shopId,
+    // ⚠ من الجلسة مش من الطلب. الدين بيزيد مديونيتك — لو
+    // أخدناه من الطلب، أي حد يكتب دين باسم زميله ويختفي.
+    actorId: actor.id,
+    amountPiastres,
+    note,
+    date: readLedgerDate(input.date),
+  });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'repair_shop.debt',
+    entity: 'RepairShop',
+    entityId: shopId,
+    metadata: { amountPiastres, note, newBalance: result.newBalance },
+  });
+
+  return result;
+}
+
+export interface RepairShopPaymentRequest {
+  amount: string;
+  treasuryId?: string;
+  note?: string | null;
+  date?: string | null;
+}
+
+/**
+ * سداد للورشة — ذري، وبيقسّم نفسه.
+ *
+ * ══ ⚠ القسمة، ومين بيعملها ══
+ * رصيد الورشة نصّه مخزون (أجهزة محلّك، تكلفتها اتحمّلت على
+ * الجهاز خلاص) ونصّه مصروف خدمة (أجهزة الزباين). وإنت بتدفع
+ * مبلغ واحد على الاتنين.
+ *
+ * القاعدة بتقسّمه بنسبة الرصيد المستحق على **حركتين خزنة**:
+ * واحدة بسبب البضاعة المعلّم (مستبعدة من قائمة الدخل)،
+ * وواحدة بسبب «صيانة خارجية» (مصروف عادي).
+ *
+ * ⚠ من غير القسمة دي، إصلاح جهاز محلّك بيتحمّل **مرتين**:
+ * مرة في تكلفة الجهاز ومرة في المصروفات.
+ *
+ * ⚠ والقسمة في القاعدة مش هنا عن قصد: هي محتاجة تقرا الرصيد
+ * وتكتب الحركات في نفس اللحظة. لو قريناه هنا وبعتنا النتيجة،
+ * بينهم رحلة شبكة يقدر فيها سداد تاني يعدّي ويغيّر النسبة.
+ */
+export async function recordRepairShopPayment(
+  deps: MaintenanceDeps,
+  actor: AuthenticatedUser,
+  shopId: string,
+  input: RepairShopPaymentRequest,
+): Promise<RepairShopPaymentResult> {
+  assertLedgerAccess(actor);
+
+  if (!input.treasuryId) throw Errors.validation('اختر الخزنة.');
+
+  const scope = await deps.treasuries.findScope(input.treasuryId);
+  // خزنة محل تاني = غير موجودة بالنسبة لك
+  if (!scope || scope.tenantId !== actor.tenantId) throw Errors.notFound('الخزنة');
+
+  // ⚠ مدير الفرع بيدفع من خزنة فرعه. صاحب المحل من أي خزنة.
+  //
+  // من غير الحاجز ده، مدير فرع بيسدّد من درج فرع تاني والدفتر
+  // يقول "تم" — والخزنة التانية ناقصة فلوس مش بتاعتها. نفس
+  // العطل اللي حصل في تسجيل الحركة قبل كده بالحرف.
+  if (actor.roleKey !== 'SUPER_ADMIN') {
+    if (!actor.branchId) throw Errors.forbidden('branch scope');
+    if (scope.branchId !== actor.branchId) throw Errors.forbidden('branch scope');
+  }
+
+  let amountPiastres: number;
+  try {
+    amountPiastres = parseMoneyToPiastres(String(input.amount ?? ''));
+  } catch (error) {
+    throw Errors.validation(error instanceof MoneyError ? error.message : 'المبلغ غير صالح.');
+  }
+
+  const result = await deps.maintenance.recordShopPayment({
+    shopId,
+    actorId: actor.id,
+    treasuryId: input.treasuryId,
+    amountPiastres,
+    note: text(input.note, 500, 'الملاحظة أطول من الحد المسموح.'),
+    date: readLedgerDate(input.date),
+  });
+
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'repair_shop.payment',
+    entity: 'RepairShop',
+    entityId: shopId,
+    // ⚠ القسمة في السجل كمان مش في الحركة بس. لو حصل خلاف
+    // على قائمة دخل بعد شهور، السجل بيقول المبلغ اتوزّع إزاي
+    // من غير ما تفتح الحركات.
+    metadata: {
+      amountPiastres,
+      treasuryId: input.treasuryId,
+      groupId: result.groupId,
+      inventoryPiastres: result.inventoryPiastres,
+      servicePiastres: result.servicePiastres,
+      newBalance: result.newBalance,
+    },
+  });
+
+  return result;
+}
+
+/** نفس فاحص التاريخ المستخدم في الموردين والمحلات */
+function readLedgerDate(raw: string | null | undefined): string | null {
+  try {
+    return parseDateInput(raw);
+  } catch (error) {
+    throw Errors.validation(error instanceof DateError ? error.message : 'تاريخ غير صالح.');
+  }
 }
