@@ -593,55 +593,19 @@ const PRINT_SHARED_JS = `
     }, 60);
   };
 
-  /**
-   * الماسح بالكاميرا.
-   *
-   * ══ ليه على مرحلتين؟ ══
-   * كروم على أندرويد فيه BarcodeDetector مدمج — صفر تحميل.
-   * سفاري على الأيفون مالوش، فبنجيب مكتبة **وقت الطلب بس**.
-   *
-   * يعني اللي على أندرويد ما بيحمّلش حاجة خالص، واللي على
-   * الأيفون بيحمّل مرة واحدة أول ما يضغط "مسح" — مش مع كل
-   * فتحة صفحة.
-   *
-   * ⚠ التمن: أول مسحة على الأيفون محتاجة نت. بعدها المتصفح
-   * بيخزّن المكتبة بنفسه.
-   */
-  var zxingReady = null;
-
-  function loadZxing() {
-    if (zxingReady) return zxingReady;
-    // ⚠ مصدرين مش واحد.
-    //
-    // المكتبة دي هي **الطريق الوحيد** للمسح على الأيفون (مفيش
-    // كاشف مدمج في محرك سفاري). فلو المصدر الأول مقفول — شبكة
-    // محل، أو مانع إعلانات، أو المصدر نفسه واقع — الماسح
-    // بيتعطّل خالص.
-    //
-    // ⚠ ولاحظ إن الفشل هنا بيبان: بنرمي رسالة واضحة. الحاجة
-    // الوحيدة اللي بتتقبل السكوت هي الإطار اللي مفيهوش باركود.
-    var SOURCES = [
-      'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js',
-      'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'
-    ];
-
-    zxingReady = new Promise(function (resolve, reject) {
-      var at = 0;
-      function attempt() {
-        if (at >= SOURCES.length) { reject(new Error('cdn')); return; }
-        var tag = document.createElement('script');
-        tag.src = SOURCES[at++];
-        tag.onload = function () {
-          if (window.ZXing) resolve(window.ZXing);
-          else attempt();
-        };
-        tag.onerror = function () { attempt(); };
-        document.head.appendChild(tag);
-      }
-      attempt();
-    });
-    return zxingReady;
-  }
+  // ══════════ 🔴 محمّل مكتبة الباركود اتشال ══════════
+  //
+  // كان بيجيب مكتبة ZXing من مصدرين احتياطيين عشان الأيفون
+  // (سفاري مالوش كاشف مدمج). وبما إن مسح الباركود اتشال
+  // بالكامل، المحمّل ده بقى بلا مستخدم.
+  //
+  // ⚠ وشيلناه مش سيبناه: كود ميّت بيتقرا كأنه حيّ، وأول واحد
+  // يقرا الملف بعد شهور هيفتكر إن المسح لسه شغّال ويدوّر على
+  // عطل مش موجود.
+  //
+  // ⚠ والفايدة الجانبية: النظام بقى **بلا أي طلب لمكتبة
+  // خارجية** وقت المسح — ماعدا قارئ الأرقام، وهو بيتحمّل مرة
+  // واحدة والمتصفح بيخزّنه.
 
   /**
    * ══════════ قراءة الأرقام بصريًا (OCR) ══════════
@@ -772,7 +736,7 @@ const PRINT_SHARED_JS = `
     overlay.innerHTML =
       '<div class="scan-box">' +
         '<video class="scan-video" playsinline muted></video>' +
-        '<p class="scan-hint">صوّب على الباركود — أو دوس «اقرا الرقم» لو مفيش</p>' +
+        '<p class="scan-hint">صوّب على الرقم — بيتقرا لوحده</p>' +
         '<button class="btn-mini" type="button" data-scan-cancel>إلغاء</button>' +
         // ⚠ مخرج يدوي دايمًا موجود.
         //
@@ -780,12 +744,15 @@ const PRINT_SHARED_JS = `
         // تلات حاجات ممكن تخذلك والزبون واقف قدامك. الزرار ده
         // بيخلّي أسوأ حالة "اكتبه بإيدك" مش "اقفل وارجع بعدين".
         '<button class="btn-mini" type="button" data-scan-manual>اكتبه بإيدك</button>' +
-        // ⚠ زرار منفصل مش تلقائي.
+        // ══ 🔴 زرار «اقرا الرقم» اتشال — بقت تلقائية ══
         //
-        // القراءة البصرية بتحمّل ٤ ميجا وبتاخد ثواني. لو
-        // شغّلناها لوحدها مع كل مسحة، كل موظّف هيدفع الثمن ده
-        // حتى لو الباركود قدّامه وواضح.
-        '<button class="btn-mini" type="button" data-scan-ocr>اقرا الرقم بالكاميرا</button>' +
+        // كان زرار منفصل عن قصد: القراءة البصرية بتحمّل ٤ ميجا
+        // وبتاخد ثواني، وما كانش من حق كل موظّف يدفع الثمن ده
+        // والباركود قدّامه.
+        //
+        // ⚠ والتمن ده **لسه موجود** — إنت بس اخترت تدفعه في كل
+        // مرة بدل ما تختار. أول فتحة على الموبايل هتاخد ثواني
+        // زيادة، واللي بعدها أسرع لأن المكتبة بتفضل محمّلة.
       '</div>';
     document.body.appendChild(overlay);
 
@@ -810,13 +777,17 @@ const PRINT_SHARED_JS = `
 
     // ══════════ القراءة البصرية ══════════
     var hintEl = overlay.querySelector('.scan-hint');
-    var ocrBtn = overlay.querySelector('[data-scan-ocr]');
     var ocrBusy = false;
 
-    ocrBtn.addEventListener('click', async function () {
+    /**
+     * القراءة البصرية — بقت الطريق الوحيد.
+     *
+     * ⚠ كانت معالج ضغطة على زرار، وبقت دالة بتتنادى تلقائيًا
+     * أول ما الكاميرا تفتح. الجسم زي ما هو بالحرف.
+     */
+    async function runOcr() {
       if (ocrBusy) return;
       ocrBusy = true;
-      ocrBtn.disabled = true;
 
       var worker = null;
       try {
@@ -869,7 +840,6 @@ const PRINT_SHARED_JS = `
         if (!best) {
           hintEl.textContent = 'ملقيتش رقم. قرّب أكتر وثبّت الإضاءة.';
           ocrBusy = false;
-          ocrBtn.disabled = false;
           return;
         }
 
@@ -881,9 +851,8 @@ const PRINT_SHARED_JS = `
             'أحطّه في الخانة وتصلّحه بإيدك؟'
           );
           if (!ok) {
-            hintEl.textContent = 'صوّب الكاميرا على الباركود';
+            hintEl.textContent = 'صوّب على الرقم وثبّت الإيد';
             ocrBusy = false;
-            ocrBtn.disabled = false;
             return;
           }
         }
@@ -894,9 +863,8 @@ const PRINT_SHARED_JS = `
         if (worker) { try { await worker.terminate(); } catch (e2) { /* خلاص */ } }
         hintEl.textContent = 'تعذّر تحميل القارئ. اتأكد من النت أو اكتبه بإيدك.';
         ocrBusy = false;
-        ocrBtn.disabled = false;
       }
-    });
+    }
 
     try {
       // ══ ⚠ الدقة مطلوبة صراحةً، والافتراضي مش كفاية ══
@@ -949,174 +917,54 @@ const PRINT_SHARED_JS = `
       throw new Error('تعذّر فتح الكاميرا. تأكّد من السماح بالوصول إليها.');
     }
 
-    // ─── الطريق الأول: المدمج في المتصفح ───
-    if ('BarcodeDetector' in window) {
-      try {
-        var det = new window.BarcodeDetector({
-          formats: ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'qr_code']
-        });
-        var nativeWorked = await new Promise(function (resolve) {
-          var fails = 0;
-          var timer = setInterval(async function () {
-            if (stopped) { clearInterval(timer); resolve(null); return; }
-            try {
-              var found = await det.detect(video);
-              fails = 0;
-              if (found && found.length) {
-                clearInterval(timer);
-                resolve(found[0].rawValue);
-              }
-            } catch (e) {
-              // ⚠ الفشل المتكرر معناه إن الكاشف المدمج مش
-              // شغّال فعليًا (صيغة مش مدعومة، أو منّفذ ناقص).
-              // من غير العدّاد ده كان بيفضل يلفّ للأبد والزرار
-              // ساكت — والسكوت أوحش من الرفض.
-              fails++;
-              if (fails >= 12) { clearInterval(timer); resolve(null); }
-            }
-          }, 220);
-        });
+    // ══════════ 🔴 مسح الباركود اتشال بالكامل ══════════
+    //
+    // كان فيه طريقين: الكاشف المدمج في المتصفح، والمكتبة
+    // الاحتياطية. الاتنين اتشالوا بطلبك، والقراءة بقت للرقم
+    // المطبوع مباشرةً.
+    //
+    // ⚠ اللي بتخسره: الماسح كان بيقرا **رقم دقيق** من الباركود
+    // — صح ١٠٠٪ أو ما بيقراش. القراءة البصرية بتخمّن من صورة،
+    // فممكن تقرا خانة غلط.
+    //
+    // والحارس الوحيد ضد ده هو فحص الآيمي اللي جوّه الدالة:
+    // الرقم اللي ما بيعدّيش الفحص **بيتسأل عنه** ما بيتقبلش
+    // بالسكوت. سيبه مكانه.
+    //
+    // ⚠ ولو رجعت للباركود يوم ما، الكود اتشال من هنا — مش
+    // معطّل ولا معلّق. مكانه في تاريخ المستودع.
+    var rounds = 0;
 
-        if (nativeWorked) { cleanup(); return nativeWorked; }
-        // ⚠ نفس معالجة الكتابة اليدوية في المسارين. لو حطّيناها
-        // في واحد بس، الزرار يشتغل على الأيفون ويسكت على
-        // الأندرويد — وده أوحش من إنه مش موجود خالص.
-        if (manualValue) { cleanup(); return manualValue; }
-        if (stopped) throw new Error('أُلغي المسح.');
-        // ما اشتغلش — بنكمّل للمكتبة تحت
-      } catch (e) { /* الصيغ مش مدعومة — بنكمّل للمكتبة */ }
+    while (!stopped && !manualValue && rounds < 3) {
+      rounds++;
+      await runOcr();
+      // ⚠ وقفة بين الجولات: القارئ بيرجع بسرعة لو الصورة
+      // مهزوزة، ومن غير الوقفة التلات جولات بيعدّوا على نفس
+      // اللقطة الوحشة.
+      if (!stopped && !manualValue) {
+        await new Promise(function (r) { setTimeout(r, 600); });
+      }
     }
 
-    // ══ ⚠ حارس قبل تحميل المكتبة ══
-    //
-    // الفحوصات اللي فوق كانت جوّه كتلة بتبلع كل حاجة — حتى
-    // رسالة الإلغاء. فالمستخدم يقفل الماسح، والكود يكمّل
-    // ويحمّل المكتبة على شبكة المحل بلا أي سبب.
-    //
-    // ⚠ وبقت لازمة أكتر مع القراءة البصرية: اللي قرا الرقم
-    // بالكاميرا خلص خلاص، وتحميل ماسح الباركود بعده هدر صافي.
-    if (manualValue) { cleanup(); return manualValue; }
+    if (manualValue) return manualValue;
     if (stopped) throw new Error('أُلغي المسح.');
 
-    // ─── الطريق التالت: مكتبة الباركود ───
-    var ZX;
-    try {
-      ZX = await loadZxing();
-    } catch (e) {
-      cleanup();
-      throw new Error('تعذّر تحميل الماسح. تأكّد من الاتصال بالإنترنت.');
+    // ⚠ ما لقاش رقم بعد تلات جولات. مش بنقفل الشاشة في وشه:
+    // الكاميرا بتفضل مفتوحة والتلميحة ظاهرة، وهو يكتبه بإيده
+    // أو يلغي. القفل التلقائي هنا كان هيخلّيه يعيد الفتح من
+    // الأول عشان يوصل لزرار الكتابة.
+    if (hintEl) {
+      hintEl.textContent = 'ملقيتش رقم — اكتبه بإيدك أو قرّب وافتح تاني.';
     }
 
-    // ══ ⚠ بنسحب الإطارات بإيدنا، ومش بنسلّم الفيديو للمكتبة ══
-    //
-    // ══ الغلطة اللي كانت هنا ══
-    // كنا بننادي decodeFromVideoElement. الدالة دي بتستنّى
-    // إشارة إن الفيديو **بدأ يشتغل** — وإحنا شغّلناه بإيدنا
-    // فوق بـplay(). فالإشارة حصلت **قبل** ما المكتبة تستنّاها،
-    // وهي فضلت مستنّية حاجة عدّت خلاص.
-    //
-    // النتيجة: الكاميرا بتفتح، والصورة بتبان، والحلقة **ما
-    // بتبدأش أصلاً**. ومفيش رسالة خطأ لأن مفيش حاجة فشلت —
-    // فيه حاجة ما ابتدتش.
-    //
-    // تشبيه: تقول للمدرب "نبّهني أول ما الجرس يرنّ" بعد ما رنّ.
-    //
-    // ⚠ الحل: نرسم الإطار على لوحة إحنا مالكينها، وننادي
-    // القارئ عليها. مفيش أي اعتماد على دورة حياة الفيديو.
-    var hints = new Map();
-    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
-      ZX.BarcodeFormat.QR_CODE,
-      ZX.BarcodeFormat.CODE_128,
-      ZX.BarcodeFormat.CODE_39,
-      ZX.BarcodeFormat.EAN_13,
-      ZX.BarcodeFormat.EAN_8,
-      ZX.BarcodeFormat.UPC_A,
-      ZX.BarcodeFormat.ITF
-    ]);
-    // ⚠ محاولة أعمق لكل إطار. أبطأ، بس إحنا بنفحص 4 إطارات في
-    // الثانية مش 60 — فالبطء مش محسوس والفرق في القراءة كبير.
-    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-
-    var canvas = document.createElement('canvas');
-    var ctx = canvas.getContext('2d');
-    var reader = new ZX.BrowserMultiFormatReader(hints);
-    var hintEl = overlay.querySelector('.scan-hint');
-
-    return await new Promise(function (resolve, reject) {
-      var frames = 0;
-
-      var timer = setInterval(function () {
-        if (stopped) {
-          clearInterval(timer);
-          // ⚠ لو كتبه بإيده، ده نجاح مش إلغاء
-          if (manualValue) resolve(manualValue);
-          else reject(new Error('أُلغي المسح.'));
-          return;
-        }
-
-        var w = video.videoWidth, h = video.videoHeight;
-        // الإطار لسه ما وصلش — نستنّى من غير ما نعدّ محاولة
-        if (!w || !h) return;
-
-        // ══ ⚠ إطار كامل وإطار مقصوص بالتناوب ══
-        //
-        // الإطار الكامل بيلاقي الرمز الكبير القريب. والمقصوص
-        // بياخد نص الصورة من النص ويرسمه بالحجم الكامل — يعني
-        // الرمز الصغير بيبقى ضِعف حجمه في البيانات اللي القارئ
-        // بيشوفها.
-        //
-        // ⚠ والتناوب مش الاتنين مع بعض: كل فك ترميز بياخد وقت،
-        // والاتنين في نفس الدورة بيخلّوا الحلقة تلحق إطارين في
-        // الثانية بدل أربعة — والإيد بتهتز في الوقت ده.
-        var half = (frames % 2) === 1;
-
-        if (half) {
-          var cw = Math.round(w * 0.55);
-          var ch = Math.round(h * 0.55);
-          canvas.width = cw * 2;
-          canvas.height = ch * 2;
-          ctx.drawImage(
-            video,
-            Math.round((w - cw) / 2), Math.round((h - ch) / 2), cw, ch,
-            0, 0, canvas.width, canvas.height
-          );
-        } else {
-          canvas.width = w;
-          canvas.height = h;
-          ctx.drawImage(video, 0, 0, w, h);
-        }
-
-        try {
-          var result = reader.decodeFromCanvas(canvas);
-          if (result) {
-            clearInterval(timer);
-            var value = result.getText();
-            cleanup();
-            resolve(value);
-            return;
-          }
-        } catch (e) {
-          // ⚠ المكتبة بترمي استثناء لكل إطار مفيهوش باركود.
-          // ده السلوك الطبيعي مش عطل — بنتجاهله ونكمّل.
-        }
-
-        // ⚠ تلميحة بعد 6 ثواني بدل شاشة صامتة.
-        // الماسح اللي بيفضل مفتوح من غير ما يقول حاجة بيخلّي
-        // الواحد يفتكر إنه باظ ويقفله.
-        frames++;
-        if (frames === 24 && hintEl) {
-          hintEl.textContent = 'قرّب 10 سم وثبّت الإيد، وخلّي الرمز في نص الشاشة.';
-        }
-        // ⚠ تلميحة تانية بعد 15 ثانية بتوجّه لمخرج مختلف.
-        //
-        // اللي فضل نص دقيقة بيصوّب مش هيلاقي بالتصويب. تكرار
-        // نفس النصيحة بيخلّيه يقفل ويكتب بإيده — والرقم مطبوع
-        // تحت الرمز أصلاً، فالقراءة البصرية أقرب طريق.
-        if (frames === 60 && hintEl) {
-          hintEl.textContent = 'الرمز مش راضي؟ جرّب «اقرا الرقم بالكاميرا» — الرقم مطبوع تحته.';
-        }
-      }, 250);
+    await new Promise(function (resolve) {
+      var wait = setInterval(function () {
+        if (stopped) { clearInterval(wait); resolve(null); }
+      }, 200);
     });
+
+    if (manualValue) return manualValue;
+    throw new Error('أُلغي المسح.');
   };
 
   /**
@@ -1140,11 +988,62 @@ const PRINT_SHARED_JS = `
    */
   window.exportXls = function (opts) {
     var G = '#16211D', B = '#B08D3D', L = '#E6E4D8';
+    var n = opts.columns.length;
+
+    // ══ ⚠ عرض الأعمدة بيتحسب من المحتوى ══
+    //
+    // ══ اللي كان بيحصل ══
+    // الأعمدة كانت بتطلع بعرض إكسل الافتراضي (8 حروف تقريبًا)،
+    // والبيان فيه اسم جهاز وملاحظة — فبيتقصّ، وتقعد توسّع كل
+    // عمود بإيدك كل مرة تصدّر.
+    //
+    // ⚠ وخاصية منع اللفّ لوحدها مكانتش بتحل: هي بتمنع اللفّ، مش
+    // بتوسّع العمود. النص بيفضل مقصوص لكن في سطر واحد.
+    //
+    // بنقيس أطول قيمة في كل عمود ونحوّلها لبكسل. والحدود
+    // موجودة عشان عمود مالوش غير كلمة ما يبقاش أضيق من
+    // عنوانه، وملاحظة طويلة ما تعملش عمود بعرض الشاشة.
+    var widths = [];
+    for (var w = 0; w < n; w++) {
+      var longest = String(opts.columns[w] || '').length;
+      for (var q = 0; q < opts.rows.length; q++) {
+        var cell = opts.rows[q][w];
+        var len = (cell === null || cell === undefined) ? 0 : String(cell).length;
+        if (len > longest) longest = len;
+      }
+      // ⚠ العربي أعرض من اللاتيني في نفس عدد الحروف، فبنضرب
+      // في 9 مش 7. الرقم ده اتظبط بالتجربة على أسماء الأجهزة.
+      widths.push(Math.min(420, Math.max(90, (longest + 2) * 9)));
+    }
+
+    var cols = '';
+    for (var cw = 0; cw < n; cw++) {
+      cols += '<col style="width:' + widths[cw] + 'px">';
+    }
+
+    // ══ ⚠ العنوان جوّه الجدول مش فوقه ══
+    //
+    // كان عنوان h3 بره الجدول، فإكسل بيحطّه في الخلية A1 لوحدها
+    // — والنص الأطول من الخلية بيتقصّ عند حدود العمود اللي
+    // بعده لأنه مش فاضي.
+    //
+    // دلوقتي صف مدموج على عرض الجدول كله، فالعنوان بيتمدّ
+    // على الأعمدة ومستحيل يتاكل.
+    var titleRow =
+      '<tr><td colspan="' + n + '" style="background:' + G + ';color:#fff;' +
+      'padding:12px;font-size:16px;font-weight:bold;text-align:right">' +
+      (opts.title || '') + '</td></tr>';
+
+    var subRow = opts.subtitle
+      ? '<tr><td colspan="' + n + '" style="background:#F7F6EF;color:#555;' +
+        'padding:7px;font-size:11px;text-align:right">' + opts.subtitle + '</td></tr>'
+      : '';
 
     var head = '';
-    for (var i = 0; i < opts.columns.length; i++) {
-      head += '<th style="background:' + G + ';color:#fff;padding:8px;' +
-        'border:1px solid ' + G + ';font-weight:bold">' + opts.columns[i] + '</th>';
+    for (var i = 0; i < n; i++) {
+      head += '<th style="background:' + G + ';color:#fff;padding:9px;' +
+        'border:1px solid ' + G + ';font-weight:bold;text-align:right">' +
+        opts.columns[i] + '</th>';
     }
 
     var body = '';
@@ -1155,8 +1054,12 @@ const PRINT_SHARED_JS = `
       for (var c = 0; c < opts.rows[r].length; c++) {
         var v = opts.rows[r][c];
         var num = typeof v === 'number';
-        body += '<td style="background:' + bg + ';padding:6px;border:1px solid ' + L +
-          ';text-align:' + (num ? 'left' : 'right') + '">' +
+        body += '<td style="background:' + bg + ';padding:7px;border:1px solid ' + L +
+          ';text-align:' + (num ? 'left' : 'right') +
+          // ⚠ نصّ صريح على خلايا البيان: من غيره إكسل بيحاول
+          // يفسّر "12 ماكس" أو تاريخ مكتوب بشرطة كرقم أو تاريخ،
+          // وبيغيّر شكله من غير ما يقول.
+          ';mso-number-format:\\@">' +
           (v === null || v === undefined ? '' : String(v)) + '</td>';
       }
       body += '</tr>';
@@ -1166,9 +1069,10 @@ const PRINT_SHARED_JS = `
     if (opts.totals) {
       totalRow = '<tr>';
       for (var t = 0; t < opts.totals.length; t++) {
-        totalRow += '<td style="background:' + B + ';color:#fff;padding:8px;' +
-          'border:1px solid ' + B + ';font-weight:bold">' +
-          (opts.totals[t] === null ? '' : String(opts.totals[t])) + '</td>';
+        totalRow += '<td style="background:' + B + ';color:#fff;padding:9px;' +
+          'border:1px solid ' + B + ';font-weight:bold;text-align:right">' +
+          (opts.totals[t] === null || opts.totals[t] === undefined
+            ? '' : String(opts.totals[t])) + '</td>';
       }
       totalRow += '</tr>';
     }
@@ -1177,13 +1081,14 @@ const PRINT_SHARED_JS = `
       '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head>' +
       '<meta charset="UTF-8">' +
       '<style>table{border-collapse:collapse;font-family:Arial;font-size:12px}' +
-      'td,th{white-space:nowrap}</style></head>' +
+      'td,th{white-space:nowrap;vertical-align:middle}</style></head>' +
       '<body dir="rtl">' +
-      '<h3 style="font-family:Arial">' + (opts.title || '') + '</h3>' +
-      (opts.subtitle ? '<p style="font-family:Arial;font-size:11px;color:#555">' +
-        opts.subtitle + '</p>' : '') +
-      '<table><thead><tr>' + head + '</tr></thead>' +
-      '<tbody>' + body + totalRow + '</tbody></table></body></html>';
+      '<table>' + cols +
+      '<tbody>' + titleRow + subRow +
+      // صف فاصل: بيبعد العنوان عن الجدول في الورقة
+      '<tr><td colspan="' + n + '" style="height:6px"></td></tr>' +
+      '<tr>' + head + '</tr>' +
+      body + totalRow + '</tbody></table></body></html>';
 
     // ⚠ BOM في أول الملف — من غيره إكسل بيقرا العربي رموز
     var blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel' });
@@ -1286,6 +1191,114 @@ const PRINT_SHARED_JS = `
  * الزرار بيطلب إذن المتصفح فعلاً. لو المستخدم رفض، النظام
  * بيقول له كده صراحةً بدل ما يفضل شكله مفعّل وهو ميّت.
  */
+/**
+ * تمرير شرايط الشرائح بالماوس — الكمبيوتر بس
+ *
+ * ══ المشكلة اللي بيحلّها ══
+ * شريط الموديلات `.drawers` بيلفّ أفقيًا، وشريط التمرير مخفي
+ * بـ`scrollbar-width:none` عشان الشكل.
+ *
+ * على الموبايل ده مش مهم — الصباع بيسحب. على الكمبيوتر مفيش
+ * سحب ومفيش شريط تمرير، **فالموديلات اللي بره الشاشة مالهاش
+ * أي طريق للوصول**. الشريط بيقف عند آخر موديل ظاهر وخلاص.
+ *
+ * ⚠ ودي مش مسألة شكل: الموديل اللي مش باين مش موجود بالنسبة
+ * للمستخدم. الفلتر بيبان شغّال وناقص في نفس الوقت.
+ *
+ * ══ الحل: طريقين، الاتنين للماوس ══
+ *   العجلة   → بتلفّ الشريط أفقيًا بدل ما تنزّل الصفحة
+ *   السحب    → امسك واسحب زي الموبايل
+ *
+ * ══ ⚠ الكمبيوتر بس، والفحص مش على عرض الشاشة ══
+ * `hover: hover` و`pointer: fine` معناهم "فيه مؤشّر دقيق
+ * بيمرّ فوق العناصر" — يعني ماوس. تابلت بقلم أو موبايل بيفشل
+ * الفحص ده.
+ *
+ * والفحص بالعرض كان هيغلط: موبايل مقلوب عرضه كبير، وشاشة
+ * كمبيوتر صغيرة عرضها قليل.
+ *
+ * ══ ⚠ والسحب ما بيبلعش الضغط ══
+ * لو ربطنا السحب بلا تفريق، كل ضغطة على شريحة كانت هتبقى
+ * سحبة بصفر مسافة، والفلتر ما يشتغلش خالص.
+ *
+ * فبنعدّ المسافة: أقل من 6 بكسل = ضغطة عادية بتعدّي. أكتر من
+ * كده = سحب، وبنلغي الضغطة اللي وراه.
+ */
+const DRAWERS_JS = `
+(function () {
+  if (!window.matchMedia) return;
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+  var DRAG_MIN = 6;
+  var strip = null, startX = 0, startLeft = 0, moved = 0;
+
+  function stripOf(target) {
+    return target && target.closest ? target.closest('.drawers') : null;
+  }
+
+  // ── العجلة ──
+  //
+  // ⚠ بنمنع السلوك الافتراضي **لما نلفّ فعلاً** بس. لو الشريط
+  // واصل آخره، سيب العجلة تنزّل الصفحة عادي — الحبس هنا بيخلّي
+  // الصفحة تقف والمستخدم مش فاهم ليه.
+  document.addEventListener('wheel', function (e) {
+    var box = stripOf(e.target);
+    if (!box) return;
+    if (box.scrollWidth <= box.clientWidth) return;
+
+    var step = e.deltaY || e.deltaX;
+    if (!step) return;
+
+    var before = box.scrollLeft;
+    box.scrollLeft = before + step;
+    if (box.scrollLeft !== before) e.preventDefault();
+  }, { passive: false });
+
+  // ── السحب ──
+  document.addEventListener('pointerdown', function (e) {
+    var box = stripOf(e.target);
+    if (!box || box.scrollWidth <= box.clientWidth) return;
+    strip = box;
+    startX = e.clientX;
+    startLeft = box.scrollLeft;
+    moved = 0;
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!strip) return;
+    var dx = e.clientX - startX;
+    if (Math.abs(dx) > moved) moved = Math.abs(dx);
+    if (moved < DRAG_MIN) return;
+
+    // ⚠ العلامة دي بتخلّي المؤشّر يبان كإيد ماسكة، والنص ما
+    // يتظللش وإحنا بنسحب.
+    strip.setAttribute('data-dragging', '');
+    strip.scrollLeft = startLeft - dx;
+    e.preventDefault();
+  }, { passive: false });
+
+  function release() {
+    if (!strip) return;
+    strip.removeAttribute('data-dragging');
+    // ⚠ بنسيب العدّاد شوية عشان معالج الضغط اللي بعدنا يقراه
+    setTimeout(function () { moved = 0; }, 0);
+    strip = null;
+  }
+
+  document.addEventListener('pointerup', release);
+  document.addEventListener('pointercancel', release);
+
+  // ⚠ في مرحلة **الالتقاط** عشان توصل قبل معالجات الشرائح.
+  // لو استنينا مرحلة الفقاعة، الفلتر كان هيتغيّر قبل ما نلغي.
+  document.addEventListener('click', function (e) {
+    if (moved < DRAG_MIN) return;
+    if (!stripOf(e.target)) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+})();
+`;
+
 const NOTIFY_SHARED_JS = `
 (function () {
   var KEY = 'meezan.notify';
@@ -1755,6 +1768,7 @@ ${opts.body}
 <div id="print-root"></div>
 <script>${raw(PRINT_SHARED_JS)}</script>
 <script>${raw(NOTIFY_SHARED_JS)}</script>
+<script>${raw(DRAWERS_JS)}</script>
 <script>${raw(opts.script)}</script>
 <script>${raw(PWA_REGISTER_JS)}</script>
 </body>
@@ -4668,9 +4682,14 @@ export function posPage(data: PosPageData): Html {
                       تاريخ الخروج
                     </button>`
                   : ''}
-                <button class="btn-mini" type="button" data-print-sale="${s.id}">
-                  طباعة
-                </button>
+                <!-- ⚠ زرار «طباعة» متشال مؤقتًا بطلبك.
+                     المعالج data-print-sale ودالة الطباعة وبناء
+                     الفاتورة كلهم مكانهم زي ما هم، فالرجوع =
+                     زرار واحد يترجع من غير أي تعديل تاني.
+
+                     ⚠ والحذف صريح مش تعليق: القالب فيه علامات
+                     backtick، وتعليقها جوّه نص قالب بيقفل القالب
+                     ويكسر الصفحة كلها. -->
                 ${data.canRefund
                   ? html`<button class="btn-mini" type="button" data-ret-open="${s.id}">
                       استرجاع
@@ -6625,10 +6644,9 @@ export function productsPage(data: ProductsPageData): Html {
                     : ''}
 
                   <div class="prod-edit-actions">
-                    ${isDevice && p.serialNumber
-                      ? html`<button class="btn-mini" type="button"
-                          data-label="${p.id}">طباعة ملصق</button>`
-                      : ''}
+                    <!-- ⚠ «طباعة ملصق» متشال مؤقتًا بطلبك.
+                         مولّد الملصق والرمز والمعالج data-label
+                         كلهم مكانهم. -->
                     ${isDevice
                       ? html`<button class="btn-mini" type="button" data-save-details="${p.id}">
                           حفظ البيانات
@@ -7074,8 +7092,10 @@ export function productsPage(data: ProductsPageData): Html {
         <button class="tool" type="button" data-tool="flt">فلتر</button>
         <!-- ⚠ أداة معايرة، مش وظيفة يومية.
              بتطبع ورقة فيها نفس الكود بأربع مقاسات عشان تقيس
-             أصغر مقاس طابعتك بتقراه فعلاً — بدل ما نخمّن. -->
+             أصغر مقاس طابعتك بتقراه فعلاً — بدل ما نخمّن.
+             متشالة مؤقتًا مع باقي أزرار الطباعة.
         <button class="tool" type="button" data-qr-calib>معايرة الرمز</button>
+        -->
       </div>
 
       <!-- ⚠ أدوات الفلتر بتتغيّر بالدرج المفتوح:
@@ -8105,31 +8125,16 @@ ${MENU_JS}
             //
             // تشبيه: زي ما تشرب كوباية وترجع تدوّر على نفس المية
             // فيها. مش هتلاقيها — وهي اتشربت مش ضاعت.
+            // ⚠ سؤال «تطبع ملصق؟» متشال مؤقتًا مع باقي أزرار
+            // الطباعة. مولّد الملصق ودالة الطباعة مكانهم، فالرجوع
+            // بإرجاع النداء هنا وبس.
+            //
+            // ⚠ والمعرّف سايبينه: بيتقرا من الجسم اللي اتقري
+            // فوق، وكان أصل عطل قديم (قراية الاستجابة مرتين
+            // وهي مجرى بيتقرا مرة واحدة). سيبه مكتوب
+            // عشان اللي يرجّع الزرار ما يعيدش الغلطة.
             var newId = data && data.id ? data.id : '';
-
-            var wantLabel = confirm('تمت الإضافة. تطبع ملصق للمنتج؟');
-            if (wantLabel) {
-              window.printHtml(labelHtml({
-                id: newId,
-                name: isDevice ? modelName : document.getElementById('np-name').value,
-                // ⚠ فاضي لو "غير متاح" — والملصق بيطلع بالرمز
-                // من غير سطر السريال. الرمز نفسه موجود دايمًا،
-                // فالجهاز بيتمسح عادي حتى وهو بلا رقم.
-                serial: isDevice && !(noSnEl && noSnEl.checked)
-                  ? document.getElementById('np-serial').value.trim()
-                  : '',
-                isDevice: isDevice,
-                storage: isDevice ? document.getElementById('np-storage').value : '',
-                battery: isDevice ? document.getElementById('np-battery').value : '',
-                customs: isDevice
-                  && document.getElementById('np-customs').value === 'true',
-                entry: document.getElementById('np-entry').value || '',
-                price: document.getElementById('np-price').value || ''
-              }), [LABEL_W_MM, LABEL_H_MM]);
-              // مهلة تكفي حوار الطباعة يفتح قبل ما الصفحة تروح
-              setTimeout(function () { window.location.reload(); }, 2500);
-              return;
-            }
+            if (newId) { /* الملصق موقوف مؤقتًا */ }
           } catch (labelErr) {
             // ⚠ فشل الملصق ما يصحّش يبلّع نجاح الإضافة.
             // المنتج **اتسجّل فعلاً** في القاعدة؛ ورقة ما طلعتش
@@ -11926,6 +11931,9 @@ ${MENU_JS}
    * إعادة رسم، والعلامة بتروح معاه فما بيفضلش عندنا ذاكرة
    * بتقول "اتحمّل" وهو مش موجود أصلاً.
    */
+  /** حركات كل مورّد بعد تحميلها — مصدر واحد للشاشة والتصدير */
+  var SUP_LED = {};
+
   async function loadLedger(id) {
     var box = document.getElementById('sled-' + id);
     if (!box || box.getAttribute('data-loaded') === '1') return;
@@ -11947,6 +11955,11 @@ ${MENU_JS}
         box.setAttribute('data-loaded', '1');
         return;
       }
+
+      // ⚠ بنحتفظ بالحركات عشان التصدير يستخدم **نفس** اللي
+      // معروض. لو التصدير جاب الحركات لوحده، الملف والشاشة
+      // كانوا هيختلفوا يوم ما — والاختلاف بيتكتشف عند العميل.
+      SUP_LED[id] = list;
 
       var out = '';
       for (var i = 0; i < list.length; i++) out += ledRow(list[i]);
@@ -12131,50 +12144,68 @@ ${MENU_JS}
 
   // ══════════ التصدير ══════════
   //
-  // ⚠ الاتنين محليّين بالكامل — مفيش مكتبة ومفيش طلب شبكة.
+  // ══ 🔴 اتغيّر بالكامل ══
   //
-  // الإكسل ملف CSV. إكسل بيفتحه عادي، وبناء ملف xlsx حقيقي
-  // كان محتاج مكتبة تتحمّل من الإنترنت عشان جدول من خمس أعمدة.
+  // ══ اللي كان ══
+  // الإكسل كان **أربع سطور** فيها الاسم والرصيد والإجمالي —
+  // بلا ولا حركة واحدة. يعني ملف بيقولك الرقم اللي شايفه على
+  // الشاشة أصلاً، وما بيقولش جه منين.
+  // والـPDF كان نفس الأربع سطور بلا جدول ولا لون.
   //
-  // ⚠ وعلامة الترتيب في أوله مش زينة: من غيرها إكسل بيقرا
-  // العربي كرموز مبعثرة على ويندوز العربي.
-  function exportCsv(sp) {
-    var lines = [
-      'المورّد,' + (sp.name || ''),
-      'الرصيد,' + (sp.balancePiastres / 100),
-      'إجمالي الدين,' + (sp.debtPiastres / 100),
-      'إجمالي السداد,' + (sp.paidPiastres / 100),
-      ''
-    ];
-    var csv = '\\uFEFF' + lines.join('\\r\\n');
-    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'حساب-' + (sp.name || 'مورّد') + '.csv';
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-  }
+  // ══ اللي بقى ══
+  // كشف كامل بالحركات، بنفس مصدّر شاشة الصيانة بالحرف.
+  //
+  // ⚠ وبنستخدم exportXls و exportPdf المشتركين مش مصدّر
+  // محلّي: نسخة تانية معناها إن ملف الموردين شكله يختلف عن
+  // ملف الصيانة، وأي تحسين في واحد يسيب التاني وراه. عرض
+  // الأعمدة اللي اتظبط دلوقتي وصل للاتنين من غير أي شغل.
+  //
+  // ⚠ والتصدير بيشتغل على الحركات **المحمّلة**. لو الكارت
+  // ما اتفتحش، الدفتر ما اتحمّلش — فبنحمّله الأول.
 
-  // ⚠ الـPDF بيتعمل بحوار الطباعة بتاع المتصفح ("طباعة كـPDF").
-  // نفس آلية الفاتورة والملصق — مفيش محرّك PDF جديد يتصان.
-  function exportPdf(sp) {
-    if (typeof window.printHtml !== 'function') {
-      say('الطباعة غير متاحة على هذا المتصفح.', false);
-      return;
+  function supExportRows(sp) {
+    var list = SUP_LED[sp.supplierId] || [];
+    var rows = [];
+
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      var kind = m.direction === 'DEBT' ? 'دين' : (m.isDiscount ? 'خصم' : 'سداد');
+
+      var bits = [];
+      if (IS_OWNER) bits.push(m.branchName || 'غير موزّع');
+      if (m.serialNumber) bits.push(m.serialNumber);
+      if (m.treasuryName) bits.push('من ' + m.treasuryName);
+      if (m.note && m.note !== (m.itemName || '')) bits.push(m.note);
+
+      rows.push([
+        m.occurredAt,
+        m.itemName || m.note || kind,
+        kind,
+        bits.join(' · ') || '—',
+        (m.direction === 'DEBT' ? '+' : '-') + money(m.amountPiastres)
+      ]);
     }
-    window.printHtml(
-      '<div class="pr-doc">' +
-        '<h3>حساب المورّد</h3>' +
-        '<p>' + (sp.name || '') + '</p>' +
-        '<p>الرصيد: ' + money(sp.balancePiastres) + ' ج.م</p>' +
-        '<p>إجمالي الدين: ' + money(sp.debtPiastres) + ' ج.م</p>' +
-        '<p>إجمالي السداد: ' + money(sp.paidPiastres) + ' ج.م</p>' +
-      '</div>'
-    );
+    return rows;
   }
 
-  document.addEventListener('click', function (e) {
+  function supExportOpts(sp) {
+    return {
+      title: 'حساب ' + (sp.name || 'مورّد'),
+      subtitle: 'كشف حساب مورّد · ' + new Date().toISOString().slice(0, 10),
+      columns: ['التاريخ', 'البيان', 'النوع', 'التفاصيل', 'المبلغ'],
+      rows: supExportRows(sp),
+      totals: [
+        'الرصيد',
+        'دين ' + money(sp.debtPiastres) + ' · سداد ' + money(sp.paidPiastres),
+        '', '',
+        money(sp.balancePiastres)
+      ],
+      filename: 'حساب-' + (sp.name || 'مورّد') + '-' +
+        new Date().toISOString().slice(0, 10)
+    };
+  }
+
+  document.addEventListener('click', async function (e) {
     var csvBtn = e.target.closest ? e.target.closest('[data-sup-csv]') : null;
     var pdfBtn = e.target.closest ? e.target.closest('[data-sup-pdf]') : null;
     if (!csvBtn && !pdfBtn) return;
@@ -12186,8 +12217,18 @@ ${MENU_JS}
     }
     if (!sp) { say('تعذّر تجهيز الملف.', false); return; }
 
-    if (csvBtn) exportCsv(sp);
-    else exportPdf(sp);
+    // ⚠ ضمانة إن الدفتر موجود قبل ما نصدّر. الزرار جوّه الكارت
+    // فالدفتر بيكون اتحمّل غالبًا، بس "غالبًا" مش كفاية لملف
+    // بيروح لتاجر.
+    await loadLedger(id);
+
+    if (pdfBtn && typeof window.printHtml !== 'function') {
+      say('الطباعة غير متاحة على هذا المتصفح.', false);
+      return;
+    }
+
+    var opts = supExportOpts(sp);
+    if (csvBtn) window.exportXls(opts); else window.exportPdf(opts);
   });
 
   document.getElementById('sup-add').addEventListener('click', async function () {
@@ -12547,9 +12588,23 @@ ${MENU_JS}
 
   // ══ التصدير ══
   //
-  // ⚠ الاتنين محليّين: الإكسل ملف CSV بعلامة ترتيب (من غيرها
-  // العربي بيطلع رموز مبعثرة في إكسل)، والـPDF بحوار الطباعة.
-  // مفيش مكتبة ومفيش طلب شبكة.
+  // ⚠ بنستخدم exportXls و exportPdf المشتركين — نفس اللي
+  // بيستخدمه الموردين وحساب الورش. ملوّن ومنظّم وعرض الأعمدة
+  // بيتحسب من المحتوى.
+  //
+  // ══ ⚠⚠ وفرق لازم تعرفه ══
+  // الملف ده **ملخّص مش كشف**، على عكس الموردين والورش.
+  //
+  // السبب مش كسل: شاشة المحلات مالهاش دفتر حركات أصلاً —
+  // مفيش مسار بيرجّع حركات المحل الواحد، فمفيش حاجة نعرضها
+  // ولا نصدّرها. اللي موجود هو الأرصدة بس.
+  //
+  // ⚠ يعني الملف بيقول «باقي عليه كذا» وما بيقولش الرقم ده
+  // اتكوّن من أنهي بضاعة. ولو التاجر اختلف معاك على رقم،
+  // الملف ده مش هيحسم الخلاف.
+  //
+  // الحل الكامل محتاج دالة حركات في القاعدة ومسار وشاشة —
+  // نفس اللي عملناه للورش بالظبط.
   document.addEventListener('click', function (e) {
     var csvBtn = e.target.closest ? e.target.closest('[data-sh-csv]') : null;
     var pdfBtn = e.target.closest ? e.target.closest('[data-sh-pdf]') : null;
@@ -12562,38 +12617,25 @@ ${MENU_JS}
     }
     if (!sh) { say('تعذّر تجهيز الملف.', false); return; }
 
-    if (csvBtn) {
-      var lines = [
-        'المحل,' + (sh.name || ''),
-        'خرج بالأجل,' + (sh.totalOut / 100),
-        'المحصّل,' + (sh.totalPaid / 100),
-        'الباقي,' + (sh.balancePiastres / 100),
-        ''
-      ];
-      var blob = new Blob(['\\uFEFF' + lines.join('\\r\\n')],
-        { type: 'text/csv;charset=utf-8' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'حساب-' + (sh.name || 'محل') + '.csv';
-      a.click();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-      return;
-    }
-
-    if (typeof window.printHtml !== 'function') {
+    if (pdfBtn && typeof window.printHtml !== 'function') {
       say('الطباعة غير متاحة على هذا المتصفح.', false);
       return;
     }
-    window.printHtml(
-      '<div class="pr-doc">' +
-        '<h3>حساب محل</h3>' +
-        '<p>' + (sh.name || '') + '</p>' +
-        '<p>خرج بالأجل: ' + money(sh.totalOut) + ' ج.م</p>' +
-        '<p>المحصّل: ' + money(sh.totalPaid) + ' ج.م</p>' +
-        '<p>الباقي: ' + money(sh.balancePiastres) + ' ج.م</p>' +
-      '</div>'
-    );
+
+    var stamp = new Date().toISOString().slice(0, 10);
+    var opts = {
+      title: 'حساب ' + (sh.name || 'محل'),
+      subtitle: 'ملخّص حساب محل · ' + stamp,
+      columns: ['البند', 'القيمة'],
+      rows: [
+        ['خرج بالأجل', money(sh.totalOut)],
+        ['المحصّل', money(sh.totalPaid)]
+      ],
+      totals: ['الباقي عليه', money(sh.balancePiastres)],
+      filename: 'حساب-' + (sh.name || 'محل') + '-' + stamp
+    };
+
+    if (csvBtn) window.exportXls(opts); else window.exportPdf(opts);
   });
 
   document.getElementById('sh-add').addEventListener('click', async function () {
@@ -12630,6 +12672,18 @@ export interface MaintenancePageData {
   canUseTreasury: boolean;
   /** maintenance.manage — الحالات والتكاليف وإدارة الورش */
   canManage: boolean;
+  /**
+   * supplier.manage — حساب الورش.
+   *
+   * ⚠ صلاحية مختلفة عن `canManage` عن قصد: دي شاشة **ديون**،
+   * واللي مش مسموح له يشوف حساب الموردين مش مسموح له يشوف
+   * حساب الورش. في الأدوار الافتراضية الاتنين بيمشوا مع بعض،
+   * بس أي استثناء فردي بيفرّقهم.
+   *
+   * ⚠ وده **لافتة مش قفل**: الحارس الحقيقي على المسار وجوّه
+   * حالة الاستخدام. إخفاء اللوحة بيريّح الشاشة وبس.
+   */
+  canLedger: boolean;
   /** فروع المحل — للمالك بس، فاضية لغيره لأنه مقفول على فرعه */
   branches: Array<{ id: string; name: string }>;
   today: string;
@@ -12766,7 +12820,13 @@ export function maintenancePage(data: MaintenancePageData): Html {
         <!-- ⚠ المرتجع بيتحدّد **بالربط** مش بالحالة: تذكرة
              مربوطة بزيارة سابقة. فبيفضل مرتجع سواء لسه بيتفحص
              أو اتسلّم من تاني.
-             وكل صف هنا معناه إصلاح ما نفعش من أول مرة. -->
+             وكل صف هنا معناه إصلاح ما نفعش من أول مرة.
+
+             ⚠⚠ القيمة لازم تفضل RETURNED بالحرف.
+             دي نفس الكلمة اللي fn_tickets بتعرفها من مايجريشن
+             ٥٢، ونفس اللي listTickets بتقبلها. تلات نُسخ لنفس
+             القايمة — الشاشة والكود والقاعدة — وأي واحدة تسبق
+             التانية بتطلّع «النطاق غير صحيح». -->
         <option value="RETURNED">المرتجعات</option>
         <option value="ALL">الكل</option>
       </select>
@@ -12817,6 +12877,26 @@ export function maintenancePage(data: MaintenancePageData): Html {
             autocomplete="off">
           <button class="btn-mini" type="button" id="rs-add">إضافة</button>
           <div id="rs-rows"></div>
+        </div>
+      </details>`
+    : ''}
+
+  <!-- ══ حساب محلات الصيانة ══
+       المرآة التالتة: الموردين دين عليك، المحلات دين ليك،
+       والورش دين عليك برضه.
+
+       ⚠ اللوحة مقفولة افتراضيًا (من غير open) وبتتحمّل أول ما
+       تتفتح. السبب إن نداء الأرصدة بيعدّي على كل الحركات، ومش
+       من حق شاشة الصيانة تدفع تمنه وهي بتفتح للاستلام. -->
+  ${data.canLedger
+    ? html`<details class="panel" id="acc-panel">
+        <summary>حساب محلات الصيانة <span id="acc-total"></span></summary>
+        <div class="panel-body">
+          <p class="field-hint">
+            الدين بيتسجّل أول ما الجهاز يرجع من الورشة أو يتسلّم للعميل.
+            اللي لسه في الورشة مش محسوب.
+          </p>
+          <div id="acc-rows"><p class="field-hint">جارٍ التحميل…</p></div>
         </div>
       </details>`
     : ''}
@@ -13698,6 +13778,477 @@ ${MENU_JS}
   ['tk-scope', 'tk-shop-filter', 'tk-from', 'tk-to'].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.addEventListener('change', load);
+  });
+
+  // ══════════ حساب محلات الصيانة ══════════
+  //
+  // ⚠ بيتحمّل لما اللوحة تتفتح بس — مش مع كل فتح للشاشة.
+  // نداء الأرصدة بيمرّ على كل حركات الدفتر، ومحدش بيدفع تمنه
+  // وهو داخل يستلم جهاز من زبون.
+  var ACC = [];
+  var ACC_TRE = [];
+  var accLoaded = false;
+
+  function accShop(id) {
+    for (var i = 0; i < ACC.length; i++) if (ACC[i].shopId === id) return ACC[i];
+    return null;
+  }
+
+  async function loadAccounts(force) {
+    if (accLoaded && !force) return;
+    var host = document.getElementById('acc-rows');
+    if (!host) return;
+
+    try {
+      var res = await fetch('/api/maintenance/accounts', { credentials: 'same-origin' });
+      var d = await res.json().catch(function () { return null; });
+
+      if (!res.ok || !d || !d.ok) {
+        // ⚠ 403 معناه إن الصلاحية مش موجودة فعلاً — بنخفي
+        // اللوحة كلها بدل ما نسيبها بتزعّق كل مرة تتفتح.
+        var panel = document.getElementById('acc-panel');
+        if (res.status === 403 && panel) { panel.hidden = true; return; }
+        host.textContent = '';
+        var er = document.createElement('p');
+        er.className = 'field-hint';
+        er.textContent = (d && d.error && d.error.message) || 'تعذّر تحميل الحساب.';
+        host.appendChild(er);
+        return;
+      }
+
+      ACC = d.accounts || [];
+      ACC_TRE = d.treasuries || [];
+      accLoaded = true;
+      renderAccounts();
+    } catch (err) {
+      say('تعذّر الاتصال بالخادم.', false);
+    }
+  }
+
+  function renderAccounts() {
+    var host = document.getElementById('acc-rows');
+    if (!host) return;
+    host.textContent = '';
+
+    // ⚠ المجموع بيتحسب من المعروض. القايمة دي كل ورش المحل
+    // (مفيش سقف عليها)، فالرقم صادق — على عكس عدّ المخزون
+    // اللي محدود بـ500 صف.
+    var total = 0;
+    for (var t = 0; t < ACC.length; t++) total += ACC[t].balancePiastres;
+
+    var cnt = document.getElementById('acc-total');
+    if (cnt) cnt.textContent = ACC.length ? '(' + money(total) + ')' : '';
+
+    if (ACC.length === 0) {
+      var e = document.createElement('p');
+      e.className = 'field-hint';
+      e.textContent = 'مفيش ورش مسجّلة.';
+      host.appendChild(e);
+      return;
+    }
+
+    for (var i = 0; i < ACC.length; i++) {
+      var a = ACC[i];
+
+      var open = [];
+      if (a.openDevices) open.push(a.openDevices + ' جهاز محل');
+      if (a.openTickets) open.push(a.openTickets + ' جهاز زبون');
+
+      var r = row(a.name, money(a.balancePiastres) + ' ج.م');
+      host.appendChild(r);
+
+      // ⚠ التقسيم اللي طلبته: النوعين مفصولين، والمجموع تحتهم.
+      var det = document.createElement('div');
+      det.className = 'field-hint';
+      det.textContent =
+        'أجهزة المحل ' + money(a.deviceDebt) +
+        ' · أجهزة الزباين ' + money(a.ticketDebt) +
+        (a.manualDebt ? ' · يدوي ' + money(a.manualDebt) : '') +
+        ' · مدفوع ' + money(a.paidPiastres);
+      host.appendChild(det);
+
+      // ⚠ الشغل اللي لسه في الورشة بيتكتب **بره الرصيد**
+      // وبنقول كده صراحةً. من غير السطر ده، الرقم بيبان أقل
+      // من مديونيتك الحقيقية ومحدش عارف ليه.
+      if (open.length) {
+        var op = document.createElement('div');
+        op.className = 'field-hint';
+        op.textContent = 'لسه عنده: ' + open.join(' · ') + ' — مش في الرصيد';
+        host.appendChild(op);
+      }
+
+      var acts = document.createElement('div');
+      acts.className = 'prod-edit-actions';
+
+      var led = document.createElement('button');
+      led.className = 'btn-mini'; led.type = 'button';
+      led.textContent = 'كشف الحساب';
+      led.setAttribute('data-acc-ledger', a.shopId);
+      acts.appendChild(led);
+
+      var pay = document.createElement('button');
+      pay.className = 'btn-mini'; pay.type = 'button';
+      pay.textContent = 'سداد';
+      pay.setAttribute('data-acc-pay', a.shopId);
+      acts.appendChild(pay);
+
+      var dbt = document.createElement('button');
+      dbt.className = 'btn-mini'; dbt.type = 'button';
+      dbt.textContent = 'دين يدوي';
+      dbt.setAttribute('data-acc-debt', a.shopId);
+      acts.appendChild(dbt);
+
+      host.appendChild(acts);
+
+      var slot = document.createElement('div');
+      slot.className = 'exit-edit';
+      slot.id = 'accbox-' + a.shopId;
+      slot.hidden = true;
+      host.appendChild(slot);
+    }
+
+    var sum = document.createElement('div');
+    sum.className = 'prod-row';
+    var sm = document.createElement('div');
+    sm.className = 'prod-row-main';
+    var sa = document.createElement('span');
+    sa.className = 'prod-row-name'; sa.textContent = 'إجمالي الحساب';
+    var sb = document.createElement('span');
+    sb.className = 'prod-row-sub'; sb.textContent = money(total) + ' ج.م';
+    sm.appendChild(sa); sm.appendChild(sb); sum.appendChild(sm);
+    host.appendChild(sum);
+  }
+
+  /** بيقفل أي لوحة مفتوحة تانية — واحدة في المرة أوضح على الموبايل */
+  function accSlot(shopId) {
+    var all = document.querySelectorAll('[id^="accbox-"]');
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].id !== 'accbox-' + shopId) { all[i].hidden = true; all[i].textContent = ''; }
+    }
+    return document.getElementById('accbox-' + shopId);
+  }
+
+  function accField(host, label, id, type, ph) {
+    var l = document.createElement('label');
+    l.className = 'field-label'; l.setAttribute('for', id); l.textContent = label;
+    host.appendChild(l);
+    var inp = document.createElement('input');
+    inp.className = 'field-input'; inp.id = id; inp.type = type || 'text';
+    if (type === 'text') inp.setAttribute('inputmode', 'decimal');
+    if (ph) inp.placeholder = ph;
+    inp.setAttribute('autocomplete', 'off');
+    host.appendChild(inp);
+    return inp;
+  }
+
+  function showAccPay(shopId) {
+    var box = accSlot(shopId);
+    var a = accShop(shopId);
+    if (!box || !a) return;
+
+    box.hidden = false;
+    box.textContent = '';
+
+    var head = document.createElement('p');
+    head.className = 'field-hint';
+    // ⚠ بنقول القسمة **قبل** الدفع مش بعده. المبلغ بيتوزّع
+    // على حركتين خزنة، والموظّف اللي بيشوف حركتين وهو دفع
+    // مرة بيفتكر إنه دفع مرتين.
+    head.textContent =
+      'المبلغ بيتقسّم تلقائيًا: جزء على أجهزة المحل (بيتحسب مخزون) ' +
+      'وجزء على أجهزة الزباين (بيتحسب مصروف).';
+    box.appendChild(head);
+
+    var amt = accField(box, 'المبلغ', 'acc-amt', 'text', money(a.balancePiastres));
+
+    var tl = document.createElement('label');
+    tl.className = 'field-label'; tl.setAttribute('for', 'acc-tre');
+    tl.textContent = 'الخزنة';
+    box.appendChild(tl);
+
+    var sel = document.createElement('select');
+    sel.className = 'field-input'; sel.id = 'acc-tre';
+    var ph = document.createElement('option');
+    ph.value = ''; ph.textContent = '— اختر —';
+    sel.appendChild(ph);
+    for (var i = 0; i < ACC_TRE.length; i++) {
+      var o = document.createElement('option');
+      o.value = ACC_TRE[i].treasuryId;
+      o.textContent = ACC_TRE[i].name;
+      sel.appendChild(o);
+    }
+    box.appendChild(sel);
+
+    accField(box, 'ملاحظة (اختياري)', 'acc-note', 'text');
+
+    var go = document.createElement('button');
+    go.className = 'btn-mini'; go.type = 'button';
+    go.textContent = 'تسجيل السداد';
+    go.setAttribute('data-acc-pay-go', shopId);
+    box.appendChild(go);
+
+    amt.focus();
+  }
+
+  function showAccDebt(shopId) {
+    var box = accSlot(shopId);
+    if (!box) return;
+
+    box.hidden = false;
+    box.textContent = '';
+
+    var head = document.createElement('p');
+    head.className = 'field-hint';
+    head.textContent =
+      'دين بره الأجهزة — قطع غيار مثلاً. ما بيمسّش الخزنة، والسبب إلزامي.';
+    box.appendChild(head);
+
+    accField(box, 'المبلغ', 'acc-damt', 'text');
+    accField(box, 'السبب', 'acc-dnote', 'text', 'قطع غيار · شغل خارج النظام');
+
+    var go = document.createElement('button');
+    go.className = 'btn-mini'; go.type = 'button';
+    go.textContent = 'تسجيل الدين';
+    go.setAttribute('data-acc-debt-go', shopId);
+    box.appendChild(go);
+  }
+
+  var LEDGER_KIND = { DEVICE: 'جهاز محل', TICKET: 'جهاز زبون', MANUAL: 'يدوي' };
+
+  async function showAccLedger(shopId) {
+    var box = accSlot(shopId);
+    if (!box) return;
+
+    box.hidden = false;
+
+    // ══ ⚠ الحاوية هي اللي كانت بتصفّ السطور جنب بعض ══
+    //
+    // الصف نفسه كان مظبوط، لكن حاوية exit-edit مرنة — فكل
+    // سطر بقى عمود جنب اللي قبله على الشاشة العريضة، وأربع
+    // حركات بانت في سطر واحد.
+    //
+    // ⚠ الدرس: لما عنصر يبان في مكان غلط، بصّ على **الحاوية**
+    // قبل ما تصلّح العنصر. أنا صلّحت العنصر المرة اللي فاتت
+    // والمنظر ما اتغيّرش.
+    box.style.display = 'block';
+    box.textContent = 'جارٍ التحميل…';
+
+    var res = await fetch('/api/maintenance/accounts/' + encodeURIComponent(shopId),
+      { credentials: 'same-origin' });
+    var d = await res.json().catch(function () { return null; });
+
+    box.textContent = '';
+    if (!res.ok || !d || !d.ok) {
+      say((d && d.error && d.error.message) || 'تعذّر تحميل الكشف.', false);
+      return;
+    }
+
+    var list = d.movements || [];
+    if (list.length === 0) {
+      var e = document.createElement('p');
+      e.className = 'field-hint';
+      e.textContent = 'مفيش حركات على الحساب ده.';
+      box.appendChild(e);
+      return;
+    }
+
+    // ⚠ السداد الواحد بيرجع من القاعدة سطرين (مخزون + خدمة).
+    // بنجمّعهم برقم المجموعة عشان الشاشة توري دفعة واحدة —
+    // الموظّف دفع مرة، والتقسيم تفصيلة محاسبية مش واقعة تانية.
+    // ⚠ نفس الصفوف اللي بتتعرض هي اللي بتتصدّر. لو بنينا
+    // للتصدير قايمة تانية، الملف والشاشة كانوا هيختلفوا يوم
+    // ما — والاختلاف ده بيتكتشف عند العميل مش عندنا.
+    var out = [];
+    var totalDebt = 0, totalPaid = 0;
+
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      var amount = m.amountPiastres;
+
+      if (m.paymentGroupId) {
+        if (seen[m.paymentGroupId]) continue;
+        seen[m.paymentGroupId] = true;
+        for (var j = 0; j < list.length; j++) {
+          if (j !== i && list[j].paymentGroupId === m.paymentGroupId) {
+            amount += list[j].amountPiastres;
+          }
+        }
+      }
+
+      var label = m.direction === 'PAYMENT'
+        ? 'سداد'
+        : (LEDGER_KIND[m.sourceKind] || 'دين');
+
+      // ⚠ علامة المرتجع جنب السطر.
+      //
+      // التكلفة الجديدة سطر مستقل أصلاً — الجهاز اللي بيرجع
+      // بيتفتحله سجل جديد بمعرّف جديد. العلامة دي بتقول
+      // إن السطر ده شغل على جهاز رجع، مش شغل جديد.
+      //
+      // ⚠ ورقم الزيارة معاها: "مرتجع" لوحدها ما بتفرّقش بين
+      // رجوع واحد ورجوع رابع، والفرق ده هو اللي بيقولك إن فيه
+      // ورشة مش بتصلّح.
+      if (m.direction === 'DEBT' && m.isRevisit) {
+        label = 'مرتجع · زيارة ' + m.visitNumber + ' — ' + label;
+      }
+
+      var sign = m.direction === 'PAYMENT' ? '-' : '+';
+
+      // ══ ⚠ سطرين تحت بعض، مش صف واحد ══
+      //
+      // كلاس prod-row-main صف مرن: على الموبايل بيلفّ فبيبان
+      // سطرين، وعلى الكمبيوتر فيه مساحة فبيفضلوا جنب بعض —
+      // ونفس الشاشة بتبان بشكلين مختلفين حسب عرض الجهاز.
+      //
+      // ⚠ والكشف مش قايمة أصناف: كل سطر فيه اسم طويل ومبلغ
+      // وتاريخ، وقراية الأرقام تحت بعض أسرع من تتبّعها في
+      // آخر سطر عريض.
+      //
+      // ⚠ وخاصية العرض متحطّة هنا مش في ورقة الأنماط عن
+      // قصد: هي بتخصّ الكشف وحده. لو نزلت على كلاس الصف
+      // نفسه، كانت هتغيّر كل قايمة في النظام.
+      var r = document.createElement('div');
+      r.className = 'prod-row';
+      r.style.display = 'block';
+
+      var nm = document.createElement('div');
+      nm.className = 'prod-row-name';
+      nm.textContent = label + (m.note ? ' — ' + m.note : '');
+
+      var sb2 = document.createElement('div');
+      sb2.className = 'prod-row-sub';
+      sb2.textContent = sign + money(amount) + ' · ' + m.occurredAt;
+
+      r.appendChild(nm); r.appendChild(sb2);
+      box.appendChild(r);
+
+      if (m.direction === 'PAYMENT') totalPaid += amount; else totalDebt += amount;
+
+      out.push([
+        m.occurredAt,
+        m.note || '—',
+        m.direction === 'PAYMENT' ? 'سداد' : (LEDGER_KIND[m.sourceKind] || 'دين'),
+        (m.direction === 'DEBT' && m.isRevisit) ? ('زيارة ' + m.visitNumber) : '—',
+        sign + money(amount)
+      ]);
+    }
+
+    // ══ التصدير ══
+    //
+    // ⚠ بنستخدم exportXls و exportPdf الموجودين
+    // في السكربت المشترك، مش بنكتب مصدّر جديد.
+    //
+    // نسخة تانية معناها إن شكل ملف الصيانة هيختلف عن شكل ملف
+    // البضاعة، وأي تحسين في واحد بيسيب التاني وراه.
+    //
+    // ⚠ والإكسيل ده HTML بامتداد .xls — إكسل بيفتحه ملوّن.
+    // بعض النسخ القديمة بتقول "الامتداد لا يطابق المحتوى"،
+    // بتدوس فتح وبيشتغل. التفصيلة دي موثّقة في السكربت المشترك.
+    var shop = accShop(shopId);
+    var shopName = shop ? shop.name : 'ورشة';
+    var stamp = new Date().toISOString().slice(0, 10);
+
+    var COLS = ['التاريخ', 'البيان', 'النوع', 'مرتجع', 'المبلغ'];
+    var TOT = [
+      'الرصيد',
+      'دين ' + money(totalDebt) + ' · سداد ' + money(totalPaid),
+      '', '',
+      money(totalDebt - totalPaid)
+    ];
+
+    function accExport(kind) {
+      var opts = {
+        title: 'حساب ' + shopName,
+        subtitle: 'كشف حساب محل صيانة · ' + stamp,
+        columns: COLS,
+        rows: out,
+        totals: TOT,
+        filename: 'حساب-' + shopName + '-' + stamp
+      };
+      if (kind === 'xls') window.exportXls(opts); else window.exportPdf(opts);
+    }
+
+    var bar = document.createElement('div');
+    bar.className = 'prod-edit-actions';
+
+    var xb = document.createElement('button');
+    xb.className = 'btn-mini'; xb.type = 'button'; xb.textContent = 'إكسيل';
+    xb.addEventListener('click', function () { accExport('xls'); });
+    bar.appendChild(xb);
+
+    var pb = document.createElement('button');
+    pb.className = 'btn-mini'; pb.type = 'button'; pb.textContent = 'PDF';
+    pb.addEventListener('click', function () { accExport('pdf'); });
+    bar.appendChild(pb);
+
+    box.appendChild(bar);
+  }
+
+  var accPanel = document.getElementById('acc-panel');
+  if (accPanel) {
+    accPanel.addEventListener('toggle', function () {
+      if (accPanel.open) loadAccounts(false);
+    });
+  }
+
+  document.addEventListener('click', async function (e) {
+    var el = e.target;
+    if (!el || !el.closest) return;
+
+    var lg = el.closest('[data-acc-ledger]');
+    if (lg) { showAccLedger(lg.getAttribute('data-acc-ledger')); return; }
+
+    var pv = el.closest('[data-acc-pay]');
+    if (pv) { showAccPay(pv.getAttribute('data-acc-pay')); return; }
+
+    var dv = el.closest('[data-acc-debt]');
+    if (dv) { showAccDebt(dv.getAttribute('data-acc-debt')); return; }
+
+    var payGo = el.closest('[data-acc-pay-go]');
+    if (payGo) {
+      var sid = payGo.getAttribute('data-acc-pay-go');
+      var amt = (document.getElementById('acc-amt') || {}).value || '';
+      var tre = (document.getElementById('acc-tre') || {}).value || '';
+      if (!tre) { say('اختر الخزنة.', false); return; }
+
+      var res = await send(
+        '/api/maintenance/accounts/' + encodeURIComponent(sid) + '/payment',
+        {
+          amount: amt,
+          treasuryId: tre,
+          note: (document.getElementById('acc-note') || {}).value || null
+        },
+        payGo, 'جارٍ…');
+
+      if (res) {
+        // ⚠ القسمة بتتقال في الرسالة. من غيرها، الموظّف
+        // بيلاقي حركتين في الخزنة ومش فاهم مين عملهم.
+        say('تم السداد — ' + money(res.inventoryPiastres) + ' أجهزة محل و'
+            + money(res.servicePiastres) + ' أجهزة زباين. الرصيد: '
+            + money(res.newBalance), true);
+        await loadAccounts(true);
+      }
+      return;
+    }
+
+    var debtGo = el.closest('[data-acc-debt-go]');
+    if (debtGo) {
+      var sid2 = debtGo.getAttribute('data-acc-debt-go');
+      var res2 = await send(
+        '/api/maintenance/accounts/' + encodeURIComponent(sid2) + '/debt',
+        {
+          amount: (document.getElementById('acc-damt') || {}).value || '',
+          note: (document.getElementById('acc-dnote') || {}).value || ''
+        },
+        debtGo, 'جارٍ…');
+
+      if (res2) {
+        say('اتسجّل. الرصيد: ' + money(res2.newBalance), true);
+        await loadAccounts(true);
+      }
+      return;
+    }
   });
 
   var clearBtn = document.getElementById('tk-clear');
