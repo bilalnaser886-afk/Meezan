@@ -364,6 +364,24 @@ button{font:inherit}
   overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .drawers::-webkit-scrollbar{display:none}
 .drawer{flex:none}
+
+/* ══ مؤشّر السحب — الكمبيوتر بس ══
+
+   شريط التمرير مخفي عن قصد (الشكل)، فعلى الكمبيوتر مفيش أي
+   علامة إن الشريط بيتزحلق أصلاً. المؤشّر ده هو **الدعوة**:
+   إيد مفتوحة معناها "امسكني".
+
+   ⚠ من غيره، السحب بيشتغل ومحدش بيجرّبه — والموديلات اللي بره
+   الشاشة بتفضل مخفية زي ما كانت.
+
+   ⚠ والشرط بـ hover/pointer مش بالعرض: تابلت بقلم أو موبايل
+   مقلوب عرضه كبير، والمؤشّر مالوش معنى عندهم. */
+@media (hover: hover) and (pointer: fine) {
+  .drawers{cursor:grab}
+  /* ⚠ منع التظليل وقت السحب بس. لو نزل على الشريط دايمًا،
+     نسخ اسم موديل بقى مستحيل. */
+  .drawers[data-dragging]{cursor:grabbing;user-select:none}
+}
 /* النقطة الملوّنة — الشكل أسرع من الاسم في القراءة */
 .dot{width:10px;height:10px;border-radius:50%;flex:none;
   border:1px solid rgba(0,0,0,.18)}
@@ -416,20 +434,7 @@ button{font:inherit}
 
    ⚠ touch-action:none هنا **إلزامي** وبيغلب القاعدة العامة
    فوق: السحب بالإصبع لازم يرسم النمط مش يمرّر الصفحة. */
-/* ⚠ direction:ltr إلزامي هنا، وده مش تفصيلة تنسيق.
-
-   الصفحة كلها RTL، وشبكة CSS بتوزّع خاناتها حسب اتجاه النص.
-   فالنقطة رقم 1 كانت بتتحطّ فوق **يمين** والتالتة فوق شمال —
-   يعني الشبكة مرآة لنمط أندرويد الحقيقي.
-
-   ⚠ والنتيجة كانت أوحش من شكل مقلوب: شاشة العرض بترسم بـSVG
-   بإحداثيات مطلقة، فهي سليمة. يعني الموظّف بيرسم النمط في
-   اتجاه، وبعد الحفظ يلاقيه معكوس — ويفتكر إن النظام غيّره.
-
-   والأخطر إنه لو رسم النمط اللي شايفه على جهاز العميل، اللي
-   بيتسجّل بيبقى مرآته — ونمط مرآة ما بيفتحش الجهاز. */
 .pat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
-  direction:ltr;
   width:200px;margin:8px auto;padding:14px;background:var(--card);
   border:1px solid var(--line);border-radius:var(--r);touch-action:none}
 .pat-dot{aspect-ratio:1;border-radius:50%;background:var(--line);
