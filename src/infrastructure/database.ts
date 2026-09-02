@@ -3496,6 +3496,99 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
         value: row.unlock_value ? String(row.unlock_value) : null,
       };
     },
+
+    // ─────────── دفتر الورش ───────────
+
+    async shopBalances(tenantId) {
+      const { data, error } = await db.rpc('fn_repair_shop_balances', {
+        p_tenant_id: tenantId,
+      });
+      if (error) raiseMaintError(error, 'fn_repair_shop_balances');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        shopId: String(r.shop_id),
+        name: String(r.name),
+        phone: r.phone ? String(r.phone) : null,
+        isActive: Boolean(r.is_active),
+        deviceDebt: Number(r.device_debt),
+        ticketDebt: Number(r.ticket_debt),
+        manualDebt: Number(r.manual_debt),
+        paidPiastres: Number(r.paid_piastres),
+        balancePiastres: Number(r.balance_piastres),
+        openDevices: Number(r.open_devices),
+        openTickets: Number(r.open_tickets),
+        lastMovement: r.last_movement ? String(r.last_movement).slice(0, 10) : null,
+      }));
+    },
+
+    async shopLedger(shopId, tenantId, limit) {
+      // ⚠ المحل بيتبعت للدالة نفسها مش بيتفلتر بعدها — ورشة
+      // محل تاني بترجّع فاضي بدل ما تكشف حركاتها.
+      const { data, error } = await db.rpc('fn_repair_shop_movements', {
+        p_shop_id: shopId,
+        p_tenant_id: tenantId,
+        p_limit: limit,
+      });
+      if (error) raiseMaintError(error, 'fn_repair_shop_movements');
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+        id: String(r.id),
+        direction: String(r.direction) as 'DEBT' | 'PAYMENT',
+        amountPiastres: Number(r.amount_piastres),
+        sourceKind: String(r.source_kind) as 'DEVICE' | 'TICKET' | 'MANUAL',
+        sourceId: r.source_id ? String(r.source_id) : null,
+        isInventory: Boolean(r.is_inventory),
+        note: r.note ? String(r.note) : null,
+        occurredAt: String(r.occurred_at).slice(0, 10),
+        paymentGroupId: r.payment_group_id ? String(r.payment_group_id) : null,
+        createdByName: r.created_by_name ? String(r.created_by_name) : null,
+        // ⚠ محسوبين في الدالة مش مخزّنين في الجدول.
+        // القيمة الافتراضية هنا حارس: لو الدالة رجعت لنسختها
+        // القديمة (تراجع مايجريشن ٥٤)، الشاشة بتقول "زيارة 1"
+        // بدل "زيارة undefined".
+        isRevisit: Boolean(r.is_revisit),
+        visitNumber: Number(r.visit_number ?? 1),
+      }));
+    },
+
+    async recordShopDebt(input) {
+      const { data, error } = await db.rpc('fn_repair_shop_debt', {
+        p_shop_id: input.shopId,
+        p_actor_id: input.actorId,
+        p_amount: input.amountPiastres,
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseMaintError(error, 'fn_repair_shop_debt');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_repair_shop_debt: empty result');
+      return {
+        movementId: String(row.movement_id),
+        newBalance: Number(row.new_balance),
+      };
+    },
+
+    async recordShopPayment(input) {
+      const { data, error } = await db.rpc('fn_repair_shop_payment', {
+        p_shop_id: input.shopId,
+        p_actor_id: input.actorId,
+        p_treasury_id: input.treasuryId,
+        p_amount: input.amountPiastres,
+        p_note: input.note,
+        p_date: input.date,
+      });
+      if (error) raiseMaintError(error, 'fn_repair_shop_payment');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      if (!row) throw Errors.internal('fn_repair_shop_payment: empty result');
+      return {
+        groupId: String(row.group_id),
+        inventoryPiastres: Number(row.inventory_piastres),
+        servicePiastres: Number(row.service_piastres),
+        newBalance: Number(row.new_balance),
+      };
+    },
   };
 }
 
