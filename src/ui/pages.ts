@@ -593,55 +593,19 @@ const PRINT_SHARED_JS = `
     }, 60);
   };
 
-  /**
-   * الماسح بالكاميرا.
-   *
-   * ══ ليه على مرحلتين؟ ══
-   * كروم على أندرويد فيه BarcodeDetector مدمج — صفر تحميل.
-   * سفاري على الأيفون مالوش، فبنجيب مكتبة **وقت الطلب بس**.
-   *
-   * يعني اللي على أندرويد ما بيحمّلش حاجة خالص، واللي على
-   * الأيفون بيحمّل مرة واحدة أول ما يضغط "مسح" — مش مع كل
-   * فتحة صفحة.
-   *
-   * ⚠ التمن: أول مسحة على الأيفون محتاجة نت. بعدها المتصفح
-   * بيخزّن المكتبة بنفسه.
-   */
-  var zxingReady = null;
-
-  function loadZxing() {
-    if (zxingReady) return zxingReady;
-    // ⚠ مصدرين مش واحد.
-    //
-    // المكتبة دي هي **الطريق الوحيد** للمسح على الأيفون (مفيش
-    // كاشف مدمج في محرك سفاري). فلو المصدر الأول مقفول — شبكة
-    // محل، أو مانع إعلانات، أو المصدر نفسه واقع — الماسح
-    // بيتعطّل خالص.
-    //
-    // ⚠ ولاحظ إن الفشل هنا بيبان: بنرمي رسالة واضحة. الحاجة
-    // الوحيدة اللي بتتقبل السكوت هي الإطار اللي مفيهوش باركود.
-    var SOURCES = [
-      'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js',
-      'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'
-    ];
-
-    zxingReady = new Promise(function (resolve, reject) {
-      var at = 0;
-      function attempt() {
-        if (at >= SOURCES.length) { reject(new Error('cdn')); return; }
-        var tag = document.createElement('script');
-        tag.src = SOURCES[at++];
-        tag.onload = function () {
-          if (window.ZXing) resolve(window.ZXing);
-          else attempt();
-        };
-        tag.onerror = function () { attempt(); };
-        document.head.appendChild(tag);
-      }
-      attempt();
-    });
-    return zxingReady;
-  }
+  // ══════════ 🔴 محمّل مكتبة الباركود اتشال ══════════
+  //
+  // كان بيجيب مكتبة ZXing من مصدرين احتياطيين عشان الأيفون
+  // (سفاري مالوش كاشف مدمج). وبما إن مسح الباركود اتشال
+  // بالكامل، المحمّل ده بقى بلا مستخدم.
+  //
+  // ⚠ وشيلناه مش سيبناه: كود ميّت بيتقرا كأنه حيّ، وأول واحد
+  // يقرا الملف بعد شهور هيفتكر إن المسح لسه شغّال ويدوّر على
+  // عطل مش موجود.
+  //
+  // ⚠ والفايدة الجانبية: النظام بقى **بلا أي طلب لمكتبة
+  // خارجية** وقت المسح — ماعدا قارئ الأرقام، وهو بيتحمّل مرة
+  // واحدة والمتصفح بيخزّنه.
 
   /**
    * ══════════ قراءة الأرقام بصريًا (OCR) ══════════
@@ -772,7 +736,7 @@ const PRINT_SHARED_JS = `
     overlay.innerHTML =
       '<div class="scan-box">' +
         '<video class="scan-video" playsinline muted></video>' +
-        '<p class="scan-hint">صوّب على الباركود — أو دوس «اقرا الرقم» لو مفيش</p>' +
+        '<p class="scan-hint">صوّب على الرقم — بيتقرا لوحده</p>' +
         '<button class="btn-mini" type="button" data-scan-cancel>إلغاء</button>' +
         // ⚠ مخرج يدوي دايمًا موجود.
         //
@@ -780,12 +744,15 @@ const PRINT_SHARED_JS = `
         // تلات حاجات ممكن تخذلك والزبون واقف قدامك. الزرار ده
         // بيخلّي أسوأ حالة "اكتبه بإيدك" مش "اقفل وارجع بعدين".
         '<button class="btn-mini" type="button" data-scan-manual>اكتبه بإيدك</button>' +
-        // ⚠ زرار منفصل مش تلقائي.
+        // ══ 🔴 زرار «اقرا الرقم» اتشال — بقت تلقائية ══
         //
-        // القراءة البصرية بتحمّل ٤ ميجا وبتاخد ثواني. لو
-        // شغّلناها لوحدها مع كل مسحة، كل موظّف هيدفع الثمن ده
-        // حتى لو الباركود قدّامه وواضح.
-        '<button class="btn-mini" type="button" data-scan-ocr>اقرا الرقم بالكاميرا</button>' +
+        // كان زرار منفصل عن قصد: القراءة البصرية بتحمّل ٤ ميجا
+        // وبتاخد ثواني، وما كانش من حق كل موظّف يدفع الثمن ده
+        // والباركود قدّامه.
+        //
+        // ⚠ والتمن ده **لسه موجود** — إنت بس اخترت تدفعه في كل
+        // مرة بدل ما تختار. أول فتحة على الموبايل هتاخد ثواني
+        // زيادة، واللي بعدها أسرع لأن المكتبة بتفضل محمّلة.
       '</div>';
     document.body.appendChild(overlay);
 
@@ -810,13 +777,17 @@ const PRINT_SHARED_JS = `
 
     // ══════════ القراءة البصرية ══════════
     var hintEl = overlay.querySelector('.scan-hint');
-    var ocrBtn = overlay.querySelector('[data-scan-ocr]');
     var ocrBusy = false;
 
-    ocrBtn.addEventListener('click', async function () {
+    /**
+     * القراءة البصرية — بقت الطريق الوحيد.
+     *
+     * ⚠ كانت معالج ضغطة على زرار، وبقت دالة بتتنادى تلقائيًا
+     * أول ما الكاميرا تفتح. الجسم زي ما هو بالحرف.
+     */
+    async function runOcr() {
       if (ocrBusy) return;
       ocrBusy = true;
-      ocrBtn.disabled = true;
 
       var worker = null;
       try {
@@ -869,7 +840,6 @@ const PRINT_SHARED_JS = `
         if (!best) {
           hintEl.textContent = 'ملقيتش رقم. قرّب أكتر وثبّت الإضاءة.';
           ocrBusy = false;
-          ocrBtn.disabled = false;
           return;
         }
 
@@ -881,9 +851,8 @@ const PRINT_SHARED_JS = `
             'أحطّه في الخانة وتصلّحه بإيدك؟'
           );
           if (!ok) {
-            hintEl.textContent = 'صوّب الكاميرا على الباركود';
+            hintEl.textContent = 'صوّب على الرقم وثبّت الإيد';
             ocrBusy = false;
-            ocrBtn.disabled = false;
             return;
           }
         }
@@ -894,9 +863,8 @@ const PRINT_SHARED_JS = `
         if (worker) { try { await worker.terminate(); } catch (e2) { /* خلاص */ } }
         hintEl.textContent = 'تعذّر تحميل القارئ. اتأكد من النت أو اكتبه بإيدك.';
         ocrBusy = false;
-        ocrBtn.disabled = false;
       }
-    });
+    }
 
     try {
       // ══ ⚠ الدقة مطلوبة صراحةً، والافتراضي مش كفاية ══
@@ -949,186 +917,54 @@ const PRINT_SHARED_JS = `
       throw new Error('تعذّر فتح الكاميرا. تأكّد من السماح بالوصول إليها.');
     }
 
-    // ─── الطريق الأول: المدمج في المتصفح ───
-    if ('BarcodeDetector' in window) {
-      try {
-        // ⚠ qr_code متشالة من القايمة بطلبك.
-        //
-        // الماسح بيفضل شغّال على الباركود الخطي زي ما هو —
-        // ومسح السريال بيمشي عادي، لأن ملصقاتك بـCode 39.
-        //
-        // ⚠ والقايمة دي مش تجميل: الكاشف بيفحص كل صيغة فيها
-        // على كل إطار. تقليلها بيسرّع القراءة كمان.
-        var det = new window.BarcodeDetector({
-          formats: ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a']
-        });
-        var nativeWorked = await new Promise(function (resolve) {
-          var fails = 0;
-          var timer = setInterval(async function () {
-            if (stopped) { clearInterval(timer); resolve(null); return; }
-            try {
-              var found = await det.detect(video);
-              fails = 0;
-              if (found && found.length) {
-                clearInterval(timer);
-                resolve(found[0].rawValue);
-              }
-            } catch (e) {
-              // ⚠ الفشل المتكرر معناه إن الكاشف المدمج مش
-              // شغّال فعليًا (صيغة مش مدعومة، أو منّفذ ناقص).
-              // من غير العدّاد ده كان بيفضل يلفّ للأبد والزرار
-              // ساكت — والسكوت أوحش من الرفض.
-              fails++;
-              if (fails >= 12) { clearInterval(timer); resolve(null); }
-            }
-          }, 220);
-        });
+    // ══════════ 🔴 مسح الباركود اتشال بالكامل ══════════
+    //
+    // كان فيه طريقين: الكاشف المدمج في المتصفح، والمكتبة
+    // الاحتياطية. الاتنين اتشالوا بطلبك، والقراءة بقت للرقم
+    // المطبوع مباشرةً.
+    //
+    // ⚠ اللي بتخسره: الماسح كان بيقرا **رقم دقيق** من الباركود
+    // — صح ١٠٠٪ أو ما بيقراش. القراءة البصرية بتخمّن من صورة،
+    // فممكن تقرا خانة غلط.
+    //
+    // والحارس الوحيد ضد ده هو فحص الآيمي اللي جوّه الدالة:
+    // الرقم اللي ما بيعدّيش الفحص **بيتسأل عنه** ما بيتقبلش
+    // بالسكوت. سيبه مكانه.
+    //
+    // ⚠ ولو رجعت للباركود يوم ما، الكود اتشال من هنا — مش
+    // معطّل ولا معلّق. مكانه في تاريخ المستودع.
+    var rounds = 0;
 
-        if (nativeWorked) { cleanup(); return nativeWorked; }
-        // ⚠ نفس معالجة الكتابة اليدوية في المسارين. لو حطّيناها
-        // في واحد بس، الزرار يشتغل على الأيفون ويسكت على
-        // الأندرويد — وده أوحش من إنه مش موجود خالص.
-        if (manualValue) { cleanup(); return manualValue; }
-        if (stopped) throw new Error('أُلغي المسح.');
-        // ما اشتغلش — بنكمّل للمكتبة تحت
-      } catch (e) { /* الصيغ مش مدعومة — بنكمّل للمكتبة */ }
+    while (!stopped && !manualValue && rounds < 3) {
+      rounds++;
+      await runOcr();
+      // ⚠ وقفة بين الجولات: القارئ بيرجع بسرعة لو الصورة
+      // مهزوزة، ومن غير الوقفة التلات جولات بيعدّوا على نفس
+      // اللقطة الوحشة.
+      if (!stopped && !manualValue) {
+        await new Promise(function (r) { setTimeout(r, 600); });
+      }
     }
 
-    // ══ ⚠ حارس قبل تحميل المكتبة ══
-    //
-    // الفحوصات اللي فوق كانت جوّه كتلة بتبلع كل حاجة — حتى
-    // رسالة الإلغاء. فالمستخدم يقفل الماسح، والكود يكمّل
-    // ويحمّل المكتبة على شبكة المحل بلا أي سبب.
-    //
-    // ⚠ وبقت لازمة أكتر مع القراءة البصرية: اللي قرا الرقم
-    // بالكاميرا خلص خلاص، وتحميل ماسح الباركود بعده هدر صافي.
-    if (manualValue) { cleanup(); return manualValue; }
+    if (manualValue) return manualValue;
     if (stopped) throw new Error('أُلغي المسح.');
 
-    // ─── الطريق التالت: مكتبة الباركود ───
-    var ZX;
-    try {
-      ZX = await loadZxing();
-    } catch (e) {
-      cleanup();
-      throw new Error('تعذّر تحميل الماسح. تأكّد من الاتصال بالإنترنت.');
+    // ⚠ ما لقاش رقم بعد تلات جولات. مش بنقفل الشاشة في وشه:
+    // الكاميرا بتفضل مفتوحة والتلميحة ظاهرة، وهو يكتبه بإيده
+    // أو يلغي. القفل التلقائي هنا كان هيخلّيه يعيد الفتح من
+    // الأول عشان يوصل لزرار الكتابة.
+    if (hintEl) {
+      hintEl.textContent = 'ملقيتش رقم — اكتبه بإيدك أو قرّب وافتح تاني.';
     }
 
-    // ══ ⚠ بنسحب الإطارات بإيدنا، ومش بنسلّم الفيديو للمكتبة ══
-    //
-    // ══ الغلطة اللي كانت هنا ══
-    // كنا بننادي decodeFromVideoElement. الدالة دي بتستنّى
-    // إشارة إن الفيديو **بدأ يشتغل** — وإحنا شغّلناه بإيدنا
-    // فوق بـplay(). فالإشارة حصلت **قبل** ما المكتبة تستنّاها،
-    // وهي فضلت مستنّية حاجة عدّت خلاص.
-    //
-    // النتيجة: الكاميرا بتفتح، والصورة بتبان، والحلقة **ما
-    // بتبدأش أصلاً**. ومفيش رسالة خطأ لأن مفيش حاجة فشلت —
-    // فيه حاجة ما ابتدتش.
-    //
-    // تشبيه: تقول للمدرب "نبّهني أول ما الجرس يرنّ" بعد ما رنّ.
-    //
-    // ⚠ الحل: نرسم الإطار على لوحة إحنا مالكينها، وننادي
-    // القارئ عليها. مفيش أي اعتماد على دورة حياة الفيديو.
-    var hints = new Map();
-    // ⚠ QR_CODE متشالة هنا كمان.
-    //
-    // مكانين لنفس القرار، ولازم يفضلوا متطابقين: ده الكاشف
-    // البديل اللي بيشتغل لما المدمج مش موجود. لو شلناها من
-    // واحد بس، الماسح كان هيقرا QR على متصفح ويرفضه على
-    // التاني — وده أوحش من إنه يقراه في الاتنين.
-    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
-      ZX.BarcodeFormat.CODE_128,
-      ZX.BarcodeFormat.CODE_39,
-      ZX.BarcodeFormat.EAN_13,
-      ZX.BarcodeFormat.EAN_8,
-      ZX.BarcodeFormat.UPC_A,
-      ZX.BarcodeFormat.ITF
-    ]);
-    // ⚠ محاولة أعمق لكل إطار. أبطأ، بس إحنا بنفحص 4 إطارات في
-    // الثانية مش 60 — فالبطء مش محسوس والفرق في القراءة كبير.
-    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-
-    var canvas = document.createElement('canvas');
-    var ctx = canvas.getContext('2d');
-    var reader = new ZX.BrowserMultiFormatReader(hints);
-    var hintEl = overlay.querySelector('.scan-hint');
-
-    return await new Promise(function (resolve, reject) {
-      var frames = 0;
-
-      var timer = setInterval(function () {
-        if (stopped) {
-          clearInterval(timer);
-          // ⚠ لو كتبه بإيده، ده نجاح مش إلغاء
-          if (manualValue) resolve(manualValue);
-          else reject(new Error('أُلغي المسح.'));
-          return;
-        }
-
-        var w = video.videoWidth, h = video.videoHeight;
-        // الإطار لسه ما وصلش — نستنّى من غير ما نعدّ محاولة
-        if (!w || !h) return;
-
-        // ══ ⚠ إطار كامل وإطار مقصوص بالتناوب ══
-        //
-        // الإطار الكامل بيلاقي الرمز الكبير القريب. والمقصوص
-        // بياخد نص الصورة من النص ويرسمه بالحجم الكامل — يعني
-        // الرمز الصغير بيبقى ضِعف حجمه في البيانات اللي القارئ
-        // بيشوفها.
-        //
-        // ⚠ والتناوب مش الاتنين مع بعض: كل فك ترميز بياخد وقت،
-        // والاتنين في نفس الدورة بيخلّوا الحلقة تلحق إطارين في
-        // الثانية بدل أربعة — والإيد بتهتز في الوقت ده.
-        var half = (frames % 2) === 1;
-
-        if (half) {
-          var cw = Math.round(w * 0.55);
-          var ch = Math.round(h * 0.55);
-          canvas.width = cw * 2;
-          canvas.height = ch * 2;
-          ctx.drawImage(
-            video,
-            Math.round((w - cw) / 2), Math.round((h - ch) / 2), cw, ch,
-            0, 0, canvas.width, canvas.height
-          );
-        } else {
-          canvas.width = w;
-          canvas.height = h;
-          ctx.drawImage(video, 0, 0, w, h);
-        }
-
-        try {
-          var result = reader.decodeFromCanvas(canvas);
-          if (result) {
-            clearInterval(timer);
-            var value = result.getText();
-            cleanup();
-            resolve(value);
-            return;
-          }
-        } catch (e) {
-          // ⚠ المكتبة بترمي استثناء لكل إطار مفيهوش باركود.
-          // ده السلوك الطبيعي مش عطل — بنتجاهله ونكمّل.
-        }
-
-        // ⚠ تلميحة بعد 6 ثواني بدل شاشة صامتة.
-        // الماسح اللي بيفضل مفتوح من غير ما يقول حاجة بيخلّي
-        // الواحد يفتكر إنه باظ ويقفله.
-        frames++;
-        if (frames === 24 && hintEl) {
-          hintEl.textContent = 'قرّب 10 سم وثبّت الإيد، وخلّي الرمز في نص الشاشة.';
-        }
-        // ⚠ تلميحة تانية بعد 15 ثانية بتوجّه لمخرج مختلف.
-        //
-        // اللي فضل نص دقيقة بيصوّب مش هيلاقي بالتصويب. تكرار
-        // نفس النصيحة بيخلّيه يقفل ويكتب بإيده — والرقم مطبوع
-        // تحت الرمز أصلاً، فالقراءة البصرية أقرب طريق.
-        if (frames === 60 && hintEl) {
-          hintEl.textContent = 'الرمز مش راضي؟ جرّب «اقرا الرقم بالكاميرا» — الرقم مطبوع تحته.';
-        }
-      }, 250);
+    await new Promise(function (resolve) {
+      var wait = setInterval(function () {
+        if (stopped) { clearInterval(wait); resolve(null); }
+      }, 200);
     });
+
+    if (manualValue) return manualValue;
+    throw new Error('أُلغي المسح.');
   };
 
   /**
@@ -1355,6 +1191,114 @@ const PRINT_SHARED_JS = `
  * الزرار بيطلب إذن المتصفح فعلاً. لو المستخدم رفض، النظام
  * بيقول له كده صراحةً بدل ما يفضل شكله مفعّل وهو ميّت.
  */
+/**
+ * تمرير شرايط الشرائح بالماوس — الكمبيوتر بس
+ *
+ * ══ المشكلة اللي بيحلّها ══
+ * شريط الموديلات `.drawers` بيلفّ أفقيًا، وشريط التمرير مخفي
+ * بـ`scrollbar-width:none` عشان الشكل.
+ *
+ * على الموبايل ده مش مهم — الصباع بيسحب. على الكمبيوتر مفيش
+ * سحب ومفيش شريط تمرير، **فالموديلات اللي بره الشاشة مالهاش
+ * أي طريق للوصول**. الشريط بيقف عند آخر موديل ظاهر وخلاص.
+ *
+ * ⚠ ودي مش مسألة شكل: الموديل اللي مش باين مش موجود بالنسبة
+ * للمستخدم. الفلتر بيبان شغّال وناقص في نفس الوقت.
+ *
+ * ══ الحل: طريقين، الاتنين للماوس ══
+ *   العجلة   → بتلفّ الشريط أفقيًا بدل ما تنزّل الصفحة
+ *   السحب    → امسك واسحب زي الموبايل
+ *
+ * ══ ⚠ الكمبيوتر بس، والفحص مش على عرض الشاشة ══
+ * `hover: hover` و`pointer: fine` معناهم "فيه مؤشّر دقيق
+ * بيمرّ فوق العناصر" — يعني ماوس. تابلت بقلم أو موبايل بيفشل
+ * الفحص ده.
+ *
+ * والفحص بالعرض كان هيغلط: موبايل مقلوب عرضه كبير، وشاشة
+ * كمبيوتر صغيرة عرضها قليل.
+ *
+ * ══ ⚠ والسحب ما بيبلعش الضغط ══
+ * لو ربطنا السحب بلا تفريق، كل ضغطة على شريحة كانت هتبقى
+ * سحبة بصفر مسافة، والفلتر ما يشتغلش خالص.
+ *
+ * فبنعدّ المسافة: أقل من 6 بكسل = ضغطة عادية بتعدّي. أكتر من
+ * كده = سحب، وبنلغي الضغطة اللي وراه.
+ */
+const DRAWERS_JS = `
+(function () {
+  if (!window.matchMedia) return;
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+  var DRAG_MIN = 6;
+  var strip = null, startX = 0, startLeft = 0, moved = 0;
+
+  function stripOf(target) {
+    return target && target.closest ? target.closest('.drawers') : null;
+  }
+
+  // ── العجلة ──
+  //
+  // ⚠ بنمنع السلوك الافتراضي **لما نلفّ فعلاً** بس. لو الشريط
+  // واصل آخره، سيب العجلة تنزّل الصفحة عادي — الحبس هنا بيخلّي
+  // الصفحة تقف والمستخدم مش فاهم ليه.
+  document.addEventListener('wheel', function (e) {
+    var box = stripOf(e.target);
+    if (!box) return;
+    if (box.scrollWidth <= box.clientWidth) return;
+
+    var step = e.deltaY || e.deltaX;
+    if (!step) return;
+
+    var before = box.scrollLeft;
+    box.scrollLeft = before + step;
+    if (box.scrollLeft !== before) e.preventDefault();
+  }, { passive: false });
+
+  // ── السحب ──
+  document.addEventListener('pointerdown', function (e) {
+    var box = stripOf(e.target);
+    if (!box || box.scrollWidth <= box.clientWidth) return;
+    strip = box;
+    startX = e.clientX;
+    startLeft = box.scrollLeft;
+    moved = 0;
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!strip) return;
+    var dx = e.clientX - startX;
+    if (Math.abs(dx) > moved) moved = Math.abs(dx);
+    if (moved < DRAG_MIN) return;
+
+    // ⚠ العلامة دي بتخلّي المؤشّر يبان كإيد ماسكة، والنص ما
+    // يتظللش وإحنا بنسحب.
+    strip.setAttribute('data-dragging', '');
+    strip.scrollLeft = startLeft - dx;
+    e.preventDefault();
+  }, { passive: false });
+
+  function release() {
+    if (!strip) return;
+    strip.removeAttribute('data-dragging');
+    // ⚠ بنسيب العدّاد شوية عشان معالج الضغط اللي بعدنا يقراه
+    setTimeout(function () { moved = 0; }, 0);
+    strip = null;
+  }
+
+  document.addEventListener('pointerup', release);
+  document.addEventListener('pointercancel', release);
+
+  // ⚠ في مرحلة **الالتقاط** عشان توصل قبل معالجات الشرائح.
+  // لو استنينا مرحلة الفقاعة، الفلتر كان هيتغيّر قبل ما نلغي.
+  document.addEventListener('click', function (e) {
+    if (moved < DRAG_MIN) return;
+    if (!stripOf(e.target)) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+})();
+`;
+
 const NOTIFY_SHARED_JS = `
 (function () {
   var KEY = 'meezan.notify';
@@ -1824,6 +1768,7 @@ ${opts.body}
 <div id="print-root"></div>
 <script>${raw(PRINT_SHARED_JS)}</script>
 <script>${raw(NOTIFY_SHARED_JS)}</script>
+<script>${raw(DRAWERS_JS)}</script>
 <script>${raw(opts.script)}</script>
 <script>${raw(PWA_REGISTER_JS)}</script>
 </body>
