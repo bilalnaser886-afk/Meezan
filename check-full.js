@@ -188,13 +188,40 @@ for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
   }
 }
 
+// ── ⚠ معرّف عنصر مستخدم وهو مش موجود في أي مكان ──
+//
+// ⚠ الفحص ده كان بيطلّع **إنذارات كاذبة**، والسبب مكتوب هنا
+// عشان ما يتكررش.
+//
+// الصيغة القديمة كانت بتدوّر على `id="..."` في القوالب وبس.
+// والمشكلة إن نص الواجهة عندنا **بيتبني بالجافاسكربت**:
+//
+//     inp.id = id;                      ← جوّه accField
+//     accField(box, 'المبلغ', 'acc-amt', ...)
+//
+// الاسم موجود فعلاً وقت التشغيل، بس مالوش أي `id="..."` في
+// المصدر — فالفاحص قال "مفقود" على خمس خانات سليمة.
+//
+// (وكمان `declared` و`runtimeBuilt` كانوا بنفس التعبير بالحرف،
+//  يعني `runtimeBuilt` كان كود ميّت ما بيضيفش حاجة.)
+//
+// ══ القاعدة الجديدة ══
+// الاسم يبقى معروف لو ظهر في المصدر في **أي مكان تاني** غير
+// نداء `getElementById` نفسه: قالب، أو إسناد `.id =`، أو
+// تمريره لدالة بتبني العنصر.
+//
+// بيمسك: الاسم المكتوب غلط، والاسم اللي اتغيّر في القالب
+//         واتنسي في السكربت — الاتنين بيظهروا **مرة واحدة**.
+// ⚠ اللي بتخسره: اسم معرّف في سكربت صفحة تانية بيعدّي.
+//    مقايضة مقبولة — إنذار كاذب بيتكرر بيخلّي الفحص كله
+//    يتجاهَل، وساعتها ما بيمسكش حاجة خالص.
 let ids = 0;
 {
-  const declared = new Set(
-    [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
-  );
-  const runtimeBuilt = new Set(
-    [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
+  // نشيل نداءات getElementById من نسخة المقارنة، فاللي يفضل
+  // هو "أماكن التعريف" بس
+  const withoutGets = src.replace(
+    /getElementById\(\s*'[A-Za-z][\w-]*'\s*\)/g,
+    'getElementById(0)',
   );
 
   for (const m of src.matchAll(/^function \w*Script\(/gm)) {
@@ -208,12 +235,14 @@ let ids = 0;
       [...body.matchAll(/getElementById\(\s*'([A-Za-z][\w-]*)'\s*\)/g)].map((x) => x[1]),
     );
     for (const id of used) {
-      if (declared.has(id) || runtimeBuilt.has(id)) continue;
+      if (withoutGets.includes("'" + id + "'")) continue;
+      if (withoutGets.includes('"' + id + '"')) continue;
       ids++;
-      console.log('FAIL معرّف غير موجود في أي قالب — ' + id);
+      console.log('FAIL معرّف غير موجود في أي مكان — ' + id);
     }
   }
 }
+
 
 // ── ⚠ شرطة مائلة مفردة جوّه قالب سكربت ──
 //
