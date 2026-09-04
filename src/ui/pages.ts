@@ -4615,10 +4615,26 @@ export function treasuryStatementPage(data: TreasuryStatementPageData): Html {
     /* ⚠ محلّي للشاشة دي عن قصد — مش في styles.ts.
        الملف ده مفيش فاحص بيبصّ عليه، وقاعدة تلات أسطر تخصّ
        شاشة واحدة مالهاش لزوم تسافر لملف عام. */
+    /* ══ ⚠ الفاصل واحد مش اتنين ══
+       كان فيه خط رمادي تحت كل حركة **و** إطار نحاسي حوالين
+       عنوان اليوم. العين بتشوف نظامين فاصلين مالهمش علاقة
+       ببعض، والنتيجة إن ولا واحد فيهم بيقول حاجة.
+
+       دلوقتي عنوان اليوم هو الفاصل الوحيد، والحركات جوّه اليوم
+       بتفضل ملمومة مع بعض — وده اللي بيخلّي المجموعة تُقرا
+       كمجموعة.
+
+       ⚠ التمن: الحركة اللي ملاحظتها طويلة بتقرب من اللي تحتها.
+       المسافة الرأسية وحدها هي اللي بتفصل، فلو ضاقت يوم ما
+       ارجع الخط بلون var(--line-soft) هنا مش في styles.ts. */
+    #st-list .mv-row{border-bottom:none;padding:11px 0}
+
     .st-day{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
-      margin:14px 0 6px;padding:6px 10px;border-radius:8px;
-      background:var(--brand-wash);border:1px solid var(--brand-line)}
-    .st-day-name{font-family:var(--font-display);font-size:var(--fs-4);color:var(--ink)}
+      margin:20px 0 2px;padding:0 0 5px;
+      border-bottom:2px solid var(--brand-line)}
+    .st-day:first-child{margin-top:6px}
+    .st-day-name{font-family:var(--font-display);font-size:var(--fs-3);
+      color:var(--brand);letter-spacing:.01em}
     .st-day-sum{font-family:var(--font-mono);font-size:var(--fs-2);color:var(--ink-soft)}
     .st-bal{display:block;font-family:var(--font-mono);font-size:var(--fs-1);
       color:var(--ink-faint);margin-top:2px}
