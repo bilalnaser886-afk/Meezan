@@ -683,6 +683,15 @@ select.field-input{appearance:none;
 .bal-name{font-size:var(--fs-4);font-weight:600}
 .bal-meta{display:block;font-family:var(--font-mono);font-size:var(--fs-1);
   color:var(--ink-faint);margin-top:2px;direction:ltr;text-align:right}
+/* ── شارة حدّ السحب ──
+   ⚠ القرمزي للتعدّي والنحاسي للاقتراب. مفيش أخضر هنا خالص:
+   الأخضر الوظيفي في النظام ده معناه "زرار إجراء"، ولو استخدمناه
+   كلون حالة، الموظّف يبطّل يعرف إيه اللي بيتضغط. */
+.od-badge{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:999px;
+  font-family:var(--font-mono);font-size:var(--fs-0);line-height:1.7;
+  background:var(--brand-wash);color:var(--ink);border:1px solid var(--brand-line)}
+.od-badge[data-state="BREACHED"]{background:var(--debit-wash);color:var(--debit);
+  border-color:var(--debit)}
 .bal-amount{display:block;margin-top:10px;font-family:var(--font-display);
   font-size:var(--fs-10);font-weight:700;line-height:1;font-variant-numeric:tabular-nums;
   direction:ltr;text-align:right;color:var(--credit-deep)}
