@@ -43,6 +43,7 @@ import { createBranch, listBranches } from '../application/use-cases/branches';
 import {
   createExpenseReason,
   createTreasury,
+  getTreasuryStatement,
   getFinancialSummary,
   getSalaryStatement,
   listBalances,
@@ -742,6 +743,40 @@ treasuryRoutes.post(
   },
 );
 
+/**
+ * كشف حساب خزنة واحدة.
+ *
+ * ⚠ `touchActivity: false` زي باقي مسارات القراءة: زرار "هات
+ * أقدم" ممكن يتضغط عشرين مرة، ولو كل ضغطة جدّدت ختم النشاط
+ * كان الموظّف هيفضل "نشط" وهو بيقلّب في كشف قديم.
+ */
+treasuryRoutes.get(
+  '/statement/:id',
+  requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
+  async (c) => {
+    const container = buildContainer(c.env);
+
+    // ⚠ الرصيد المرحّل بيتقرا كنص وبيتحوّل. أي حاجة مش رقم
+    // بتترمي هنا، وحالة الاستخدام بترجع لنقطة الارتساء لوحدها.
+    const rawCarry = c.req.query('carry');
+    const carry = rawCarry === undefined || rawCarry === '' ? null : Number(rawCarry);
+
+    const page = await getTreasuryStatement(
+      container.treasury,
+      c.get('user'),
+      c.req.param('id'),
+      {
+        beforeAt: c.req.query('at') ?? null,
+        beforeId: c.req.query('cur') ?? null,
+        carryPiastres: carry !== null && Number.isFinite(carry) ? carry : null,
+        limit: Number(c.req.query('limit')) || undefined,
+      },
+    );
+
+    return c.json({ ok: true, page });
+  },
+);
+
 treasuryRoutes.get(
   '/balances',
   requireAuth({ requireAll: [PERMISSIONS.EXPENSE_CREATE], touchActivity: false }),
@@ -807,6 +842,8 @@ treasuryRoutes.post(
       name?: string;
       type?: string;
       provider?: string | null;
+      /** فاضي = مفيش حد. مش صفر — الاتنين معنيين مختلفين. */
+      overdraftLimit?: string | null;
     }>(c);
 
     const container = buildContainer(c.env);
@@ -815,6 +852,7 @@ treasuryRoutes.post(
       name: String(body.name ?? ''),
       type: String(body.type ?? ''),
       provider: body.provider ?? null,
+      overdraftLimit: body.overdraftLimit ?? null,
     });
 
     return c.json({ ok: true, ...created, message: 'تمت إضافة الخزنة.' }, 201);
@@ -835,10 +873,18 @@ treasuryRoutes.patch(
     const id = c.req.param('id');
     if (!id) throw Errors.validation('معرّف الخزنة مفقود.');
 
+    // ⚠ `overdraftLimit` بيتقرا كـ`string | null | undefined`،
+    // والتلاتة معانيهم مختلفة:
+    //   undefined  →  ما تلمسش الحد (تعديل الاسم وحده مثلاً)
+    //   null أو '' →  شيل الحد
+    //   '5000'     →  خلّيه 5000
+    // لو دهسنا التلاتة على قيمة واحدة، تعديل الاسم كان هيمسح
+    // الحد في صمت.
     const body = await readJson<{
       name?: string | null;
       provider?: string | null;
       isActive?: boolean | null;
+      overdraftLimit?: string | null;
     }>(c);
 
     const container = buildContainer(c.env);
@@ -1102,6 +1148,12 @@ interface ProductBody {
   supplierId?: string | null;
   settle?: 'NONE' | 'PAID' | 'CREDIT';
   treasuryId?: string | null;
+  /**
+   * توزيع التكلفة على خزن — المبالغ نصوص زي باقي حقول الفلوس.
+   *
+   * ⚠ لما تتبعت، بتغلب `settle` و`treasuryId`.
+   */
+  splits?: Array<{ treasuryId?: string; amount?: string }>;
   source?: string | null;
   entryDate?: string | null;
   price?: string;
@@ -1187,6 +1239,9 @@ productRoutes.post('/', requireAuth({ requireAll: [PERMISSIONS.INVENTORY_ADJUST]
     // ⚠ خام. الفحص في حالة الاستخدام مش هنا.
     settle: body.settle,
     treasuryId: body.treasuryId ?? null,
+    // ⚠ بيتبعت خام. التنظيف والرفض في حالة الاستخدام
+    // (`readSplits`) عشان الرسايل تطلع من مكان واحد.
+    splits: Array.isArray(body.splits) ? body.splits : undefined,
     entryDate: body.entryDate ?? null,
     pricePiastres,
     costPiastres,
