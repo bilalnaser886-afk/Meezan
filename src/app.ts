@@ -41,6 +41,7 @@ import {
   getFinancialSummary,
   listBalances,
   listExpenseReasons,
+  getTreasuryStatement,
   listMovements,
   listTransfers,
 } from './application/use-cases/treasury';
@@ -71,6 +72,7 @@ import {
   suppliersPage,
   setupPage,
   treasuryPage,
+  treasuryStatementPage,
 } from './ui/pages';
 
 export const app = new Hono<AppBindings>();
@@ -996,6 +998,54 @@ app.get('/treasury', requireAuth({ redirectOnFail: true }), async (c) => {
       isOwner,
       canTransfer: canApprove,
       branches: branches.map((b) => ({ id: b.id, name: b.name })),
+      idleTimeoutSeconds: idleRuleFor(user.roleKey).seconds,
+      idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
+      idleAction: idleRuleFor(user.roleKey).action,
+    }),
+  );
+});
+
+/**
+ * كشف حساب خزنة واحدة.
+ *
+ * ⚠ المسار `/treasury/:id` جاي **بعد** `/treasury` في الملف،
+ * وده مقصود: Hono بيطابق بالترتيب، والمسار الثابت لازم يتسجّل
+ * الأول عشان `/treasury` ما يتقراش كمعرّف فاضي.
+ *
+ * ⚠ ومفيش فحص للخزنة هنا. الحراسة (المحل ثم الفرع) جوّه
+ * `getTreasuryStatement` — والصفحة بتخبط في نفس الحائط اللي
+ * الـAPI بيخبط فيه، مش في حائط تاني ممكن يختلف عنه.
+ */
+app.get('/treasury/:id', requireAuth({ redirectOnFail: true }), async (c) => {
+  const user = c.get('user');
+
+  if (!user.permissions.includes(PERMISSIONS.EXPENSE_CREATE)) {
+    return c.redirect('/app');
+  }
+
+  const container = buildContainer(c.env);
+  const branchName = await branchLabelFor(container, user);
+
+  const page = await getTreasuryStatement(container.treasury, user, c.req.param('id'));
+
+  return c.html(
+    treasuryStatementPage({
+      fullName: user.fullName,
+      username: user.username,
+      branchLabel: branchName,
+      tenantName: user.tenantName,
+      roleKey: user.roleKey,
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      treasuryId: page.treasuryId,
+      label: page.label,
+      type: page.type,
+      isActive: page.isActive,
+      balancePiastres: page.balancePiastres,
+      movementCount: page.movementCount,
+      rows: page.rows,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
       idleTimeoutSeconds: idleRuleFor(user.roleKey).seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
       idleAction: idleRuleFor(user.roleKey).action,
