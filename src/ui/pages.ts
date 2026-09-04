@@ -3266,6 +3266,18 @@ export interface TreasuryPageData {
       isActive: boolean;
       balancePiastres: number;
       movementCount: number;
+      /**
+       * حالة الخزنة تجاه حدّ السحب — **محسوبة في حالة الاستخدام**.
+       *
+       * ⚠ الشاشة ما بتقارنش رصيد بحد ولا بتعرف النسبة أصلاً.
+       * لو حسبتها هنا، كان هيبقى فيه نسختين من نفس القاعدة —
+       * وأول تعديل في العتبة بيتعمل في واحدة وتفضل التانية.
+       */
+      overdraft: {
+        limitPiastres: number | null;
+        state: 'NONE' | 'OK' | 'NEAR' | 'BREACHED';
+        roomPiastres: number | null;
+      };
     }>;
     branches: Array<{
       branchId: string | null;
@@ -3405,17 +3417,36 @@ export function treasuryPage(data: TreasuryPageData): Html {
       ? html`<p class="muted">لا توجد خزن بعد.</p>`
       : html`<div class="balances">
           ${data.summary.rows.map(
-            (b) => html`<div class="bal-card">
+            // ⚠ الكارت بقى رابط مش div.
+            //
+            // رابط حقيقي مش زرار بجافاسكربت: بيشتغل بالضغط
+            // المطوّل (فتح في تبويب)، وبيبان في شريط العنوان،
+            // وبيشتغل لو السكربت وقع.
+            (b) => html`<a class="bal-card" href="/treasury/${b.treasuryId}"
+              data-tid="${b.treasuryId}"
+              data-name="${b.name}"
+              data-prov="${b.provider ?? ''}"
+              data-limit="${b.overdraft.limitPiastres === null
+                ? ''
+                : formatPiastres(b.overdraft.limitPiastres)}"
+              data-state="${b.overdraft.state}">
               <span class="bal-name">${treasuryLabel(b)}</span>
               <span class="bal-meta">
                 ${TREASURY_TYPE_LABEL[b.type] ?? b.type} · ${b.movementCount} حركة${
                   b.isActive ? '' : ' · موقوفة'
                 }
               </span>
+              ${b.overdraft.state === 'BREACHED' || b.overdraft.state === 'NEAR'
+                ? html`<span class="od-badge" data-state="${b.overdraft.state}">
+                    ${b.overdraft.state === 'BREACHED'
+                      ? `عدّت الحد بـ ${formatPiastres(Math.abs(b.overdraft.roomPiastres ?? 0))}`
+                      : `فاضل ${formatPiastres(b.overdraft.roomPiastres ?? 0)} على الحد`}
+                  </span>`
+                : ''}
               <span class="bal-amount" data-negative="${b.balancePiastres < 0 ? 'true' : 'false'}">
                 ${formatPiastres(b.balancePiastres)}<span class="bal-cur">ج.م</span>
               </span>
-            </div>`,
+            </a>`,
           )}
         </div>`;
 
@@ -3597,7 +3628,60 @@ export function treasuryPage(data: TreasuryPageData): Html {
               </p>
             </div>
 
+            <div class="field">
+              <label class="field-label" for="tz-limit">حدّ السحب على المكشوف (اختياري)</label>
+              <input class="field-input" id="tz-limit" type="text" inputmode="decimal"
+                placeholder="مثال: 5000">
+              <p class="field-hint">
+                أقصى رقم سالب مسموح للخزنة. سيبها فاضية = مفيش حد.
+                اكتب صفر = ممنوع السالب خالص.
+                <strong>ده تحذير مش منع</strong> — الحركة بتتسجّل والنظام بينبّهك.
+              </p>
+            </div>
+
             <button class="btn-primary" type="button" id="tz-go">إضافة</button>
+          </div>
+        </details>`
+      : ''}
+
+    ${data.isOwner && data.summary.rows.length > 0
+      ? html`<details class="panel" id="ed-panel">
+          <summary>تعديل خزنة</summary>
+          <div class="panel-body">
+            <p class="muted">
+              الاسم والجهة وحدّ السحب. النوع لا يتغيّر — تحويل خزنة من نقدي
+              لمحفظة بعد تسجيل حركات عليها يجعل الدفتر يكذب بأثر رجعي.
+            </p>
+
+            <div class="field">
+              <label class="field-label" for="ed-pick">الخزنة</label>
+              <select class="field-input" id="ed-pick">
+                ${data.summary.rows.map(
+                  (b) => html`<option value="${b.treasuryId}">${treasuryLabel(b)}</option>`,
+                )}
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="ed-name">الاسم</label>
+              <input class="field-input" id="ed-name" type="text" maxlength="60">
+            </div>
+
+            <div class="field" id="ed-prov-field">
+              <label class="field-label" for="ed-prov">الجهة</label>
+              <input class="field-input" id="ed-prov" type="text" maxlength="60">
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="ed-limit">حدّ السحب على المكشوف</label>
+              <input class="field-input" id="ed-limit" type="text" inputmode="decimal"
+                placeholder="فاضي = مفيش حد">
+              <p class="field-hint">
+                امسح الخانة عشان تشيل الحد. اكتب رقم أكبر عشان توسّع المساحة.
+              </p>
+            </div>
+
+            <button class="btn-primary" type="button" id="ed-go">حفظ التعديل</button>
           </div>
         </details>`
       : ''}
@@ -4191,7 +4275,8 @@ ${MENU_JS}
             branchId: branch.value,
             name: name.value,
             type: tzType ? tzType.value : 'CASH',
-            provider: (document.getElementById('tz-prov') || {}).value || null
+            provider: (document.getElementById('tz-prov') || {}).value || null,
+            overdraftLimit: (document.getElementById('tz-limit') || {}).value || null
           })
         });
         var d = await res.json().catch(function () { return null; });
@@ -4209,6 +4294,119 @@ ${MENU_JS}
       }
     });
   }
+
+  // ══════════ تعديل خزنة ══════════
+  //
+  // ⚠ البيانات بتتقرا من كارت الرصيد نفسه (data-*) مش من نسخة
+  // تانية مطبوعة في السكربت. الكارت هو اللي الخادم رسمه، فاللي
+  // في الفورم هو اللي على الشاشة بالظبط — مفيش نسختين يختلفوا.
+  var edPick = document.getElementById('ed-pick');
+  var edName = document.getElementById('ed-name');
+  var edProv = document.getElementById('ed-prov');
+  var edProvField = document.getElementById('ed-prov-field');
+  var edLimit = document.getElementById('ed-limit');
+  var edGo = document.getElementById('ed-go');
+
+  function cardFor(id) {
+    var cards = document.querySelectorAll('[data-tid]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-tid') === id) return cards[i];
+    }
+    return null;
+  }
+
+  function fillEdit() {
+    if (!edPick) return;
+    var card = cardFor(edPick.value);
+    if (!card) return;
+    if (edName) edName.value = card.getAttribute('data-name') || '';
+    if (edProv) edProv.value = card.getAttribute('data-prov') || '';
+    if (edLimit) edLimit.value = card.getAttribute('data-limit') || '';
+    // النقدي مالوش جهة — نفس قاعدة فورم الإضافة
+    if (edProvField) edProvField.hidden = !(card.getAttribute('data-prov') || '');
+  }
+
+  if (edPick) { edPick.addEventListener('change', fillEdit); fillEdit(); }
+
+  if (edGo) {
+    edGo.addEventListener('click', async function () {
+      if (!edPick || !edPick.value) return;
+
+      var nm = String((edName || {}).value || '').trim();
+      if (nm.length < 2) { say('اسم الخزنة حرفين على الأقل.', false); return; }
+
+      edGo.disabled = true;
+      try {
+        var res = await fetch('/api/treasury/treasuries/' + encodeURIComponent(edPick.value), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          // ⚠ الحد بيتبعت دايمًا حتى لو فاضي — والفاضي معناه
+          // "شيل الحد". لو حذفناه من الطلب لما يبقى فاضي، ما
+          // كانش فيه طريقة تشيل حد اتحطّ غلط.
+          body: JSON.stringify({
+            name: nm,
+            provider: String((edProv || {}).value || '').trim() || null,
+            overdraftLimit: String((edLimit || {}).value || '').trim()
+          })
+        });
+        var d = await res.json().catch(function () { return null; });
+
+        if (res.ok && d && d.ok) {
+          say(d.message || 'تم حفظ التعديل.', true);
+          setTimeout(function () { location.reload(); }, 900);
+          return;
+        }
+        say((d && d.error && d.error.message) || 'تعذّر الحفظ.', false);
+      } catch (err) {
+        say('تعذّر الاتصال بالخادم.', false);
+      } finally {
+        edGo.disabled = false;
+      }
+    });
+  }
+
+  // ══════════ إشعار حدّ السحب ══════════
+  //
+  // ⚠ بيقرا الحالة من الكارت، مش بيحسبها.
+  //
+  // العتبة (20%) متعرّفة في overdraftView في حالة الاستخدام
+  // وبس. لو الشاشة حسبتها، كان هيبقى فيه رقمين لنفس القاعدة —
+  // وأول تعديل بيتعمل في واحد ويفضل التاني.
+  (function () {
+    var cards = document.querySelectorAll('[data-state]');
+    var over = [];
+    for (var i = 0; i < cards.length; i++) {
+      var st = cards[i].getAttribute('data-state');
+      if (st === 'BREACHED' || st === 'NEAR') {
+        over.push({ st: st, name: cards[i].getAttribute('data-name') || 'خزنة' });
+      }
+    }
+    if (over.length === 0) return;
+
+    var breached = 0;
+    for (var k = 0; k < over.length; k++) if (over[k].st === 'BREACHED') breached++;
+
+    var text = breached > 0
+      ? (breached === 1
+          ? 'خزنة عدّت حدّ السحب: ' + over[0].name
+          : breached + ' خزن عدّت حدّ السحب')
+      : (over.length === 1
+          ? over[0].name + ' قرّبت من حدّ السحب'
+          : over.length + ' خزن قرّبت من حدّ السحب');
+
+    // ⚠ مرة واحدة في الجلسة. الإشعار اللي بيطلع كل تحميل بيتحوّل
+    // لضوضاء، والموظّف بيبطّل يقراه — وساعتها التنبيه اللي مهم
+    // فعلاً بيعدّي معاه.
+    try {
+      if (sessionStorage.getItem('od-seen') === '1') return;
+      sessionStorage.setItem('od-seen', '1');
+    } catch (e) {
+      // التخزين مقفول (تصفّح خاص) — نعرض الإشعار عادي
+    }
+
+    say(text + ' — راجع الخزينة.', false);
+  })();
 })();
 `;
 }
@@ -4321,6 +4519,488 @@ export interface PosPageData {
  * • السلة في ذاكرة الصفحة. وسياسة الموظّف قفل شاشة مش تسجيل
  *   خروج (30 دقيقة)، فالسلة بتفضل موجودة ورا الستارة.
  */
+// ═══════════════════════════════════════════════════════════
+//  كشف حساب خزنة
+//
+//  ══ ⚠ الشاشة كلها بتترسم من الجافاسكربت، والصفحة الأولى
+//     بتوصل مطبوعة جوّه السكربت كـJSON ══
+//
+//  الطريقة التانية كانت: الخادم يرسم الصفحة الأولى HTML،
+//  والجافاسكربت يرسم اللي بعدها. وساعتها شكل الصف مكتوب
+//  **مرتين** — مرة في TypeScript ومرة في المتصفح.
+//
+//  ⚠ ودي بالظبط أشهر عيب في المشروع: نفس المعلومة في نسختين
+//  ومفيش حاجة بتجبرهم يتطابقوا. أول تعديل في شكل الصف بيتعمل
+//  في واحدة وتفضل التانية قديمة، وبتكتشفها من الشاشة.
+//
+//  فالراسم واحد. والتمن: من غير جافاسكربت الصفحة فاضية —
+//  مقبول لأن كل النظام كده أصلاً.
+// ═══════════════════════════════════════════════════════════
+
+export interface StatementRowView {
+  id: string;
+  type: string;
+  direction: string;
+  status: string;
+  amountPiastres: number;
+  reasonName: string | null;
+  relatedUserName: string | null;
+  createdByName: string | null;
+  note: string | null;
+  occurredAt: Date | string;
+  balanceAfterPiastres: number | null;
+}
+
+export interface TreasuryStatementPageData {
+  fullName: string;
+  username: string;
+  branchLabel: string | null;
+  tenantName: string;
+  roleKey: string;
+  canSell: boolean;
+  canViewProducts: boolean;
+
+  treasuryId: string;
+  label: string;
+  type: string;
+  isActive: boolean;
+  balancePiastres: number;
+  movementCount: number;
+
+  rows: StatementRowView[];
+  nextCursor: { occurredAt: string; id: string } | null;
+  hasMore: boolean;
+
+  idleTimeoutSeconds: number;
+  idleWarningSeconds: number;
+  idleAction: 'LOGOUT' | 'LOCK';
+}
+
+export function treasuryStatementPage(data: TreasuryStatementPageData): Html {
+  /**
+   * ⚠ `<` بيتحوّل قبل ما يتحط جوّه الوسم.
+   *
+   * لو ملاحظة فيها النص المقفول للسكربت، المتصفح بيقفل الوسم
+   * عند الملاحظة — والباقي بيتقرا HTML. تحويل `<` وحده بيقفل
+   * الباب ده، والجافاسكربت بيقرا القيمة زي ما هي.
+   */
+  const seed = JSON.stringify({
+    rows: data.rows,
+    nextCursor: data.nextCursor,
+    hasMore: data.hasMore,
+    balancePiastres: data.balancePiastres,
+  }).replace(/</g, '\\u003c');
+
+  return shell({
+    title: `كشف ${data.label}`,
+    tenantName: data.tenantName,
+    script: statementScript(
+      data.idleTimeoutSeconds,
+      data.idleWarningSeconds,
+      data.idleAction,
+      data.treasuryId,
+      seed,
+      data.label,
+    ),
+    body: html`${appBar({
+      fullName: data.fullName,
+      username: data.username,
+      roleKey: data.roleKey,
+      branchLabel: data.branchLabel,
+      tenantName: data.tenantName,
+    })}
+
+<main class="shell">
+  <style>
+    /* ⚠ محلّي للشاشة دي عن قصد — مش في styles.ts.
+       الملف ده مفيش فاحص بيبصّ عليه، وقاعدة تلات أسطر تخصّ
+       شاشة واحدة مالهاش لزوم تسافر لملف عام. */
+    .st-day{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+      margin:14px 0 6px;padding:6px 10px;border-radius:8px;
+      background:var(--brand-wash);border:1px solid var(--brand-line)}
+    .st-day-name{font-family:var(--font-display);font-size:var(--fs-4);color:var(--ink)}
+    .st-day-sum{font-family:var(--font-mono);font-size:var(--fs-2);color:var(--ink-soft)}
+    .st-bal{display:block;font-family:var(--font-mono);font-size:var(--fs-1);
+      color:var(--ink-faint);margin-top:2px}
+    .st-head{margin-bottom:10px}
+    .st-back{display:inline-block;margin-bottom:8px;font-size:var(--fs-3);color:var(--ink-soft)}
+  </style>
+
+  <a class="st-back" href="/treasury">→ رجوع للخزينة</a>
+
+  <div class="panel st-head">
+    <div class="panel-body">
+      <div class="mv-row">
+        <div class="mv-main">
+          <span class="mv-title">${data.label}</span>
+          <span class="mv-sub">
+            ${TREASURY_TYPE_LABEL[data.type] ?? data.type} ·
+            ${data.movementCount} حركة${data.isActive ? '' : ' · موقوفة'}
+          </span>
+        </div>
+        <span class="mv-amount" data-dir="${data.balancePiastres < 0 ? 'OUT' : 'IN'}">
+          ${formatPiastres(data.balancePiastres)}
+        </span>
+      </div>
+      <p class="field-hint">
+        الرصيد الجاري محسوب من الرصيد الحالي للورا. الحركات المعلّقة
+        بتتعرض من غير رصيد لأنها لسه ما دخلتش الخزنة.
+      </p>
+      <div class="prod-edit-actions">
+        <button class="btn-mini" type="button" id="st-xls">إكسيل</button>
+        <button class="btn-mini" type="button" id="st-pdf">PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert-box" id="stmsg" role="alert" hidden><span id="stmsg-text"></span></div>
+
+  <div id="st-list"></div>
+
+  <button class="btn-mini" type="button" id="st-more" hidden>هات أقدم</button>
+  <p class="field-hint" id="st-end" hidden>دي كل الحركات على الخزنة دي.</p>
+</main>
+
+${tabBar('treasury', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: true,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
+  });
+}
+
+function statementScript(
+  idleTimeout: number,
+  warnAt: number,
+  action: 'LOGOUT' | 'LOCK',
+  treasuryId: string,
+  seed: string,
+  label: string,
+): string {
+  const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
+    .replace('__WARN__', String(warnAt))
+    .replace('__ACTION__', action);
+
+  return `
+${shared}
+${MENU_JS}
+
+(function () {
+  var TID = ${JSON.stringify(treasuryId)};
+  var LABEL = ${JSON.stringify(label)};
+  var SEED = ${seed};
+
+  var TYPES = {
+    SALE: 'بيع', REFUND: 'استرجاع', DEPOSIT: 'إيداع', WITHDRAWAL: 'سحب',
+    EXPENSE: 'مصروف', ADVANCE: 'سُلفة', ADJUSTMENT: 'تسوية'
+  };
+  var STATUS = { PENDING: 'معلّقة', REJECTED: 'مرفوضة' };
+
+  var listEl = document.getElementById('st-list');
+  var moreEl = document.getElementById('st-more');
+  var endEl = document.getElementById('st-end');
+  var msgEl = document.getElementById('stmsg');
+  var msgText = document.getElementById('stmsg-text');
+
+  // كل الصفوف المحمّلة لحد دلوقتي — التصدير بيقرا منها
+  var all = [];
+  var cursor = null;
+  var busy = false;
+
+  function say(text) {
+    if (!msgEl || !msgText) return;
+    msgText.textContent = text;
+    msgEl.hidden = false;
+  }
+
+  function money(p) {
+    var neg = p < 0;
+    var abs = Math.abs(Math.trunc(p));
+    var pounds = Math.floor(abs / 100);
+    var rest = abs % 100;
+    var out = pounds.toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
+  }
+
+  // ⚠ اليوم بتوقيت القاهرة مش بتوقيت الجهاز.
+  //
+  // باقي النظام بيحسب التواريخ بتوقيت القاهرة عشان الفواتير
+  // تتحط على اليوم الصح. لو جمّعنا هنا بتوقيت الجهاز، موظّف
+  // فاتح النظام من بلد تانية هيشوف بيعة الساعة ١ بالليل تحت
+  // تاريخ اليوم اللي فات — والكشف يقول غير اليومية.
+  function cairoDay(iso) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date(iso));
+    } catch (e) {
+      return String(iso).slice(0, 10);
+    }
+  }
+
+  function cairoTime(iso) {
+    try {
+      return new Date(iso).toLocaleTimeString('ar-EG', {
+        timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit'
+      });
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function todayCairo() {
+    return cairoDay(new Date().toISOString());
+  }
+
+  function shiftDay(ymd, days) {
+    var d = new Date(ymd + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function dayTitle(ymd) {
+    var today = todayCairo();
+    if (ymd === today) return 'النهارده';
+    if (ymd === shiftDay(today, -1)) return 'إمبارح';
+    try {
+      return new Date(ymd + 'T12:00:00Z').toLocaleDateString('ar-EG', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+      });
+    } catch (e) {
+      return ymd;
+    }
+  }
+
+  function signed(r) {
+    return r.direction === 'IN' ? r.amountPiastres : -r.amountPiastres;
+  }
+
+  function subLine(r) {
+    var parts = [];
+    parts.push(cairoTime(r.occurredAt));
+    if (r.createdByName) parts.push(r.createdByName);
+    if (r.reasonName) parts.push(r.reasonName);
+    if (r.relatedUserName) parts.push('لـ ' + r.relatedUserName);
+    if (r.note) parts.push(r.note);
+    return parts.join(' · ');
+  }
+
+  function rowEl(r) {
+    var wrap = document.createElement('div');
+    wrap.className = 'mv-row';
+    wrap.setAttribute('data-status', r.status);
+
+    var main = document.createElement('div');
+    main.className = 'mv-main';
+
+    var t = document.createElement('span');
+    t.className = 'mv-title';
+    var title = TYPES[r.type] || r.type;
+    if (STATUS[r.status]) title = title + ' · ' + STATUS[r.status];
+    t.textContent = title;
+    main.appendChild(t);
+
+    var sub = document.createElement('span');
+    sub.className = 'mv-sub';
+    sub.textContent = subLine(r);
+    main.appendChild(sub);
+
+    wrap.appendChild(main);
+
+    var box = document.createElement('div');
+
+    var amt = document.createElement('span');
+    amt.className = 'mv-amount';
+    amt.setAttribute('data-dir', r.direction);
+    amt.textContent = (r.direction === 'IN' ? '+' : '-') + money(r.amountPiastres);
+    box.appendChild(amt);
+
+    // ⚠ الرصيد بيختفي للمعلّقة والمرفوضة بدل ما يتكرر.
+    // تكراره كان هيوحي إن الحركة دخلت الخزنة وهي مش داخلة.
+    var bal = document.createElement('span');
+    bal.className = 'st-bal';
+    bal.textContent = r.balanceAfterPiastres === null || r.balanceAfterPiastres === undefined
+      ? 'لا تدخل الرصيد'
+      : 'الرصيد ' + money(r.balanceAfterPiastres);
+    box.appendChild(bal);
+
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  // ⚠ الإلحاق بيكمّل آخر مجموعة يوم بدل ما يفتح واحدة جديدة.
+  //
+  // من غير ده، لو حدّ الصفحة وقع في نص يوم، اليوم ده بيتعرض
+  // مرتين بعنوانين متطابقين — والقارئ بيفتكرها يومين.
+  var lastDay = null;
+  var lastBody = null;
+
+  function append(rows) {
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var day = cairoDay(r.occurredAt);
+
+      if (day !== lastDay) {
+        var head = document.createElement('div');
+        head.className = 'st-day';
+
+        var name = document.createElement('span');
+        name.className = 'st-day-name';
+        name.textContent = dayTitle(day);
+        head.appendChild(name);
+
+        var sum = document.createElement('span');
+        sum.className = 'st-day-sum';
+        sum.setAttribute('data-day', day);
+        head.appendChild(sum);
+
+        listEl.appendChild(head);
+
+        lastBody = document.createElement('div');
+        listEl.appendChild(lastBody);
+        lastDay = day;
+      }
+
+      lastBody.appendChild(rowEl(r));
+      all.push(r);
+    }
+
+    retotalDays();
+  }
+
+  // مجموع اليوم بيتحسب من كل الصفوف المحمّلة، مش من الصفحة
+  // الحالية — عشان لو اليوم اتقسم على صفحتين يفضل الرقم صح
+  function retotalDays() {
+    var totals = {};
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i];
+      if (r.status !== 'APPROVED') continue;
+      var d = cairoDay(r.occurredAt);
+      totals[d] = (totals[d] || 0) + signed(r);
+    }
+    var nodes = listEl.querySelectorAll('[data-day]');
+    for (var n = 0; n < nodes.length; n++) {
+      var key = nodes[n].getAttribute('data-day');
+      var v = totals[key] || 0;
+      nodes[n].textContent = (v >= 0 ? '+' : '') + money(v);
+    }
+  }
+
+  function paint(page) {
+    append(page.rows || []);
+    cursor = page.nextCursor || null;
+
+    if (page.hasMore && cursor) {
+      moreEl.hidden = false;
+      endEl.hidden = true;
+    } else {
+      moreEl.hidden = true;
+      endEl.hidden = false;
+    }
+
+    if (all.length === 0) {
+      endEl.textContent = 'مفيش حركات على الخزنة دي.';
+      endEl.hidden = false;
+    }
+  }
+
+  function loadMore() {
+    if (busy || !cursor) return;
+    busy = true;
+    moreEl.disabled = true;
+    moreEl.textContent = 'جارٍ التحميل…';
+
+    // ⚠ الرصيد المرحّل = رصيد آخر سطر معتمد ظاهر دلوقتي.
+    // من غيره الصفحة الجديدة بتبدأ من الرصيد الحالي تاني،
+    // وأرقامها كلها بتطلع أعلى من الحقيقة.
+    var carry = null;
+    for (var i = all.length - 1; i >= 0; i--) {
+      if (all[i].balanceAfterPiastres !== null && all[i].balanceAfterPiastres !== undefined) {
+        carry = all[i].balanceAfterPiastres - signed(all[i]);
+        break;
+      }
+    }
+    if (carry === null) carry = SEED.balancePiastres;
+
+    var url = '/api/treasury/statement/' + encodeURIComponent(TID)
+      + '?at=' + encodeURIComponent(cursor.occurredAt)
+      + '&cur=' + encodeURIComponent(cursor.id)
+      + '&carry=' + encodeURIComponent(String(carry));
+
+    fetch(url, { credentials: 'same-origin' })
+      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, b: b }; }); })
+      .then(function (out) {
+        if (!out.ok || !out.b || !out.b.page) {
+          say((out.b && out.b.error) || 'تعذّر تحميل باقي الحركات.');
+          return;
+        }
+        paint(out.b.page);
+      })
+      .catch(function () { say('تعذّر الاتصال. جرّب تاني.'); })
+      .then(function () {
+        busy = false;
+        moreEl.disabled = false;
+        moreEl.textContent = 'هات أقدم';
+      });
+  }
+
+  if (moreEl) moreEl.addEventListener('click', loadMore);
+
+  // ══ التصدير ══
+  //
+  // ⚠ بنستخدم exportXls و exportPdf المشتركين، مش بنكتب
+  // مصدّر جديد. نسخة تانية معناها شكل ملف مختلف عن باقي
+  // الشاشات، وأي تحسين في واحد بيسيب التاني وراه.
+  //
+  // ⚠ وبيصدّر **اللي محمّل قدامك** بس. لو ما ضغطتش "هات أقدم"،
+  // الملف فيه اللي شفته. ودي مكتوبة في العنوان الفرعي عشان
+  // محدش يفتكر إنه صدّر الكشف كامل.
+  function exportRows(kind) {
+    if (all.length === 0) { say('مفيش حركات للتصدير.'); return; }
+
+    var stamp = new Date().toISOString().slice(0, 10);
+    var rows = [];
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i];
+      rows.push([
+        cairoDay(r.occurredAt),
+        cairoTime(r.occurredAt),
+        TYPES[r.type] || r.type,
+        r.createdByName || '—',
+        [r.reasonName, r.note].filter(Boolean).join(' · ') || '—',
+        (r.direction === 'IN' ? '+' : '-') + money(r.amountPiastres),
+        r.balanceAfterPiastres === null || r.balanceAfterPiastres === undefined
+          ? '—' : money(r.balanceAfterPiastres)
+      ]);
+    }
+
+    var opts = {
+      title: 'كشف ' + LABEL,
+      subtitle: 'الحركات المعروضة (' + all.length + ' حركة) · ' + stamp,
+      columns: ['التاريخ', 'الوقت', 'النوع', 'بواسطة', 'البيان', 'المبلغ', 'الرصيد'],
+      rows: rows,
+      totals: ['الرصيد الحالي', '', '', '', '', '', money(SEED.balancePiastres)],
+      filename: 'كشف-' + LABEL + '-' + stamp
+    };
+
+    if (kind === 'xls') window.exportXls(opts); else window.exportPdf(opts);
+  }
+
+  var xb = document.getElementById('st-xls');
+  var pb = document.getElementById('st-pdf');
+  if (xb) xb.addEventListener('click', function () { exportRows('xls'); });
+  if (pb) pb.addEventListener('click', function () { exportRows('pdf'); });
+
+  paint(SEED);
+})();
+`;
+}
+
+
 export function posPage(data: PosPageData): Html {
   const hasTreasury = data.treasuries.length > 0;
   const hasProducts = data.products.length > 0;
@@ -6917,12 +7597,49 @@ export function productsPage(data: ProductsPageData): Html {
 
                      دلوقتي القايمة بتبدأ فاضية، والحفظ بيترفض لحد
                      ما تقول التكلفة دي راحت فين. -->
+                <!-- ══ ⚠ «اتدفعت» و«على الحساب» بقوا خيار واحد ══
+
+                     كانوا خيارين، وكان فيه حقل خزنة منفصل — يعني
+                     مصدرين لنفس المعلومة ممكن يتناقضوا.
+
+                     دلوقتي فيه توزيع واحد، والتسوية **بتتحسب منه**:
+                       كله من خزن  → مدفوع
+                       مفيش خزن    → على الحساب
+                       جزء وجزء    → مختلط
+
+                     ⚠ و«تسجيل مخزون بس» فضلت لوحدها لأنها حاجة
+                     تانية خالص: مفيش فلوس اتحرّكت ومحدش مديون.
+                     دمجها مع «مدفعتش حاجة» كان هيخلّي الاتنين
+                     شكلهم واحد والفرق بينهم دين حقيقي. -->
                 <select class="field-input" id="np-settle">
                   <option value="">— اختر —</option>
                   <option value="NONE">تسجيل مخزون بس، بلا حركة فلوس</option>
-                  <option value="PAID">اتدفعت من الخزنة</option>
-                  <option value="CREDIT">على حساب المورّد (دين)</option>
+                  <option value="SPLIT">وزّع التكلفة</option>
                 </select>
+              </div>
+
+              <div id="np-split-box" hidden>
+                <p class="muted">
+                  اكتب اللي خرج من كل خزنة. الباقي بيروح على حساب المورّد
+                  المختار فوق.
+                </p>
+
+                <div id="np-split-rows"></div>
+
+                <button class="btn-mini" type="button" id="np-split-add">
+                  + خزنة تانية
+                </button>
+
+                <!-- ⚠ الميزان ده هو الحاجة الوحيدة اللي بتمنع
+                     المستخدم يوزّع رقم غلط. بيتحدّث مع كل ضغطة
+                     زرار في أي خانة. -->
+                <div class="mv-row" id="np-split-balance">
+                  <div class="mv-main">
+                    <span class="mv-title">المستحق</span>
+                    <span class="mv-sub" id="np-split-due">—</span>
+                  </div>
+                  <span class="mv-amount" id="np-split-rest" data-dir="OUT">—</span>
+                </div>
               </div>
 
               <div class="field" id="np-treasury-field" hidden>
@@ -6932,9 +7649,6 @@ export function productsPage(data: ProductsPageData): Html {
                     (t) => html`<option value="${t.id}">${t.name}</option>`,
                   )}
                 </select>
-                <p class="field-hint">
-                  المبلغ = التكلفة × الكمية، وبيخرج من الخزنة دي فورًا.
-                </p>
               </div>
 
               <p class="field-hint" id="np-settle-hint" hidden>
@@ -7729,9 +8443,187 @@ ${MENU_JS}
     if (!hasCost && settleEl) settleEl.value = '';
 
     var mode = settleEl ? settleEl.value : '';
-    if (treasuryField) treasuryField.hidden = mode !== 'PAID';
-    if (settleHint) settleHint.hidden = mode !== 'CREDIT';
+    if (treasuryField) treasuryField.hidden = true;
+    if (settleHint) settleHint.hidden = true;
+    if (splitBox) splitBox.hidden = mode !== 'SPLIT';
+    if (mode === 'SPLIT') { ensureRow(); retotal(); }
   }
+
+  // ══════════ توزيع التكلفة على خزن ══════════
+  //
+  // ⚠ المستحق = التكلفة × الكمية، مش التكلفة وحدها.
+  //
+  // خمس إسكرينات بمية للواحدة بتطلّع خمسمية من الدرج. الرقم
+  // ده اللي دالة القاعدة بتحسبه، فالشاشة لازم تقسّم نفس الرقم
+  // بالظبط — وإلا المستخدم بيوزّع على رقم غلط من أول لحظة.
+  var splitBox = document.getElementById('np-split-box');
+  var splitRows = document.getElementById('np-split-rows');
+  var splitAdd = document.getElementById('np-split-add');
+  var splitDue = document.getElementById('np-split-due');
+  var splitRest = document.getElementById('np-split-rest');
+
+  var TRE = [];
+  (function () {
+    var src = document.getElementById('np-treasury');
+    if (!src) return;
+    for (var i = 0; i < src.options.length; i++) {
+      TRE.push({ id: src.options[i].value, name: src.options[i].textContent });
+    }
+  })();
+
+  function toPiastres(text) {
+    var t = String(text || '').trim();
+    if (!t) return 0;
+    // تحويل الأرقام العربية — نفس تطبيع domain/money
+    var out = '';
+    for (var i = 0; i < t.length; i++) {
+      var c = t.charCodeAt(i);
+      if (c >= 1632 && c <= 1641) out += String(c - 1632);
+      else if (c >= 1776 && c <= 1785) out += String(c - 1776);
+      else if (c === 1643 || c === 1548) out += '.';
+      else out += t[i];
+    }
+    out = out.replace(/[\\s,_]/g, '');
+    var n = Number(out);
+    if (!isFinite(n) || n < 0) return NaN;
+    return Math.round(n * 100);
+  }
+
+  function money(p) {
+    var neg = p < 0;
+    var abs = Math.abs(Math.trunc(p));
+    var pounds = Math.floor(abs / 100);
+    var rest = abs % 100;
+    var out = pounds.toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
+  }
+
+  function dueTotal() {
+    var cost = toPiastres(costEl ? costEl.value : '');
+    if (isNaN(cost)) return 0;
+    var qEl = document.getElementById('np-qty');
+    var q = 1;
+    if (qEl && !isDeviceNow()) {
+      var parsed = parseInt(String(qEl.value || '1').replace(/[^0-9]/g, ''), 10);
+      if (parsed > 0) q = parsed;
+    }
+    return cost * q;
+  }
+
+  // ⚠ نوع المنتج بيتقرا لحظيًا مش مرة واحدة. الموظّف بيغيّر
+  // النوع بعد ما يكتب الكمية، والجهاز كميته مقفولة على ١.
+  function isDeviceNow() {
+    var t = document.getElementById('np-type');
+    return !t || t.value === 'device';
+  }
+
+  function addRow() {
+    if (!splitRows) return;
+    if (splitRows.children.length >= 10) return;
+
+    var row = document.createElement('div');
+    row.className = 'field';
+    row.setAttribute('data-split-row', '1');
+
+    var sel = document.createElement('select');
+    sel.className = 'field-input';
+    sel.setAttribute('data-split-tre', '1');
+    for (var i = 0; i < TRE.length; i++) {
+      var o = document.createElement('option');
+      o.value = TRE[i].id;
+      o.textContent = TRE[i].name;
+      sel.appendChild(o);
+    }
+    row.appendChild(sel);
+
+    var amt = document.createElement('input');
+    amt.className = 'field-input';
+    amt.type = 'text';
+    amt.setAttribute('inputmode', 'decimal');
+    amt.setAttribute('data-split-amt', '1');
+    amt.placeholder = 'المبلغ من الخزنة دي';
+    amt.addEventListener('input', retotal);
+    row.appendChild(amt);
+
+    var del = document.createElement('button');
+    del.className = 'btn-mini';
+    del.type = 'button';
+    del.textContent = 'شيل السطر';
+    del.addEventListener('click', function () {
+      row.parentNode.removeChild(row);
+      ensureRow();
+      retotal();
+    });
+    row.appendChild(del);
+
+    splitRows.appendChild(row);
+  }
+
+  // سطر واحد على الأقل دايمًا — الصندوق الفاضي مالوش معنى
+  function ensureRow() {
+    if (splitRows && splitRows.children.length === 0) addRow();
+  }
+
+  function splitPayload() {
+    var out = [];
+    if (!splitRows) return out;
+    var rows = splitRows.querySelectorAll('[data-split-row]');
+    for (var i = 0; i < rows.length; i++) {
+      var t = rows[i].querySelector('[data-split-tre]');
+      var a = rows[i].querySelector('[data-split-amt]');
+      var av = a ? String(a.value || '').trim() : '';
+      // ⚠ السطر الفاضي بيتشال هنا كمان. الخادم بيتجاهله برضه،
+      // بس تنضيفه قبل الإرسال بيخلّي الرسايل أوضح.
+      if (!av) continue;
+      out.push({ treasuryId: t ? t.value : '', amount: av });
+    }
+    return out;
+  }
+
+  function retotal() {
+    if (!splitDue || !splitRest) return;
+    var due = dueTotal();
+    var paid = 0;
+    var bad = false;
+
+    var list = splitPayload();
+    for (var i = 0; i < list.length; i++) {
+      var v = toPiastres(list[i].amount);
+      if (isNaN(v)) { bad = true; break; }
+      paid += v;
+    }
+
+    splitDue.textContent = 'التكلفة × الكمية = ' + money(due);
+
+    if (bad) {
+      splitRest.textContent = 'مبلغ غير صالح';
+      splitRest.setAttribute('data-dir', 'OUT');
+      return;
+    }
+
+    var rest = due - paid;
+    if (rest < 0) {
+      // ⚠ الأحمر هنا معناه "الحفظ هيترفض"، مش تحذير تجميلي.
+      splitRest.textContent = 'زيادة ' + money(-rest);
+      splitRest.setAttribute('data-dir', 'OUT');
+    } else if (rest === 0) {
+      splitRest.textContent = 'مدفوع بالكامل';
+      splitRest.setAttribute('data-dir', 'IN');
+    } else {
+      splitRest.textContent = 'على المورّد ' + money(rest);
+      splitRest.setAttribute('data-dir', 'IN');
+    }
+  }
+
+  if (splitAdd) splitAdd.addEventListener('click', function () { addRow(); retotal(); });
+  if (costEl) costEl.addEventListener('input', retotal);
+  (function () {
+    var q = document.getElementById('np-qty');
+    if (q) q.addEventListener('input', retotal);
+    var t = document.getElementById('np-type');
+    if (t) t.addEventListener('change', retotal);
+  })();
 
   if (costEl) costEl.addEventListener('input', syncSettle);
   if (settleEl) settleEl.addEventListener('change', syncSettle);
@@ -8057,10 +8949,14 @@ ${MENU_JS}
             // ⚠ الفاضي بيتبعت NONE، وده بيحصل في حالة واحدة بس:
             // الصندوق مخفي يعني التكلفة صفر ومفيش فلوس تتحرّك.
             // والفحص فوق بيمنع الفاضي طول ما الصندوق ظاهر.
-            settle: (settleEl && settleEl.value) || 'NONE',
-            treasuryId: (settleEl && settleEl.value === 'PAID')
-              ? document.getElementById('np-treasury').value
-              : null,
+            // ⚠ التقسيم بيغلب. الخادم بيتجاهل settle و treasuryId
+            // لما splits تكون فيها سطور — والتسوية بتتحسب من
+            // المجموع الفعلي جوّه القاعدة.
+            settle: (settleEl && settleEl.value === 'SPLIT')
+              ? 'PAID'
+              : ((settleEl && settleEl.value) || 'NONE'),
+            treasuryId: null,
+            splits: (settleEl && settleEl.value === 'SPLIT') ? splitPayload() : undefined,
             entryDate: document.getElementById('np-entry').value || null,
             price: document.getElementById('np-price').value,
             cost: document.getElementById('np-cost').value,
