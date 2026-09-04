@@ -188,6 +188,11 @@ export function buildContainer(env: Env): Container {
     },
     alerts: {
       alerts: createAlertRepository(db),
+      // ⚠ **نفس النسخة** اللي شاشة الخزينة بتستخدمها، مش واحدة
+      // جديدة. `treasuryRepo` متعرّفة فوق ومستخدمة في كذا مكان،
+      // وإنشاء نسخة تانية هنا كان هيبقى مسار قراءة موازي —
+      // ينفع يختلف يوم ما من غير ما حد ياخد باله.
+      treasuries: treasuryRepo,
       clock: systemClock,
     },
     transfers: {
