@@ -1,5 +1,31 @@
 const fs = require('fs'), vm = require('vm');
 
+// ══ ⚠ حارس المدخلات وكود الخروج — إضافة البوّابة ══
+//
+// السبب: الفاحص كان بيطبع المشاكل وبيخرج بكود نجاح (0) دايمًا.
+// يدويًا ده ماكانش بيفرق — إنت بتقرا الشاشة. لكن على السيرفر،
+// كود الخروج هو **الإشارة الوحيدة**. فالبوّابة كانت هتقول أخضر
+// حتى والفاحص طالع ٢٠ مشكلة.
+//
+// ⚠ ده بالظبط الفشل الصامت اللي الفاحص نفسه اتعمل عشانه.
+//
+// وكمان: من غير وسيط، `readFileSync(undefined)` بترمي استثناء
+// غامض. دلوقتي بترجع رسالة صريحة بطريقة الاستخدام.
+const target = process.argv[2];
+
+if (!target) {
+  console.error('الاستخدام: node check-full.js <مسار الملف>');
+  console.error('مثال:      node check-full.js src/ui/pages.ts');
+  process.exit(2);
+}
+
+if (!fs.existsSync(target)) {
+  console.error('الملف مش موجود: ' + target);
+  process.exit(2);
+}
+
+console.log('── فحص: ' + target + ' ──');
+
 function unescapeTemplate(s) {
   return s.replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (m, g) => {
     switch (g[0]) {
@@ -29,7 +55,7 @@ function strip(js) {
   return o;
 }
 
-const src = fs.readFileSync(process.argv[2], 'utf8');
+const src = fs.readFileSync(target, 'utf8');
 const names = [...src.matchAll(/^function (\w*Script)\(/gm)].map(m => m[1]);
 let bad = 0;
 
@@ -244,6 +270,14 @@ for (const [label, spanFrom, spanTo] of SPANS) {
   });
 }
 
-console.log((bad || scope || ticks || helpers || ids || slashes)
-  ? '\n🔴 ' + (bad + scope + ticks + helpers + ids + slashes) + ' مشكلة'
+// ══ الخلاصة + كود الخروج ══
+//
+// ⚠ `process.exit(1)` هو اللي بيخلّي البوّابة على السيرفر تحمرّ.
+// من غيره الرسالة بتتطبع والسيرفر بيقول "تمام" ويكمّل نشر.
+const total = bad + scope + ticks + helpers + ids + slashes;
+
+console.log(total
+  ? '\n🔴 ' + total + ' مشكلة'
   : '\n✅ كل السكربتات سليمة نحويًا ونطاقيًا');
+
+process.exit(total ? 1 : 0);
