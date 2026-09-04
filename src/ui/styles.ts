@@ -678,8 +678,23 @@ select.field-input{appearance:none;
    المبلغ بخط العرض بحجم كبير وخيط ذهبي فوقه، زي رقم الفئة على
    البنكنوت. ده المكان الوحيد اللي بنصرف فيه جرأة بصرية. */
 .balances{display:grid;gap:10px}
+/* ══ ⚠ الكارت بقى <a> مش <div> ══
+   لما بقى رابط لكشف الحساب، المتصفح طبّق تنسيق الروابط
+   الافتراضي: خط تحت كل نص، ولون أزرق يتحوّل بنفسجي بعد أول
+   زيارة.
+
+   ⚠ والبنفسجي ده **مش لون من الهوية أصلاً** — ده المتصفح
+   بيتكلم فوق التصميم. والنتيجة إن الرصيد السالب (قرمزي) كان
+   بيتغطّى بلون معناه "اتزار قبل كده"، وهو معنى مالوش أي علاقة
+   بالفلوس.
+
+   السطرين دول بيسكّتوه: اللون بيتورّث من الأب، والخط بيتشال.
+   والكارت بيفضل رابط حقيقي (ضغط مطوّل · شريط العنوان · يشتغل
+   لو السكربت وقع). */
 .bal-card{padding:15px var(--pad);background:var(--card);border:1px solid var(--line);
-  border-radius:var(--r);border-top:2px solid var(--thread)}
+  border-radius:var(--r);border-top:2px solid var(--thread);
+  display:block;color:inherit;text-decoration:none}
+.bal-card:visited,.bal-card:hover,.bal-card:active{color:inherit;text-decoration:none}
 .bal-name{font-size:var(--fs-4);font-weight:600}
 .bal-meta{display:block;font-family:var(--font-mono);font-size:var(--fs-1);
   color:var(--ink-faint);margin-top:2px;direction:ltr;text-align:right}
