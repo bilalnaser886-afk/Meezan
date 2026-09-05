@@ -1,5 +1,31 @@
 const fs = require('fs'), vm = require('vm');
 
+// ══ ⚠ حارس المدخلات وكود الخروج — إضافة البوّابة ══
+//
+// السبب: الفاحص كان بيطبع المشاكل وبيخرج بكود نجاح (0) دايمًا.
+// يدويًا ده ماكانش بيفرق — إنت بتقرا الشاشة. لكن على السيرفر،
+// كود الخروج هو **الإشارة الوحيدة**. فالبوّابة كانت هتقول أخضر
+// حتى والفاحص طالع ٢٠ مشكلة.
+//
+// ⚠ ده بالظبط الفشل الصامت اللي الفاحص نفسه اتعمل عشانه.
+//
+// وكمان: من غير وسيط، `readFileSync(undefined)` بترمي استثناء
+// غامض. دلوقتي بترجع رسالة صريحة بطريقة الاستخدام.
+const target = process.argv[2];
+
+if (!target) {
+  console.error('الاستخدام: node check-full.js <مسار الملف>');
+  console.error('مثال:      node check-full.js src/ui/pages.ts');
+  process.exit(2);
+}
+
+if (!fs.existsSync(target)) {
+  console.error('الملف مش موجود: ' + target);
+  process.exit(2);
+}
+
+console.log('── فحص: ' + target + ' ──');
+
 function unescapeTemplate(s) {
   return s.replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (m, g) => {
     switch (g[0]) {
@@ -29,7 +55,7 @@ function strip(js) {
   return o;
 }
 
-const src = fs.readFileSync(process.argv[2], 'utf8');
+const src = fs.readFileSync(target, 'utf8');
 const names = [...src.matchAll(/^function (\w*Script)\(/gm)].map(m => m[1]);
 let bad = 0;
 
@@ -87,6 +113,29 @@ let ticks = 0;
         console.log('FAIL backtick في تعليق سكربت — السطر ' + (base + i));
       }
     }
+  }
+
+  // ── ⚠ تعليق CSS جوّه قالب صفحة ──
+  //
+  // ⚠ الفحص ده اتضاف بعد ما فات علينا واحدة.
+  //
+  // فحص الـbacktick فوق بيبصّ على دوال *Script وثوابت _JS بس.
+  // وشاشة كشف الحساب فيها وسم <style> جوّه قالب HTML، والتعليق
+  // اللي جوّاه كان فيه backtick — فقفل القالب.
+  //
+  // ⚠ الفاحص قال أخضر و tsc هو اللي مسكها. الاتنين مكمّلين
+  // لبعض، بس الأولى إن ده يتمسك هنا لأن رسالة tsc بتشاور على
+  // سطر بعيد عن السبب.
+  for (const m of src.matchAll(/\/\*[\s\S]*?\*\//g)) {
+    if (!m[0].includes('`')) continue;
+    // التعليق اللي بره أي قالب سليم — بندوّر على اللي جوّه
+    // وسم <style> أو داخل قالب html
+    const before = src.slice(0, m.index);
+    const opens = (before.match(/<style>/g) || []).length;
+    const closes = (before.match(/<\/style>/g) || []).length;
+    if (opens <= closes) continue;
+    ticks++;
+    console.log('FAIL backtick في تعليق CSS — السطر ' + before.split('\n').length);
   }
 
   const htmlComments = src.matchAll(/<!--[\s\S]*?-->/g);
@@ -162,13 +211,40 @@ for (const fm of src.matchAll(/^function (\w*Script)\(/gm)) {
   }
 }
 
+// ── ⚠ معرّف عنصر مستخدم وهو مش موجود في أي مكان ──
+//
+// ⚠ الفحص ده كان بيطلّع **إنذارات كاذبة**، والسبب مكتوب هنا
+// عشان ما يتكررش.
+//
+// الصيغة القديمة كانت بتدوّر على `id="..."` في القوالب وبس.
+// والمشكلة إن نص الواجهة عندنا **بيتبني بالجافاسكربت**:
+//
+//     inp.id = id;                      ← جوّه accField
+//     accField(box, 'المبلغ', 'acc-amt', ...)
+//
+// الاسم موجود فعلاً وقت التشغيل، بس مالوش أي `id="..."` في
+// المصدر — فالفاحص قال "مفقود" على خمس خانات سليمة.
+//
+// (وكمان `declared` و`runtimeBuilt` كانوا بنفس التعبير بالحرف،
+//  يعني `runtimeBuilt` كان كود ميّت ما بيضيفش حاجة.)
+//
+// ══ القاعدة الجديدة ══
+// الاسم يبقى معروف لو ظهر في المصدر في **أي مكان تاني** غير
+// نداء `getElementById` نفسه: قالب، أو إسناد `.id =`، أو
+// تمريره لدالة بتبني العنصر.
+//
+// بيمسك: الاسم المكتوب غلط، والاسم اللي اتغيّر في القالب
+//         واتنسي في السكربت — الاتنين بيظهروا **مرة واحدة**.
+// ⚠ اللي بتخسره: اسم معرّف في سكربت صفحة تانية بيعدّي.
+//    مقايضة مقبولة — إنذار كاذب بيتكرر بيخلّي الفحص كله
+//    يتجاهَل، وساعتها ما بيمسكش حاجة خالص.
 let ids = 0;
 {
-  const declared = new Set(
-    [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
-  );
-  const runtimeBuilt = new Set(
-    [...src.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]),
+  // نشيل نداءات getElementById من نسخة المقارنة، فاللي يفضل
+  // هو "أماكن التعريف" بس
+  const withoutGets = src.replace(
+    /getElementById\(\s*'[A-Za-z][\w-]*'\s*\)/g,
+    'getElementById(0)',
   );
 
   for (const m of src.matchAll(/^function \w*Script\(/gm)) {
@@ -182,12 +258,14 @@ let ids = 0;
       [...body.matchAll(/getElementById\(\s*'([A-Za-z][\w-]*)'\s*\)/g)].map((x) => x[1]),
     );
     for (const id of used) {
-      if (declared.has(id) || runtimeBuilt.has(id)) continue;
+      if (withoutGets.includes("'" + id + "'")) continue;
+      if (withoutGets.includes('"' + id + '"')) continue;
       ids++;
-      console.log('FAIL معرّف غير موجود في أي قالب — ' + id);
+      console.log('FAIL معرّف غير موجود في أي مكان — ' + id);
     }
   }
 }
+
 
 // ── ⚠ شرطة مائلة مفردة جوّه قالب سكربت ──
 //
@@ -244,6 +322,14 @@ for (const [label, spanFrom, spanTo] of SPANS) {
   });
 }
 
-console.log((bad || scope || ticks || helpers || ids || slashes)
-  ? '\n🔴 ' + (bad + scope + ticks + helpers + ids + slashes) + ' مشكلة'
+// ══ الخلاصة + كود الخروج ══
+//
+// ⚠ `process.exit(1)` هو اللي بيخلّي البوّابة على السيرفر تحمرّ.
+// من غيره الرسالة بتتطبع والسيرفر بيقول "تمام" ويكمّل نشر.
+const total = bad + scope + ticks + helpers + ids + slashes;
+
+console.log(total
+  ? '\n🔴 ' + total + ' مشكلة'
   : '\n✅ كل السكربتات سليمة نحويًا ونطاقيًا');
+
+process.exit(total ? 1 : 0);
