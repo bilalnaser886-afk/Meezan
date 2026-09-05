@@ -29,7 +29,7 @@
 
 import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
-import { normalizeDigits } from '../../domain/money';
+import { MoneyError, normalizeDigits, parseMoneyToPiastres } from '../../domain/money';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
   AuditLogger,
@@ -97,6 +97,12 @@ export interface CreateProductRequest {
    */
   settle?: 'NONE' | 'PAID' | 'CREDIT';
   treasuryId?: string | null;
+  /**
+   * تقسيم التكلفة على خزن — نصوص من المستخدم.
+   *
+   * ⚠ لما تتبعت، بتغلب `settle` و`treasuryId` تمامًا.
+   */
+  splits?: Array<{ treasuryId?: string; amount?: string }>;
   entryDate?: string | null;
   /** null = المنتج دخل من غير ما يتسعّر بعد */
   pricePiastres: number | null;
@@ -971,7 +977,45 @@ export async function createProduct(
   if (settle !== 'NONE' && input.costPiastres <= 0) {
     throw Errors.validation('اكتب التكلفة قبل تحديد طريقة السداد.');
   }
-  if (settle === 'PAID' && !treasuryId) {
+  // ══ التقسيم ══
+  //
+  // ⚠ الفحوصات هنا **رسايل عربية واضحة قبل رحلة الشبكة**.
+  // الحراسة الحقيقية (الخزنة تبع المحل · فرع المنتج · صلاحية
+  // الاعتماد · سبب الصرف) جوّه `fn_create_product_split`، في
+  // نفس المعاملة اللي بتكتب. لو فحصنا هنا وبس، بين الفحص
+  // والكتابة فيه رحلة شبكة.
+  const splits = readSplits(input.splits);
+
+  // ⚠ المبلغ المستحق = التكلفة × الكمية، مش التكلفة وحدها.
+  //
+  // خمس إسكرينات بمية للواحدة بتطلّع خمسمية من الدرج. ده اللي
+  // `fn_record_purchase` بتحسبه دلوقتي، والشاشة لازم تقسّم نفس
+  // الرقم — وإلا المستخدم بيوزّع رقم غلط من أول لحظة.
+  const dueTotal = input.costPiastres * Math.max(quantityOnHand, 1);
+
+  if (splits.length > 0) {
+    if (input.costPiastres <= 0) {
+      throw Errors.validation('اكتب التكلفة قبل توزيعها على الخزن.');
+    }
+
+    const seen = new Set<string>();
+    for (const line of splits) {
+      if (seen.has(line.treasuryId)) {
+        throw Errors.validation('الخزنة الواحدة مرة واحدة بس في التوزيع.');
+      }
+      seen.add(line.treasuryId);
+    }
+
+    const paid = splits.reduce((sum, l) => sum + l.amountPiastres, 0);
+    if (paid > dueTotal) {
+      throw Errors.validation('مجموع المدفوع أكبر من التكلفة الإجمالية.');
+    }
+    // ⚠ الباقي بيروح على المورّد — والمورّد إجباري فوق أصلاً،
+    // فالفحص ده حارس مكرر مش شرط جديد.
+    if (paid < dueTotal && !supplierId) {
+      throw Errors.validation('الباقي هيروح على حساب المورّد — اختر المورّد.');
+    }
+  } else if (settle === 'PAID' && !treasuryId) {
     throw Errors.validation('اختر الخزنة اللي التكلفة اتدفعت منها.');
   }
   // ⚠ دين على مجهول رقم في دفتر مالوش صاحب — وما بيقفلش أبدًا.
@@ -1024,6 +1068,9 @@ export async function createProduct(
     supplierId,
     settle,
     treasuryId: settle === 'PAID' ? treasuryId : null,
+    // ⚠ فاضية = المسار القديم بالحرف. مفيش تغيير في السلوك
+    // لأي نداء ما بيقسّمش.
+    splits: splits.length > 0 ? splits : undefined,
     entryDate,
     pricePiastres: input.pricePiastres,
     costPiastres: input.costPiastres,
@@ -1053,6 +1100,11 @@ export async function createProduct(
       settle,
       supplierId,
       treasuryId: settle === 'PAID' ? treasuryId : null,
+      // ⚠ التوزيع في السجل كمان. "منتج اتضاف" من غير "اتدفع من
+      // فين وبكام" بيخلّي أي مراجعة للفلوس ناقصة نصّها — ودي
+      // نفس الحجّة اللي `settle` اتحطّت هنا عشانها.
+      splits: splits.length > 0 ? splits : undefined,
+      dueTotalPiastres: dueTotal,
       hasPrice: input.pricePiastres !== null,
       quantityOnHand,
       customsCleared,
@@ -1065,6 +1117,56 @@ export async function createProduct(
   });
 
   return created;
+}
+
+/**
+ * قراءة سطور التوزيع من مدخل المستخدم.
+ *
+ * ⚠ السطر الفاضي بيتشال بهدوء، والسطر الناقص بيترفض بصوت.
+ *
+ * الفرق مقصود: الشاشة بتبدأ بسطر فاضي، وزرار "+ خزنة تانية"
+ * بيزوّد سطر فاضي كمان. لو رفضنا الفاضي، أي حد يدوس الزرار
+ * ويغيّر رأيه هيتقفل عليه.
+ *
+ * لكن سطر فيه مبلغ بلا خزنة — أو خزنة بلا مبلغ — ده **نسيان**
+ * مش تراجع. وتجاهله بصمت معناه إن المستخدم كتب رقم وشافه
+ * اختفى، والمنتج اتسجّل بمبلغ أقل من اللي قصده.
+ */
+function readSplits(
+  raw: Array<{ treasuryId?: string; amount?: string }> | undefined,
+): Array<{ treasuryId: string; amountPiastres: number }> {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  // ⚠ سقف مطابق للي في دالة القاعدة. لو اختلفوا، الشاشة تقبل
+  // والقاعدة ترفض — والمستخدم يشوف رسالة من مكان مش متوقّع.
+  if (raw.length > 10) throw Errors.validation('الحد ١٠ خزن في التوزيع.');
+
+  const out: Array<{ treasuryId: string; amountPiastres: number }> = [];
+
+  for (const line of raw) {
+    const treasuryId = String(line?.treasuryId ?? '').trim();
+    const amountText = String(line?.amount ?? '').trim();
+
+    if (!treasuryId && !amountText) continue; // سطر فاضي — تراجع
+
+    if (!treasuryId) throw Errors.validation('فيه مبلغ من غير خزنة في التوزيع.');
+    if (!amountText) throw Errors.validation('فيه خزنة من غير مبلغ في التوزيع.');
+
+    let amountPiastres: number;
+    try {
+      // ⚠ `parseMoneyToPiastres` مش `parseCostToPiastres`:
+      // سطر توزيع بصفر جملة بلا معنى — يبقى امسح السطر.
+      amountPiastres = parseMoneyToPiastres(amountText);
+    } catch (error) {
+      throw Errors.validation(
+        error instanceof MoneyError ? error.message : 'مبلغ التوزيع غير صالح.',
+      );
+    }
+
+    out.push({ treasuryId, amountPiastres });
+  }
+
+  return out;
 }
 
 /**
