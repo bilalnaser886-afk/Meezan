@@ -914,6 +914,49 @@ export function createTreasuryRepository(db: SupabaseClient): TreasuryRepository
       return { treasuryId: String(row.treasury_id) };
     },
 
+    async listOverdraftLimits(tenantId) {
+      // ⚠ `not.is.null` بيستبعد الخزن اللي مالهاش حد من الأصل.
+      // من غيره كنا هنجيب كل الخزن ونفلتر في الذاكرة — نفس
+      // النتيجة، بس بيانات زيادة بتتنقل على شبكة موبايل.
+      const { data, error } = await db
+        .from('treasuries')
+        .select('id, overdraft_limit_piastres')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .not('overdraft_limit_piastres', 'is', null);
+
+      if (error) throw Errors.internal(`overdraft limits: ${error.message}`);
+
+      return ((data ?? []) as Array<{ id: string; overdraft_limit_piastres: number | string }>)
+        .map((r) => ({
+          treasuryId: r.id,
+          // bigint ممكن يرجع كنص من PostgREST — بنوحّده لرقم
+          limitPiastres: Number(r.overdraft_limit_piastres),
+        }));
+    },
+
+    async setOverdraftLimit(input) {
+      // ⚠⚠ `tenant_id` في شرط التحديث مش في الفحص قبله.
+      //
+      // الفحص قبل الكتابة بيسيب فتحة بين الاتنين. وبما إن
+      // التطبيق داخل بـ`service_role`، مفيش RLS ورا يمسك أي
+      // حاجة فاتت. المحل جزء من الاستعلام نفسه.
+      const { error } = await db
+        .from('treasuries')
+        .update({ overdraft_limit_piastres: input.limitPiastres })
+        .eq('id', input.treasuryId)
+        .eq('tenant_id', input.tenantId)
+        .is('deleted_at', null);
+
+      if (error) {
+        // 23514 = القيد رفض القيمة (حد سالب)
+        if (error.code === '23514') {
+          throw Errors.validation('حد السحب لازم يكون صفر أو أكبر.');
+        }
+        throw Errors.internal(`set overdraft limit: ${error.message}`);
+      }
+    },
+
     async update(input) {
       const { data, error } = await db.rpc('fn_update_treasury', {
         p_treasury_id: input.treasuryId,
@@ -1107,12 +1150,37 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         .select(MOVEMENT_COLUMNS)
         .is('deleted_at', null)
         .order('occurred_at', { ascending: false })
+        // ⚠ فاصل الترتيب — مش زينة.
+        //
+        // التحويل بين خزنتين بيكتب **حركتين بنفس اللحظة بالظبط**.
+        // من غير الفاصل ده، ترتيب الاتنين بينهم غير محدّد: بوستجرس
+        // ممكن يرجّعهم بترتيب مختلف في كل استدعاء.
+        //
+        // في قايمة عادية ده مش مهم. في كشف بيترحّل بمؤشّر، ده
+        // بيخلّي حركة تتكرر أو تتفقد **بصمت** عند حدّ الصفحة.
+        .order('id', { ascending: false })
         .limit(filter.limit);
 
       // ⚠ المحل أول فلتر ودايمًا موجود. الفرع فوقه واختياري.
       query = query.eq('tenant_id', filter.tenantId);
       if (filter.branchId !== null) query = query.eq('branch_id', filter.branchId);
       if (filter.status) query = query.eq('status', filter.status);
+      if (filter.treasuryId) query = query.eq('treasury_id', filter.treasuryId);
+
+      // ── مؤشّر الترحيل ──
+      //
+      // "أقدم من المؤشّر" بالترتيب المركّب (الوقت ثم المعرّف):
+      //   الوقت أقدم    →  خُدها
+      //   الوقت مساوي   →  خُدها لو المعرّف أصغر
+      //
+      // ⚠ الشرط لازم يبقى مجموعة `or` واحدة عشان يتركّب مع باقي
+      // الفلاتر بـ`and`. لو كتبناه فلترين منفصلين، النتيجة بتبقى
+      // "الوقت أقدم **و** الوقت مساوي" — مجموعة فاضية دايمًا.
+      if (filter.before) {
+        const at = filter.before.occurredAt.toISOString();
+        const id = filter.before.id;
+        query = query.or(`occurred_at.lt.${at},and(occurred_at.eq.${at},id.lt.${id})`);
+      }
 
       const { data, error } = await query;
       if (error) throw Errors.internal(`movements list: ${error.message}`);
@@ -1719,6 +1787,68 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
      * نفس نمط `fn_transfer_treasury` بالظبط.
      */
     async create(data) {
+      // ══ مسار التقسيم ══
+      //
+      // ⚠ دالة **تانية** مش نسخة معدّلة من القديمة.
+      //
+      // القديمة `fn_create_product_settled` شغّالة ومنشورة، وأي
+      // `create or replace` عليها بمعاملات مختلفة كان هيعمل
+      // دالة تالتة جنبها (فخ ٢) — والتطبيق ينادي القديمة وإحنا
+      // فاكرين إننا عدّلنا.
+      //
+      // ⚠ والرجوع عن الميزة كلها = مسح الشرط ده. سطرين.
+      if (data.splits && data.splits.length > 0) {
+        const { data: split, error: splitError } = await db.rpc(
+          'fn_create_product_split',
+          {
+            p_product: {
+              tenant_id: data.tenantId,
+              branch_id: data.branchId,
+              name: data.name,
+              product_type: data.productType,
+              serial_number: data.serialNumber,
+              serial_unavailable: data.serialUnavailable,
+              source: data.source,
+              supplier_id: data.supplierId,
+              entry_date: data.entryDate ?? null,
+              price_piastres: data.pricePiastres,
+              cost_piastres: data.costPiastres,
+              quantity_on_hand: data.quantityOnHand,
+              customs_cleared: data.customsCleared,
+              battery_health: data.batteryHealth,
+              storage_capacity: data.storageCapacity,
+              category_id: data.categoryId,
+              model_id: data.modelId,
+              color_id: data.colorId,
+            },
+            p_actor_id: data.createdById,
+            p_splits: data.splits.map((s) => ({
+              treasury_id: s.treasuryId,
+              amount_piastres: s.amountPiastres,
+            })),
+          },
+        );
+
+        if (splitError) {
+          // ⚠ نفس ترجمة أخطاء القاعدة المستخدمة في المسار القديم.
+          // الدالة بترمي رسايل عربية جاهزة للعرض بكود MZ400.
+          const detail = splitError.message ?? '';
+          if (detail.includes('اختر') || detail.includes('ادفع') ||
+              detail.includes('مجموع') || detail.includes('الخزنة') ||
+              detail.includes('الحد') || detail.includes('مبلغ')) {
+            throw Errors.validation(detail);
+          }
+          if (splitError.code === '23505') {
+            throw Errors.validation('الرقم التسلسلي ده مسجّل بالفعل.');
+          }
+          throw Errors.internal(`fn_create_product_split: ${detail}`);
+        }
+
+        const row = (split as Array<Record<string, unknown>> | null)?.[0];
+        if (!row) throw Errors.internal('fn_create_product_split: مفيش نتيجة');
+        return { id: String(row.product_id) };
+      }
+
       const { data: settled, error: settleError } = await db.rpc(
         'fn_create_product_settled',
         {
