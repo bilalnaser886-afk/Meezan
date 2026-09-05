@@ -22,7 +22,12 @@
 
 import { DateError, parseDateInput } from '../../domain/dates';
 import { Errors } from '../../domain/errors';
-import { MoneyError, parseMoneyToPiastres } from '../../domain/money';
+import {
+  MoneyError,
+  formatPiastres,
+  parseCostToPiastres,
+  parseMoneyToPiastres,
+} from '../../domain/money';
 import { PERMISSIONS } from '../../domain/permissions';
 import type {
   AuditLogger,
@@ -39,7 +44,9 @@ import type {
   TransferRow,
   TransferTreasuryResult,
   TreasuryBalance,
+  StatementRow,
   TreasuryRepository,
+  TreasuryStatementPage,
   TreasurySummaryRow,
   TreasuryType,
   UserRepository,
@@ -298,11 +305,20 @@ export async function reviewMovement(
 
 // ─────────── الملخّص المالي ───────────
 
+/**
+ * صف الخزنة + حالته تجاه حدّ السحب.
+ *
+ * ⚠ الحالة **محسوبة** مش مخزّنة، ومصدرها `overdraftView` وحدها.
+ */
+export interface SummaryRowWithLimit extends TreasurySummaryRow {
+  overdraft: OverdraftView;
+}
+
 export interface SummaryBranch {
   branchId: string | null;
   branchName: string;
   totalPiastres: number;
-  rows: TreasurySummaryRow[];
+  rows: SummaryRowWithLimit[];
 }
 
 export interface SummaryType {
@@ -313,7 +329,7 @@ export interface SummaryType {
 }
 
 export interface FinancialSummary {
-  rows: TreasurySummaryRow[];
+  rows: SummaryRowWithLimit[];
   /** فلوسك مقسّمة على الفروع */
   branches: SummaryBranch[];
   /** ونفس الفلوس مقسّمة على الأنواع — نقدي كام، محافظ كام */
@@ -351,7 +367,27 @@ export async function getFinancialSummary(
   }
 
   const branchScope = branchScopeFor(actor);
-  const rows = await deps.treasuries.summary(actor.tenantId, branchScope);
+
+  // ⚠ استعلامين على التوازي مش واحد ورا التاني.
+  //
+  // الحدود جدول تاني خالص، والأرصدة دالة. لو مشيناهم بالترتيب،
+  // كنا هنضيف رحلة شبكة كاملة على شاشة بتتفتح كل شوية.
+  const [baseRows, limits] = await Promise.all([
+    deps.treasuries.summary(actor.tenantId, branchScope),
+    deps.treasuries.listOverdraftLimits(actor.tenantId),
+  ]);
+
+  const limitMap = new Map(limits.map((l) => [l.treasuryId, l.limitPiastres]));
+
+  // ⚠ الحالة بتتحسب **مرة واحدة هنا** وبتتوزّع على كل التجميعات.
+  // لو كل تجميعة حسبتها لوحدها، كانوا هيختلفوا يوم ما.
+  const rows: SummaryRowWithLimit[] = baseRows.map((row) => ({
+    ...row,
+    overdraft: overdraftView(
+      row.balancePiastres,
+      limitMap.has(row.treasuryId) ? (limitMap.get(row.treasuryId) as number) : null,
+    ),
+  }));
 
   // ─── التجميع بالفرع ───
   const branchMap = new Map<string, SummaryBranch>();
@@ -399,11 +435,108 @@ export async function getFinancialSummary(
 
 // ─────────── إدارة الخزائن ───────────
 
+// ═══════════════ حدّ السحب على المكشوف ═══════════════
+
+/**
+ * حالة الخزنة تجاه حدّها.
+ *
+ *   NONE     مفيش حد متحطّ
+ *   OK       لسه فيه مساحة
+ *   NEAR     فاضل 20% أو أقل
+ *   BREACHED عدّى الحد
+ */
+export type OverdraftState = 'NONE' | 'OK' | 'NEAR' | 'BREACHED';
+
+export interface OverdraftView {
+  limitPiastres: number | null;
+  state: OverdraftState;
+  /** كام لسه فاضل قبل الحد. سالب = عدّاه بكام. */
+  roomPiastres: number | null;
+}
+
+/** فاضل 20% أو أقل = "قرّب". نسبة واحدة في مكان واحد. */
+const NEAR_RATIO = 0.2;
+
+/**
+ * ⚠⚠ الدالة دي هي **المصدر الوحيد** لحالة الحد في النظام كله.
+ *
+ * الشاشة بتقرا منها، والتنبيهات بتقرا منها، والإشعار المنبثق
+ * بيقرا منها. مفيش أي مكان تاني بيقارن رصيد بحد.
+ *
+ * ══ ليه الإصرار ده؟ ══
+ * أشهر عيب في المشروع إن نفس المعلومة بتتكتب في تلات نسخ
+ * (الشاشة · الكود · القاعدة) ومفيش حاجة بتجبرهم يتطابقوا.
+ * لو النسبة اتكتبت في الشاشة كمان، هييجي يوم تتغيّر في واحدة
+ * وتفضل التانية — والكارت يقول "قرّب" والتنبيه يقول "تمام".
+ *
+ * ══ ⚠ حالة الحد = صفر ══
+ * صفر معناه "ممنوع السالب خالص". وساعتها مفيش مساحة أصلاً،
+ * فمفيش معنى لـ"قرّب" — بتبقى `OK` وهي موجبة و`BREACHED` أول
+ * ما تنزل تحت الصفر. من غير الاستثناء ده، أي خزنة رصيدها صفر
+ * بالظبط كانت هترفع تنبيه "قرّبت" كل يوم بلا سبب.
+ */
+export function overdraftView(
+  balancePiastres: number,
+  limitPiastres: number | null,
+): OverdraftView {
+  if (limitPiastres === null || limitPiastres === undefined) {
+    return { limitPiastres: null, state: 'NONE', roomPiastres: null };
+  }
+
+  const limit = Math.max(0, Math.trunc(limitPiastres));
+
+  // الأرضية اللي مش المفروض ينزل تحتها
+  const floor = -limit;
+  const room = balancePiastres - floor;
+
+  if (room < 0) {
+    return { limitPiastres: limit, state: 'BREACHED', roomPiastres: room };
+  }
+  if (limit > 0 && room <= limit * NEAR_RATIO) {
+    return { limitPiastres: limit, state: 'NEAR', roomPiastres: room };
+  }
+  return { limitPiastres: limit, state: 'OK', roomPiastres: room };
+}
+
+/** نص جاهز للعرض — نفس الصياغة في الشاشة والتنبيه والإشعار */
+export function overdraftMessage(name: string, view: OverdraftView): string | null {
+  if (view.state === 'BREACHED') {
+    return `${name} عدّت حدّ السحب بـ ${formatPiastres(Math.abs(view.roomPiastres ?? 0))} ج.م.`;
+  }
+  if (view.state === 'NEAR') {
+    return `${name} قرّبت من حدّ السحب — فاضل ${formatPiastres(view.roomPiastres ?? 0)} ج.م.`;
+  }
+  return null;
+}
+
+/**
+ * قراءة الحد من مدخل المستخدم.
+ *
+ * ⚠ الفاضي = `null` = "شيل الحد"، مش صفر. الاتنين معنيين
+ * مختلفين وموثّقين في مايجريشن ٥٥.
+ */
+function readOverdraftLimit(raw: string | null | undefined): number | null {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+  try {
+    // ⚠ `parseCostToPiastres` مش `parseMoneyToPiastres`:
+    // التانية بترفض الصفر، والصفر هنا قيمة صحيحة تمامًا
+    // (ممنوع السالب خالص).
+    return parseCostToPiastres(text);
+  } catch (error) {
+    throw Errors.validation(
+      error instanceof MoneyError ? error.message : 'حد السحب غير صالح.',
+    );
+  }
+}
+
 export interface CreateTreasuryRequest {
   branchId: string;
   name: string;
   type: string;
   provider?: string | null;
+  /** نص من المستخدم. فاضي = مفيش حد. */
+  overdraftLimit?: string | null;
 }
 
 /**
@@ -452,12 +585,45 @@ export async function createTreasury(
     provider,
   });
 
+  // ── الحد ──
+  //
+  // ⚠ كتابة تانية بعد الإنشاء، مش جوّه نفس المعاملة.
+  //
+  // البديل كان تعديل `fn_create_treasury` عشان تاخد معامل
+  // زيادة — والدالة دي شغّالة ومش شايفينها، وفخ ٢ بيقول إن
+  // `create or replace` بمعاملات مختلفة بيعمل دالة تانية.
+  //
+  // ⚠ التمن: لو الخطوة دي فشلت، الخزنة بتكون اتعملت من غير حد.
+  // والفشل **بيبان**: بنرمي رسالة صريحة تقول للمالك يظبطه من
+  // التعديل، بدل ما نبلعها ونسيبه فاكر إن الحد اتحفظ.
+  const limit = readOverdraftLimit(input.overdraftLimit);
+  if (limit !== null) {
+    try {
+      await deps.treasuries.setOverdraftLimit({
+        treasuryId: created.treasuryId,
+        tenantId: actor.tenantId,
+        limitPiastres: limit,
+      });
+    } catch {
+      throw Errors.validation(
+        'الخزنة اتعملت، بس حدّ السحب ما اتحفظش. اظبطه من تعديل الخزنة.',
+      );
+    }
+  }
+
   await deps.audit.record({
     actorId: actor.id,
     action: 'treasury.create',
     entity: 'Treasury',
     entityId: created.treasuryId,
-    metadata: { name, type, provider, branchId, tenantId: actor.tenantId },
+    metadata: {
+      name,
+      type,
+      provider,
+      branchId,
+      overdraftLimitPiastres: limit,
+      tenantId: actor.tenantId,
+    },
   });
 
   return created;
@@ -467,6 +633,14 @@ export interface UpdateTreasuryRequest {
   name?: string | null;
   provider?: string | null;
   isActive?: boolean | null;
+}
+
+/** ⚠ منفصلة عن `UpdateTreasuryRequest` لأن دي بتروح لدالة
+ *  القاعدة، والحد بيتكتب على الجدول مباشرةً. الفصل بيمنع إن
+ *  حد يبعت الحد للدالة اللي ما بتعرفوش. */
+export interface UpdateTreasuryExtras {
+  /** نص من المستخدم. `''` أو null = شيل الحد. `undefined` = ما تلمسوش. */
+  overdraftLimit?: string | null;
 }
 
 /**
@@ -485,12 +659,18 @@ export async function updateTreasury(
   deps: TreasuryDeps,
   actor: AuthenticatedUser,
   treasuryId: string,
-  input: UpdateTreasuryRequest,
+  input: UpdateTreasuryRequest & UpdateTreasuryExtras,
 ): Promise<{ treasuryId: string; balancePiastres: number }> {
   if (actor.roleKey !== 'SUPER_ADMIN') {
     throw Errors.forbidden('تعديل الخزائن لصاحب المحل وحده.');
   }
   if (!treasuryId) throw Errors.validation('معرّف الخزينة مفقود.');
+
+  // ⚠ حاجز المحل قبل أي كتابة. `findScope` بترجع null للخزنة
+  // الموقوفة كمان — ودي حالة مقصودة: الموقوفة ما بتتعدّلش من
+  // هنا غير عن طريق دالة القاعدة اللي بتعرف تفكّ الإيقاف.
+  const scope = await deps.treasuries.findScope(treasuryId);
+  if (scope && scope.tenantId !== actor.tenantId) throw Errors.notFound('الخزنة');
 
   const patch: UpdateTreasuryRequest = {};
 
@@ -506,7 +686,39 @@ export async function updateTreasury(
     patch.isActive = input.isActive === true;
   }
 
-  if (Object.keys(patch).length === 0) throw Errors.validation('لم يتغيّر شيء.');
+  // ⚠ `undefined` معناها "ما تلمسش الحد"، و`null`/`''` معناها
+  // "شيله". من غير التفرقة دي، أي تعديل للاسم كان هيمسح الحد.
+  const touchesLimit = input.overdraftLimit !== undefined;
+  const nextLimit = touchesLimit ? readOverdraftLimit(input.overdraftLimit) : null;
+
+  if (Object.keys(patch).length === 0 && !touchesLimit) {
+    throw Errors.validation('لم يتغيّر شيء.');
+  }
+
+  if (touchesLimit) {
+    await deps.treasuries.setOverdraftLimit({
+      treasuryId,
+      tenantId: actor.tenantId,
+      limitPiastres: nextLimit,
+    });
+  }
+
+  // ⚠ لو الحد وحده اللي اتغيّر، مفيش داعي نستدعي دالة القاعدة
+  // بتلات قيم فاضية — بعض النسخ بتعتبرها "لم يتغيّر شيء" وترمي.
+  if (Object.keys(patch).length === 0) {
+    const rows = await deps.treasuries.summary(actor.tenantId, branchScopeFor(actor));
+    const row = rows.find((t) => t.treasuryId === treasuryId);
+
+    await deps.audit.record({
+      actorId: actor.id,
+      action: 'treasury.update',
+      entity: 'Treasury',
+      entityId: treasuryId,
+      metadata: { changed: ['overdraftLimit'], overdraftLimitPiastres: nextLimit },
+    });
+
+    return { treasuryId, balancePiastres: row?.balancePiastres ?? 0 };
+  }
 
   const result = await deps.treasuries.update({
     treasuryId,
@@ -521,7 +733,11 @@ export async function updateTreasury(
     action: 'treasury.update',
     entity: 'Treasury',
     entityId: treasuryId,
-    metadata: { changed: Object.keys(patch), balancePiastres: result.balancePiastres },
+    metadata: {
+      changed: touchesLimit ? [...Object.keys(patch), 'overdraftLimit'] : Object.keys(patch),
+      overdraftLimitPiastres: touchesLimit ? nextLimit : undefined,
+      balancePiastres: result.balancePiastres,
+    },
   });
 
   return result;
@@ -718,6 +934,165 @@ export async function listMovements(
     relatedUserName: m.relatedUserId ? (userNames.get(m.relatedUserId) ?? null) : null,
     createdByName: userNames.get(m.createdById) ?? null,
   }));
+}
+
+export interface StatementRequest {
+  /** مؤشّر الصفحة السابقة — فاضي = من الأول */
+  beforeAt?: string | null;
+  beforeId?: string | null;
+  /**
+   * الرصيد المرحّل من آخر سطر في الصفحة السابقة.
+   *
+   * ⚠ فاضي = ابدأ من رصيد الخزنة الحالي.
+   */
+  carryPiastres?: number | null;
+  limit?: number;
+}
+
+/** حجم الصفحة الافتراضي والأقصى — الشاشة بتطلب، والحد هنا */
+const STATEMENT_PAGE = 60;
+const STATEMENT_MAX = 200;
+
+/**
+ * كشف حساب خزنة — كل الحركات، الأحدث فوق، بالرصيد الجاري.
+ *
+ * ══ ⚠ الرصيد الجاري بيتحسب بالمشي للورا ══
+ *
+ * الرصيد المخزّن مش موجود أصلاً في النظام ده — رصيد الخزنة ناتج
+ * جمع بيتحسب في القاعدة. فمفيش عمود "الرصيد بعد الحركة" نقرا منه.
+ *
+ * فبنبدأ من الرصيد الحالي (وهو الرصيد **بعد** أحدث حركة) وننزل:
+ *
+ *     الرصيد بعد الحركة اللي تحتي = رصيدي − مبلغ حركتي بإشارتها
+ *
+ * تشبيه: كشف البنك بيبدأ من رصيدك النهارده ويرجع لورا. مش
+ * بيحسب من أول يوم فتحت فيه الحساب.
+ *
+ * ══ ⚠⚠ والمعلّق ما بيحرّكش الرصيد ══
+ * الحركة اللي لسه ما اتراجعتش (`PENDING`) أو اتـرفضت (`REJECTED`)
+ * **مش داخلة** في رصيد الخزنة — ده مكتوب في `recordMovement` فوق.
+ *
+ * فبتتعرض في الكشف (لأنها حصلت فعلاً ولازم تتشاف) لكن رصيدها
+ * `null`. لو حسبناها، كل الأرقام تحتها كانت هتبقى غلط بمبلغها.
+ *
+ * ══ ⚠ التمن — اقراه ══
+ * نقطة الارتساء هي الرصيد **لحظة فتح الصفحة**. لو حد سجّل حركة
+ * وإنت بتقلّب في القديم، الأرقام اللي قدامك بتبقى متأخّرة بمبلغها.
+ *
+ * والحل هو التحديث — الصفحة بتعيد الارتساء من الرصيد الجديد.
+ *
+ * ⚠ والبديل الدقيق كان: استعلام تجميعي يجمع كل حركة أحدث من
+ * المؤشّر في كل صفحة. اتأجّل عن قصد لأنه استعلام زيادة على كل
+ * ضغطة "هات أقدم"، والرقم ده **للعرض بس** — مفيش قرار مالي
+ * بيتبنى عليه. رصيد الخزنة نفسه لسه بيتحسب في القاعدة زي ما هو.
+ */
+export async function getTreasuryStatement(
+  deps: TreasuryDeps,
+  actor: AuthenticatedUser,
+  treasuryId: string,
+  input: StatementRequest = {},
+): Promise<TreasuryStatementPage> {
+  // نفس صلاحية شاشة الخزينة — الكشف مش بيكشف حاجة جديدة، هو
+  // نفس الحركات المعروضة هناك مرتّبة بشكل تاني.
+  if (!actor.permissions.includes(PERMISSIONS.EXPENSE_CREATE)) {
+    throw Errors.forbidden(PERMISSIONS.EXPENSE_CREATE);
+  }
+
+  const id = String(treasuryId ?? '').trim();
+  if (!id) throw Errors.validation('اختر الخزنة.');
+
+  // ⚠ الحاجز الأول: الخزنة دي بتاعة محلك أصلاً؟
+  // خزنة محل تاني = "غير موجودة"، مش "ممنوعة".
+  const scope = await deps.treasuries.findScope(id);
+  if (!scope) throw Errors.notFound('الخزنة');
+  assertScopeAccess(actor, scope.tenantId, scope.branchId);
+
+  const limit = Math.min(Math.max(Number(input.limit) || STATEMENT_PAGE, 1), STATEMENT_MAX);
+
+  // ── المؤشّر ──
+  //
+  // ⚠ الاتنين مع بعض أو ولا واحد. مؤشّر نصّه ناقص معناه ترحيل
+  // بيتخطّى صفوف بصمت — وده أسوأ من رسالة رفض.
+  let before: { occurredAt: Date; id: string } | undefined;
+  const rawAt = String(input.beforeAt ?? '').trim();
+  const rawId = String(input.beforeId ?? '').trim();
+  if (rawAt || rawId) {
+    if (!rawAt || !rawId) throw Errors.validation('مؤشّر الترحيل غير مكتمل.');
+    const at = new Date(rawAt);
+    if (Number.isNaN(at.getTime())) throw Errors.validation('مؤشّر الترحيل غير صالح.');
+    before = { occurredAt: at, id: rawId };
+  }
+
+  // ⚠ بنطلب سطر زيادة عشان نعرف "فيه كمان؟" من غير عدّ منفصل.
+  // العدّ المنفصل استعلام تاني ممكن يختلف عن الأول في نفس اللحظة.
+  const [raw, treasuries, reasons, team] = await Promise.all([
+    deps.movements.list({
+      tenantId: actor.tenantId,
+      branchId: branchScopeFor(actor),
+      treasuryId: id,
+      before,
+      limit: limit + 1,
+    }),
+    deps.treasuries.summary(actor.tenantId, branchScopeFor(actor)),
+    deps.expenseReasons.listForBranch(actor.tenantId, actor.branchId),
+    deps.users.listInScope(listScopeFor(actor)),
+  ]);
+
+  const hasMore = raw.length > limit;
+  const movements = hasMore ? raw.slice(0, limit) : raw;
+
+  const info = treasuries.find((t) => t.treasuryId === id);
+  if (!info) throw Errors.notFound('الخزنة');
+
+  const reasonNames = new Map(reasons.map((r) => [r.id, r.name]));
+  const userNames = new Map(team.map((u) => [u.id, u.fullName]));
+  const label = treasuryLabel(info);
+
+  // ── الرصيد الجاري ──
+  //
+  // نبدأ من نقطة الارتساء وننزل. المعلّق والمرفوض بيعدّوا من غير
+  // ما يلمسوا العدّاد.
+  let carry =
+    input.carryPiastres === null || input.carryPiastres === undefined
+      ? info.balancePiastres
+      : Number(input.carryPiastres);
+  if (!Number.isFinite(carry)) carry = info.balancePiastres;
+  carry = Math.trunc(carry);
+
+  const rows: StatementRow[] = movements.map((m) => {
+    const counts = m.status === 'APPROVED';
+    const balanceAfterPiastres = counts ? carry : null;
+    if (counts) {
+      // الرصيد اللي قبل الحركة دي = الرصيد بعدها ناقص أثرها
+      carry -= m.direction === 'IN' ? m.amountPiastres : -m.amountPiastres;
+    }
+
+    return {
+      ...m,
+      treasuryName: label,
+      reasonName: m.expenseReasonId ? (reasonNames.get(m.expenseReasonId) ?? null) : null,
+      relatedUserName: m.relatedUserId ? (userNames.get(m.relatedUserId) ?? null) : null,
+      createdByName: userNames.get(m.createdById) ?? null,
+      balanceAfterPiastres,
+    };
+  });
+
+  const last = movements[movements.length - 1];
+
+  return {
+    treasuryId: id,
+    label,
+    type: info.type,
+    isActive: info.isActive,
+    balancePiastres: info.balancePiastres,
+    movementCount: info.movementCount,
+    rows,
+    nextCursor:
+      hasMore && last
+        ? { occurredAt: last.occurredAt.toISOString(), id: last.id }
+        : null,
+    hasMore,
+  };
 }
 
 /**
