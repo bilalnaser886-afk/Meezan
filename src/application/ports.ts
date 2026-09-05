@@ -590,6 +590,43 @@ export interface EnrichedMovement extends MovementRecord {
   createdByName: string | null;
 }
 
+/**
+ * صف في كشف حساب الخزنة.
+ *
+ * ⚠ `balanceAfterPiastres` مش مخزّن ولا محسوب في القاعدة — هو
+ * ناتج مشي للورا من الرصيد الحالي. التفصيلة كاملة في
+ * `getTreasuryStatement`.
+ *
+ * ⚠ و`null` معناها **الحركة مش داخلة الرصيد** (معلّقة أو
+ * مرفوضة)، مش "مش عارفين". الفرق مهم في الشاشة: السطر بيتعرض
+ * من غير رصيد بدل ما يتعرض برصيد غلط.
+ */
+export interface StatementRow extends EnrichedMovement {
+  balanceAfterPiastres: number | null;
+}
+
+/**
+ * صفحة واحدة من كشف الحساب.
+ *
+ * ⚠ `hasMore` رقم مستقل عن طول `rows`، ومقصود: الشاشة محتاجة
+ * تعرف إن فيه كمان **قبل** ما تقرر تعرض زرار "هات أقدم" أو رسالة
+ * "دي كل الحركات". من غيره كنا هنخمّن من الطول، والتخمين ده
+ * بيغلط بالظبط لما عدد الحركات مضاعف للحد.
+ */
+export interface TreasuryStatementPage {
+  treasuryId: string;
+  label: string;
+  type: string;
+  isActive: boolean;
+  /** رصيد الخزنة لحظة الطلب — نقطة ارتساء الرصيد الجاري */
+  balancePiastres: number;
+  movementCount: number;
+  rows: StatementRow[];
+  /** مؤشّر الصفحة اللي بعدها، أو null لو خلصنا */
+  nextCursor: { occurredAt: string; id: string } | null;
+  hasMore: boolean;
+}
+
 export interface CreateMovementInput {
   tenantId: string;
   treasuryId: string;
@@ -613,6 +650,26 @@ export interface MovementFilter {
   /** null = كل فروع المحل (لصاحب المحل فقط) */
   branchId: string | null;
   status?: MovementStatus;
+  /**
+   * خزنة واحدة — لكشف الحساب.
+   *
+   * ⚠ اختيارية عشان القايمة العامة في شاشة الخزينة تفضل شغّالة
+   * زي ما هي من غير أي تعديل عندها.
+   */
+  treasuryId?: string;
+  /**
+   * مؤشّر الترحيل: هات الأقدم من النقطة دي.
+   *
+   * ══ ⚠ ليه مؤشّر مش رقم صفحة؟ ══
+   * الصفحة رقم ٢ بترجّع نتيجة مختلفة لو اتسجّلت حركة جديدة وإنت
+   * بتقرا — الصفوف بتتزحلق سطر، فبتشوف حركة مرتين أو تفوّت
+   * واحدة. والمؤشّر مربوط بالصف نفسه، فالزحلقة دي مستحيلة.
+   *
+   * ⚠ والمعرّف جزء منه مش زيادة: التحويل بين خزنتين بيكتب
+   * **حركتين بنفس اللحظة بالظبط**. لو المؤشّر على الوقت وحده،
+   * الحركة التانية بتتفقد بصمت عند حدّ الصفحة.
+   */
+  before?: { occurredAt: Date; id: string };
   limit: number;
 }
 
@@ -641,6 +698,30 @@ export interface TreasuryRepository {
    * قديم — والشاشة تقول "الإجمالي ١٠٠٠" وتحته خزن مجموعهم ٩٠٠.
    */
   summary(tenantId: string, branchId: string | null): Promise<TreasurySummaryRow[]>;
+
+  /**
+   * حدود السحب على المكشوف — صف لكل خزنة ليها حد.
+   *
+   * ⚠ استعلام منفصل عن `summary` عن قصد. الحد مش جزء من أي
+   * مجموع، فمالوش لازمة يدخل الدالة اللي بتحسب الأرصدة —
+   * ولمس الدالة دي معناه استبدالها وهي شغّالة.
+   */
+  listOverdraftLimits(
+    tenantId: string,
+  ): Promise<Array<{ treasuryId: string; limitPiastres: number }>>;
+
+  /**
+   * ضبط الحد. `null` = شيل الحد.
+   *
+   * ⚠ المحل معامل مش سياق: الكتابة بتتحصر بـ`tenant_id` جوّه
+   * الاستعلام نفسه. التطبيق بيدخل بـ`service_role` يعني RLS
+   * مش هيحميه — الحصر ده هو الحماية الوحيدة.
+   */
+  setOverdraftLimit(input: {
+    treasuryId: string;
+    tenantId: string;
+    limitPiastres: number | null;
+  }): Promise<void>;
 
   /** ⚠ صاحب المحل وحده — الحراسة جوّه دالة القاعدة */
   create(input: CreateTreasuryInput): Promise<{ treasuryId: string }>;
@@ -793,6 +874,20 @@ export interface ProductRecord {
   isActive: boolean;
 }
 
+/**
+ * نتيجة إنشاء منتج بتقسيم.
+ *
+ * ⚠ `settleMode` جاي **من القاعدة** مش محسوب في الكود. الدالة
+ * هي اللي بتقرر بعد ما تجمع الفعلي، فالشاشة بتعرض اللي حصل
+ * مش اللي المستخدم قصده.
+ */
+export interface CreateProductSplitResult {
+  id: string;
+  treasuryMovementIds: string[];
+  debtMovementId: string | null;
+  settleMode: 'NONE' | 'PAID' | 'CREDIT' | 'MIXED';
+}
+
 export interface CreateProductInput {
   tenantId: string;
   branchId: string;
@@ -814,6 +909,26 @@ export interface CreateProductInput {
   settle?: 'NONE' | 'PAID' | 'CREDIT';
   /** مطلوبة مع 'PAID' بس */
   treasuryId?: string | null;
+
+  /**
+   * تقسيم التكلفة على أكتر من خزنة.
+   *
+   * ══ ⚠ لما دي تتبعت، `settle` و`treasuryId` بيتجاهلوا ══
+   *
+   * المعادلة بقت:
+   *   التكلفة × الكمية = مجموع الخزن + الباقي على المورّد
+   *
+   * والتسوية **ناتج مش اختيار**: كله من خزن = PAID، مفيش خزن =
+   * CREDIT، جزء وجزء = MIXED.
+   *
+   * ⚠ ده بيقفل مصدرين لنفس المعلومة. قبل كده كان فيه قايمة
+   * تقول "مدفوع" وحقل خزنة، والاتنين ممكن يتناقضوا — دلوقتي
+   * التقسيم هو المصدر الوحيد.
+   *
+   * ⚠ والمسار القديم **لسه شغّال** لما دي تكون فاضية، عشان أي
+   * نداء قديم ما ينكسرش.
+   */
+  splits?: Array<{ treasuryId: string; amountPiastres: number }>;
   /** null = سيب الافتراضي (تاريخ النهاردة بتوقيت القاهرة) */
   entryDate: string | null;
   pricePiastres: number | null;
@@ -1708,7 +1823,17 @@ export interface TransferRepository {
  *
  * نفس مبدأ رصيد الخزنة: ناتج جمع، مش رقم مخزّن.
  */
-export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE';
+/**
+ * ⚠ `TREASURY_OVERDRAFT` **مش جاي من `fn_alerts`**.
+ *
+ * التنبيهات التانية بتتحسب في القاعدة. ده بيتحسب في
+ * `listAlerts` من رصيد الخزنة وحدّها، عشان ما نلمسش دالة
+ * مش شايفينها (فخ ٧: دوّر على كل نسخ الدالة قبل أي تعديل).
+ *
+ * ⚠ التمن: مصدرين للتنبيهات بدل واحد. مقبول لأن الاتنين
+ * بيتلمّوا في مكان واحد (`listAlerts`) وبيخرجوا بنفس الشكل.
+ */
+export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE' | 'TREASURY_OVERDRAFT';
 export type AlertSeverity = 'HIGH' | 'MEDIUM';
 
 export interface AlertRow {
