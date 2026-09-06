@@ -2053,6 +2053,44 @@ export interface SaleRepository {
 // ويمشي؛ المحل جهة ليها حساب جاري بيفضل مفتوح لشهور. دمجهم
 // كان هيخلّي شاشة العملاء فيها أرصدة لناس مالهمش أرصدة.
 
+/**
+ * بند واحد في خروج بضاعة.
+ *
+ * ⚠ الاسم **منسوخ** وقت الخروج مش مقروء من المنتج دلوقتي. لو
+ * الصنف اتحذف أو اتسمّى من جديد بعد شهور، البيان يفضل مقروء —
+ * نفس قاعدة `sale_items` بالظبط.
+ */
+export interface ShopConsignLine {
+  productId: string | null;
+  name: string;
+  serial: string | null;
+  quantity: number;
+  unitPrice: number;
+  /** ⚠ محسوب في القاعدة. الشاشة ما بتضربش بإيدها. */
+  lineTotal: number;
+}
+
+/**
+ * حركة واحدة في دفتر المحلات.
+ *
+ * ══ ⚠ ليه البنود جوّه الحركة مش قايمة منفصلة ══
+ * لو رجعوا صفوف مستقلة، الحركة الواحدة بتتكرر بعدد بنودها —
+ * والرصيد الجاري بيجمع نفس المبلغ خمس مرات لو فيها خمس أصناف.
+ * الرقم بيبان معقول والدفتر ما بيقفلش.
+ */
+export interface ShopMovement {
+  id: string;
+  direction: 'DEBT' | 'PAYMENT';
+  /** خصم = سداد بلا فلوس. الرصيد بينقص والخزنة ما بتتحركش. */
+  isDiscount: boolean;
+  amountPiastres: number;
+  note: string | null;
+  occurredAt: string;
+  actorName: string;
+  itemCount: number;
+  items: ShopConsignLine[];
+}
+
 export interface ShopBalance {
   shopId: string;
   name: string;
@@ -2075,6 +2113,16 @@ export interface ConsignLine {
 
 export interface ShopRepository {
   listBalances(tenantId: string): Promise<ShopBalance[]>;
+  /**
+   * كشف حساب محل واحد.
+   *
+   * ⚠ المحل معامل في الاستعلام مش فلترة بعدية — دفتر حساب محل
+   * تاني بيرجع **فاضي**، مش بيترجع ويتفلتر. الفرق إن الصفوف في
+   * الحالة التانية بتسافر على الشبكة الأول.
+   *
+   * ⚠ ومفيش سقف. الدفتر بيرجع كامل — نفس قرار ملف ٥٨.
+   */
+  listMovements(shopId: string, tenantId: string): Promise<ShopMovement[]>;
   create(data: {
     tenantId: string;
     branchId: string | null;
