@@ -7297,14 +7297,16 @@ export function productsPage(data: ProductsPageData): Html {
                             maxlength="500" autocomplete="off">
 
                           <label class="field-label" for="repcost-${p.id}">
-                            التكلفة المتوقّعة
+                            التكلفة المتوقّعة — إلزامية
                           </label>
                           <input class="field-input" id="repcost-${p.id}" type="text"
-                            inputmode="decimal" dir="ltr">
+                            inputmode="decimal" dir="ltr" placeholder="اكتب 0 لو مجاني">
 
                           <p class="field-hint">
                             تُخصم القطعة من المخزون فورًا — لا يصحّ أن تُباع وهي في الورشة.
-                            التكلفة الفعلية تُكتب عند الاستلام.
+                            والتكلفة تُسجَّل ديناً على الورشة من الآن، وتُصحَّح تلقائياً
+                            إن اختلفت عند الاستلام.
+                            لو الإصلاح داخلي أو تحت الضمان، اكتب 0.
                           </p>
 
                           <button class="btn-mini" type="button" data-rep-send="${p.id}">
@@ -10305,12 +10307,30 @@ ${MENU_JS}
     var fault = (document.getElementById('repfault-' + pid) || {}).value || '';
     if (fault.trim().length < 3) { say('اكتب وصف العطل.', false); return; }
 
+    // ⚠ التكلفة بقت إلزامية بعد مايجريشن ٥٧.
+    //
+    // الدين على الورشة بيتولد لحظة الإرسال من الرقم ده، فالخانة
+    // الفاضية معناها جهاز خرج والدفتر ساكت.
+    //
+    // ⚠ والصفر مسموح عن قصد — والفرق بينه وبين الفاضي هو كل
+    // الفكرة: الفاضي نسيان، والصفر قرار (ضمان أو إصلاح داخلي).
+    //
+    // ⚠ والفحص ده **لافتة مش قفل**. القفل في maintenance.ts
+    // على الخادم، لأن أي حد يقدر يبعت الطلب من المتصفح.
+    var costEl = document.getElementById('repcost-' + pid);
+    var cost = costEl ? String(costEl.value || '').trim() : '';
+    if (cost === '') {
+      say('اكتب التكلفة المتوقّعة. لو مجاني أو تحت الضمان، اكتب 0.', false);
+      if (costEl) costEl.focus();
+      return;
+    }
+
     if (!confirm('إرسال للصيانة؟ القطعة هتتخصم من المخزون.')) return;
 
     var result = await send('/api/maintenance/product/' + encodeURIComponent(pid), {
       shopId: (document.getElementById('repshop-' + pid) || {}).value || null,
       fault: fault,
-      cost: (document.getElementById('repcost-' + pid) || {}).value || null
+      cost: cost
     }, sendBtn, 'جارٍ الإرسال…');
 
     if (result) {
@@ -13632,6 +13652,24 @@ export function maintenancePage(data: MaintenancePageData): Html {
 <main class="shell">
   <div class="alert-box" id="mtmsg" role="alert" hidden><span id="mtmsg-text"></span></div>
 
+  <!--
+    تذكير التكلفة الناقصة.
+
+    بيتملّي بالجافاسكربت بعد ما الصفحة تفتح، ومخفي لحد ما يلاقي
+    حاجة. الكتلة الفاضية اللي بتقول "مفيش" بتاخد مساحة وبتتعلّم
+    العين تعدّي عليها.
+  -->
+  <section class="panel" id="costdue" hidden>
+    <div class="panel-body">
+      <p class="field-label" id="costdue-head"></p>
+      <p class="field-hint">
+        الجهاز رجع من الورشة والتكلفة ما اتكتبتش. اكتب الرقم — ولو
+        الإصلاح مجاني أو تحت الضمان اكتب 0 والتذكير يسكت.
+      </p>
+      <div id="costdue-list"></div>
+    </div>
+  </section>
+
   <details class="panel">
     <summary>استلام جهاز عميل</summary>
     <div class="panel-body">
@@ -15176,7 +15214,117 @@ ${MENU_JS}
     });
   }
 
+  // ══════════ تذكير التكلفة الناقصة ══════════
+  //
+  // ⚠ نفس مصدر تنبيهات اللوحة بالظبط — بيقرا من
+  // /api/reports/alerts وبيفلتر نوع واحد. لو عملنا استعلام
+  // تاني، الشاشتين كانوا هيقولوا رقمين مختلفين يوم ما.
+  //
+  // ⚠ والتذكير بيظهر لما يلاقي حاجة بس. الكتلة الفاضية اللي
+  // بتقول "مفيش" بتتعلّم العين تعدّي عليها.
+  async function loadCostDue() {
+    var box  = document.getElementById('costdue');
+    var head = document.getElementById('costdue-head');
+    var list = document.getElementById('costdue-list');
+    if (!box || !list || !CAN_MANAGE) return;
+
+    try {
+      var res = await fetch('/api/reports/alerts', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var rows = (data.rows || []).filter(function (r) {
+        return r.alertType === 'TICKET_COST_MISSING';
+      });
+
+      if (rows.length === 0) { box.hidden = true; return; }
+
+      if (head) head.textContent = 'تكاليف إصلاح ناقصة (' + rows.length + ')';
+      list.textContent = '';
+
+      rows.forEach(function (r) {
+        var row = document.createElement('div');
+        row.className = 'field';
+
+        var name = document.createElement('p');
+        name.className = 'field-label';
+        // ⚠ textContent مش innerHTML — اسم العميل نص من المستخدم
+        name.textContent = r.detail + ' · من ' + r.metric + ' يوم';
+        row.appendChild(name);
+
+        var inp = document.createElement('input');
+        inp.className = 'field-input';
+        inp.type = 'text';
+        inp.inputMode = 'decimal';
+        inp.dir = 'ltr';
+        inp.placeholder = 'التكلفة — اكتب 0 لو مجاني';
+        inp.id = 'costdue-inp-' + r.entityId;
+        row.appendChild(inp);
+
+        var save = document.createElement('button');
+        save.className = 'btn-mini';
+        save.type = 'button';
+        save.textContent = 'حفظ التكلفة';
+        save.setAttribute('data-costdue-save', r.entityId);
+        row.appendChild(save);
+
+        var skip = document.createElement('button');
+        skip.className = 'btn-mini';
+        skip.type = 'button';
+        skip.textContent = 'تخطّي 3 أيام';
+        skip.setAttribute('data-costdue-skip', r.entityId);
+        row.appendChild(skip);
+
+        list.appendChild(row);
+      });
+
+      box.hidden = false;
+    } catch (e) {
+      // صامت عن قصد: فشل التذكير ما يصحّش يوقّع شاشة الصيانة
+    }
+  }
+
+  document.addEventListener('click', async function (e) {
+    if (!e.target.closest) return;
+
+    var saveBtn = e.target.closest('[data-costdue-save]');
+    if (saveBtn) {
+      var sid = saveBtn.getAttribute('data-costdue-save');
+      var el  = document.getElementById('costdue-inp-' + sid);
+      var val = el ? String(el.value || '').trim() : '';
+
+      // ⚠ الفاضي مرفوض والصفر مقبول — وده كل الفكرة.
+      // الفاضي نسيان، والصفر قرار.
+      if (val === '') {
+        say('اكتب التكلفة. لو مجاني أو تحت الضمان، اكتب 0.', false);
+        if (el) el.focus();
+        return;
+      }
+
+      var ok = await send('/api/maintenance/tickets/' + encodeURIComponent(sid),
+        { cost: val }, saveBtn, 'جارٍ الحفظ…');
+      if (ok) { say('اتسجّلت التكلفة.', true); await loadCostDue(); load(); }
+      return;
+    }
+
+    var skipBtn = e.target.closest('[data-costdue-skip]');
+    if (skipBtn) {
+      var kid = skipBtn.getAttribute('data-costdue-skip');
+      var out = await send(
+        '/api/maintenance/tickets/' + encodeURIComponent(kid) + '/snooze-cost',
+        {}, skipBtn, 'جارٍ التأجيل…');
+      // ⚠ التاريخ جاي من الخادم مش محسوب هنا. لو حسبناه في
+      // الشاشة، أي موبايل بتوقيت غلط كان هيعرض تاريخ تاني.
+      if (out) {
+        say('اتأجّل. هيرجع يفكّرك يوم ' + (out.snoozedUntil || '—'), true);
+        await loadCostDue();
+      }
+      return;
+    }
+  });
+
   load();
+  loadCostDue();
 })();
 `;
 }
