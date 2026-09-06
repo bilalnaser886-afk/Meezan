@@ -35,6 +35,17 @@
  *
  * ودي نفس مقايضة رفّ المراجعة في الاسترجاع بالظبط: الرقابة
  * اتنقلت من **منع** لـ**كشف**، والكشف محتاج حد يكشف فعلاً.
+ *
+ * ══ ⚠ والكشف بقى موجود فعلاً دلوقتي ══
+ * لحد مايجريشن ٥٩، الشاشة دي كانت بتوري **أرصدة بس**. يعني
+ * "باقي على فلان ٥٠٠٠" من غير ما تعرف الرقم ده اتكوّن من إيه.
+ *
+ * ودي نقطة ضعف حقيقية في دفتر بيوصف **دين ليك**: إنت اللي
+ * بتطالب، وإنت اللي محتاج تثبت. التاجر اللي بيقول "خدت جهازين
+ * مش تلاتة" بيتردّ عليه بالبنود مش بالإجمالي.
+ *
+ * `listShopMovements` تحت بتفتح الدفتر سطر سطر، وكل خروج
+ * بيرجع ببنوده: الصنف والكمية والسعر.
  */
 
 import { DateError, parseDateInput } from '../../domain/dates';
@@ -47,6 +58,7 @@ import type {
   Clock,
   ConsignLine,
   ShopBalance,
+  ShopMovement,
   ShopRepository,
   TreasuryRepository,
 } from '../ports';
@@ -86,6 +98,40 @@ export async function listShopAccounts(
 ): Promise<ShopBalance[]> {
   assertShopAccess(actor);
   return deps.shops.listBalances(actor.tenantId);
+}
+
+/**
+ * كشف حساب محل واحد.
+ *
+ * ⚠ الرصيد بيقول **كام**. الكشف بيقول **ليه**. والتاني هو اللي
+ * بيحسم خلاف مع تاجر، والأول لوحده مش بيحسم حاجة.
+ *
+ * ⚠ وحاجز المحل هنا **مرتين**: مرة على الحساب نفسه، ومرة جوّه
+ * الاستعلام في قاعدة البيانات. التكرار مقصود — لو الأولانية
+ * اتشالت يومًا ما بالغلط، التانية بتفضل واقفة.
+ *
+ * ⚠ ومفيش سقف. الدفتر بيرجع كامل — نفس قرار ملف ٥٨: السقف
+ * الصامت بيخلّي الشاشة تقول "كل الحركات" وهي بتقص.
+ */
+export async function listShopMovements(
+  deps: ShopDeps,
+  actor: AuthenticatedUser,
+  shopId: string,
+): Promise<{ shopName: string; movements: ShopMovement[] }> {
+  assertShopAccess(actor);
+
+  const shop = await deps.shops.findById(shopId);
+  // حساب محل تاني = غير موجود بالنسبة لك
+  if (!shop || shop.tenantId !== actor.tenantId) throw Errors.notFound('الحساب');
+
+  const movements = await deps.shops.listMovements(shopId, actor.tenantId);
+
+  // ⚠ الاسم راجع مع الحركات في نفس الرد.
+  //
+  // من غيره، الشاشة كانت هتحتاج تجيب الأرصدة كمان عشان تكتب
+  // عنوان الكشف — رحلة شبكة تانية عشان نص، وفرصة إن العنوان
+  // يقول اسم والحركات تبقى لحساب تاني لو المعرّف اتغيّر بينهم.
+  return { shopName: shop.name, movements };
 }
 
 // ─────────── الكتابة ───────────
@@ -205,6 +251,10 @@ export async function consignToShop(
   }
   // ⚠ سقف احترازي. سلة بألف بند معناها غالبًا غلط في الواجهة
   // مش خروج حقيقي، والقاعدة هتقفل ألف صف قبل ما نكتشفه.
+  //
+  // ⚠ وده **مش** من السقوف اللي ملف ٥٨ شالها. الفرق: دول كانوا
+  // بيقصّوا **قراءة** بصمت، وده بيرفض **كتابة** برسالة صريحة.
+  // الحد اللي بيتكلم مش سقف صامت.
   if (input.items.length > 100) {
     throw Errors.validation('الحد 100 صنف في الخروج الواحد.');
   }
