@@ -101,6 +101,7 @@ import {
   sendToMaintenance,
   updateTicket,
   updateTicketUnlock,
+  snoozeTicketCost,
 } from '../application/use-cases/maintenance';
 import {
   createSupplier,
@@ -2199,6 +2200,26 @@ maintenanceRoutes.post('/tickets/:id', requireAuth(MANAGE), async (c) => {
     repairShopId: body.repairShopId ?? undefined,
   });
   return c.json({ ok: true });
+});
+
+/**
+ * تأجيل تذكير التكلفة تلات أيام.
+ *
+ * ⚠ `POST` مش تعديل حقل — ده فعل. الشاشة بتضغط "تخطّي" وخلاص،
+ * ومفيش جسم للطلب أصلاً. وعدد الأيام محسوم في حالة الاستخدام
+ * مش بيتبعت من المتصفح: لو اتبعت، أي حد يأجّل سنة.
+ *
+ * ⚠ ومفيش هنا مسار لكتابة التكلفة: المسار اللي فوق
+ * (`/tickets/:id`) بيعملها، وهو بيحطّ العلامة مع الرقم في نفس
+ * التحديث. مسار تاني كان هيبقى طريق موازي لنفس العمود.
+ */
+maintenanceRoutes.post('/tickets/:id/snooze-cost', requireAuth(MANAGE), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف التذكرة مفقود.');
+
+  const container = buildContainer(c.env);
+  const result = await snoozeTicketCost(container.maintenance, c.get('user'), id);
+  return c.json({ ok: true, ...result });
 });
 
 /**
