@@ -186,6 +186,38 @@ function applyScope<T extends { eq: (col: string, val: string) => T }>(
   return scoped;
 }
 
+/**
+ * حارس السقف الخفي.
+ *
+ * ══ ⚠ ليه ده موجود أصلاً ══
+ * شيلنا `.limit()` من القوايم عشان مفيش حاجة تتقص بصمت. بس
+ * شيل السقف من الكود **مش** معناه إن مفيش سقف: PostgREST نفسه
+ * (اللي سوبابيز شغّالة عليه) فيه إعداد `db-max-rows` ممكن يقص
+ * الرد من غير ما يقول.
+ *
+ * يعني السقف الصامت كان هيتنقل من الكود للسيرفر وخلاص — وإحنا
+ * مش شايفينه في الحالتين.
+ *
+ * الحل: بنطلب العدد الحقيقي مع الصفوف (`count: 'exact'`)،
+ * ولو اللي وصل أقل من اللي موجود، بنوقّع الشاشة برسالة صريحة.
+ *
+ * تشبيه: مش بنشيل الميزان من الجيم. بنخلّيه يصفّر بصوت عالي
+ * بدل ما يقصّ الراوند وإنت مش واخد بالك.
+ *
+ * ⚠ التمن: استعلام عدّ زيادة مع كل قايمة. على جدول بمحل واحد
+ * ده رخيص، والبديل رقم ناقص وإنت فاكره كامل.
+ */
+function assertNoTruncation(label: string, rows: unknown[] | null, count: number | null): void {
+  if (count === null || count === undefined) return;
+  const got = rows?.length ?? 0;
+  if (got < count) {
+    throw Errors.internal(
+      `${label}: القايمة اتقصّت — وصل ${got} صف من ${count}. `
+        + 'السقف مش في الكود — راجع db-max-rows في إعدادات سوبابيز.',
+    );
+  }
+}
+
 export function createUserRepository(db: SupabaseClient): UserRepository {
   return {
     /**
@@ -293,14 +325,20 @@ export function createUserRepository(db: SupabaseClient): UserRepository {
     async listInScope(scope) {
       const query = db
         .from('users')
-        .select('id, username, full_name, branch_id, is_active, created_at, roles!inner(key)')
+        .select(
+          'id, username, full_name, branch_id, is_active, created_at, roles!inner(key)',
+          // ⚠ العدّ مش زينة — هو اللي بيكشف لو السيرفر قصّ الرد
+          { count: 'exact' },
+        )
         .is('deleted_at', null)
-        .order('full_name')
-        .limit(200);
+        .order('full_name');
+      // ⚠ كان هنا `.limit(200)` — اتشال. المحل اللي عنده ٢٠١ موظّف
+      // كان بيفقد واحد من الشاشة بلا أي علامة.
 
       // ⚠ الفلتر بيمر من applyScope. مفيش استعلام بيبني فلتره بإيده.
-      const { data, error } = await applyScope(query, scope);
+      const { data, error, count } = await applyScope(query, scope);
       if (error) throw Errors.internal(`users listInScope: ${error.message}`);
+      assertNoTruncation('users listInScope', data, count);
 
       return ((data ?? []) as unknown as Array<{
         id: string;
@@ -1147,7 +1185,10 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
     async list(filter) {
       let query = db
         .from('treasury_movements')
-        .select(MOVEMENT_COLUMNS)
+        // ⚠ العدّ بيتطلب بس لما مفيش سقف. الكشف المرحَّل بينادي
+        // الدالة دي مع كل صفحة، وعدّ كامل مع كل تمريرة إصبع
+        // تكلفة بلا فايدة — القص عنده مقصود أصلاً.
+        .select(MOVEMENT_COLUMNS, filter.limit === undefined ? { count: 'exact' } : undefined)
         .is('deleted_at', null)
         .order('occurred_at', { ascending: false })
         // ⚠ فاصل الترتيب — مش زينة.
@@ -1158,8 +1199,14 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         //
         // في قايمة عادية ده مش مهم. في كشف بيترحّل بمؤشّر، ده
         // بيخلّي حركة تتكرر أو تتفقد **بصمت** عند حدّ الصفحة.
-        .order('id', { ascending: false })
-        .limit(filter.limit);
+        .order('id', { ascending: false });
+
+      // ⚠ السقف بقى من طلب المُنادي بس.
+      //
+      // الكشف المرحَّل بيبعت رقم لأن الصفحة عنده وحدة عرض:
+      // بيجيب ٦٠ وبيكمّل من المؤشّر لحد آخر حركة، فمفيش حاجة
+      // بتضيع. شاشة الحركات مابتبعتش رقم، فبتجيب الكل.
+      if (filter.limit !== undefined) query = query.limit(filter.limit);
 
       // ⚠ المحل أول فلتر ودايمًا موجود. الفرع فوقه واختياري.
       query = query.eq('tenant_id', filter.tenantId);
@@ -1182,8 +1229,11 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         query = query.or(`occurred_at.lt.${at},and(occurred_at.eq.${at},id.lt.${id})`);
       }
 
-      const { data, error } = await query;
+      const { data, error, count } = await query;
       if (error) throw Errors.internal(`movements list: ${error.message}`);
+      // ⚠ الحارس بس لما مفيش سقف مطلوب. لو المُنادي طلب رقم،
+      // القص مقصود ومش عطل.
+      if (filter.limit === undefined) assertNoTruncation('movements list', data, count);
 
       return ((data ?? []) as RawMovement[]).map(toMovement);
     },
@@ -1744,10 +1794,13 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
     async list(scope, options: ProductListOptions) {
       let query = db
         .from('products')
-        .select(productColumns(options.includeCost))
+        .select(productColumns(options.includeCost), { count: 'exact' })
         .is('deleted_at', null)
-        .order('name')
-        .limit(500);
+        .order('name');
+      // ⚠ كان هنا `.limit(500)` — اتشال.
+      //
+      // المحل اللي عنده ٥٠١ صنف كان بيشوف ٥٠٠ ويفتكرهم كل حاجة.
+      // ومحدش كان بيعرف غير لما يدوّر على صنف موجود ومايلاقيهوش.
 
       // نفس نمط المستخدمين: النوع بيجبرنا نتعامل مع الحالتين
       // صراحةً. مفيش "لو نسيت الفلتر هيعرض الكل".
@@ -1756,8 +1809,9 @@ export function createProductRepository(db: SupabaseClient): ProductRepository {
         query = query.eq('is_active', true);
       }
 
-      const { data, error } = await query;
+      const { data, error, count } = await query;
       if (error) throw Errors.internal(`products list: ${error.message}`);
+      assertNoTruncation('products list', data, count);
 
       return ((data ?? []) as unknown as RawProduct[]).map(toProduct);
     },
@@ -2915,6 +2969,25 @@ export function createAlertRepository(db: SupabaseClient): AlertRepository {
         metric: Number(row.metric),
       }));
     },
+
+    async ticketCostAlerts(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_ticket_cost_alerts', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_ticket_cost_alerts: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        ticketId: String(row.ticket_id),
+        severity: String(row.severity) as AlertRow['severity'],
+        title: String(row.title),
+        detail: String(row.detail),
+        daysSince: Number(row.days_since),
+        // ⚠ التأجيل ممكن يكون فاضي، والفرق بين الفاضي والتاريخ
+        // معلومة للشاشة: "متأجّل لحد كذا" غير "مش متأجّل".
+        snoozedUntil: row.snoozed_until ? String(row.snoozed_until) : null,
+      }));
+    },
   };
 }
 
@@ -3625,6 +3698,22 @@ export function createMaintenanceRepository(db: SupabaseClient): MaintenanceRepo
         kind: String(row.unlock_kind),
         value: row.unlock_value ? String(row.unlock_value) : null,
       };
+    },
+
+    async snoozeTicketCost(ticketId, actorId, days) {
+      const { data, error } = await db.rpc('fn_snooze_ticket_cost', {
+        p_ticket_id: ticketId,
+        p_actor_id: actorId,
+        p_days: days,
+      });
+      if (error) raiseMaintError(error, 'fn_snooze_ticket_cost');
+
+      const row = (data as Array<Record<string, unknown>> | null)?.[0];
+      // ⚠ صف فاضي هنا معناه إن الدالة رجّعت بلا نتيجة — وده
+      // عطل مش "مفيش". الفشل الصامت هنا كان هيخلّي الشاشة تقول
+      // "اتأجّل" والتاريخ ما اتكتبش.
+      if (!row) throw Errors.internal('fn_snooze_ticket_cost: رد فاضي');
+      return { snoozedUntil: String(row.snoozed_until) };
     },
 
     // ─────────── دفتر الورش ───────────
