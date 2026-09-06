@@ -13,6 +13,7 @@ import {
   consignToShop,
   createShopAccount,
   listShopAccounts,
+  listShopMovements,
   recordShopPayment,
   updateShopAccount,
 } from '../application/use-cases/shops';
@@ -1970,6 +1971,28 @@ shopRoutes.get(
     const container = buildContainer(c.env);
     const shops = await listShopAccounts(container.shops, c.get('user'));
     return c.json({ ok: true, shops });
+  },
+);
+
+/**
+ * كشف حساب محل واحد.
+ *
+ * ⚠ `touchActivity: false` — نفس منطق القوايم التانية: فتح
+ * كشف مش نشاط بشري بيمدّد الجلسة.
+ *
+ * ⚠ والاسم راجع مع الحركات في نفس الرد. من غيره الشاشة كانت
+ * هتحتاج رحلة تانية للأرصدة عشان تكتب عنوان الكشف.
+ */
+shopRoutes.get(
+  '/:id/movements',
+  requireAuth({ ...SHOP_GUARD, touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الحساب مفقود.');
+
+    const container = buildContainer(c.env);
+    const result = await listShopMovements(container.shops, c.get('user'), id);
+    return c.json({ ok: true, ...result });
   },
 );
 
