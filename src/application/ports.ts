@@ -670,7 +670,17 @@ export interface MovementFilter {
    * الحركة التانية بتتفقد بصمت عند حدّ الصفحة.
    */
   before?: { occurredAt: Date; id: string };
-  limit: number;
+  /**
+   * ⚠ اختياري بقصد — وده تغيير عن قبل كده.
+   *
+   * قبل كده كان إلزامي، وشاشة الحركات كانت بتبعت ٥٠ ثابتة.
+   * يعني الحركة رقم ٥١ كانت بتختفي **من غير أي رسالة**.
+   *
+   * دلوقتي: مفيش رقم = هات الكل. الكشف المرحَّل لسه بيبعت
+   * رقم لأن الصفحة عنده وحدة عرض مش سقف — بيجيب ٦٠ وبعدها
+   * بيكمّل من المؤشّر لحد آخر حركة.
+   */
+  limit?: number;
 }
 
 export interface SalaryStatement {
@@ -1484,6 +1494,23 @@ export interface MaintenanceRepository {
     canManage: boolean,
   ): Promise<{ kind: string; value: string | null }>;
 
+  /**
+   * تأجيل تذكير التكلفة.
+   *
+   * ⚠ بيرجع التاريخ اللي التذكير هيرجع فيه — الشاشة بتعرضه
+   * عشان المستخدم يعرف إنه أجّل مش أطفى.
+   *
+   * ⚠ ومفيش هنا دالة لكتابة التكلفة عن قصد: التعديل العادي
+   * (`updateTicket`) هو الطريق الوحيد، وهو بيحطّ `cost_is_set`
+   * مع الرقم في **نفس التحديث**. طريقين لكتابة نفس العمود كان
+   * هيبقى مصدرين لنفس المعلومة — وهما بيختلفوا يوم ما.
+   */
+  snoozeTicketCost(
+    ticketId: string,
+    actorId: string,
+    days: number,
+  ): Promise<{ snoozedUntil: string }>;
+
   // ─── دفتر الورش ───
   //
   // ⚠ في نفس المستودع مش في مستودع جديد. السبب إن الورشة
@@ -1833,7 +1860,21 @@ export interface TransferRepository {
  * ⚠ التمن: مصدرين للتنبيهات بدل واحد. مقبول لأن الاتنين
  * بيتلمّوا في مكان واحد (`listAlerts`) وبيخرجوا بنفس الشكل.
  */
-export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE' | 'TREASURY_OVERDRAFT';
+export type AlertType =
+  | 'LOW_STOCK'
+  | 'QUARANTINE_STALE'
+  | 'TREASURY_OVERDRAFT'
+  /**
+   * ⚠ تذكرة رجعت من الورشة والتكلفة فيها ما اتكتبتش.
+   *
+   * بعد مايجريشن ٥٧، الدين على الورشة بيتولد من `cost_piastres`
+   * لحظة ما الجهاز يرجع. فالخانة الفاضية = شغل اتعمل والدفتر
+   * ساكت.
+   *
+   * ⚠ و«فاضية» هنا معناها `cost_is_set = false` مش `cost = 0`.
+   * الرقمين مختلفين: الصفر قرار (ضمان)، والفاضي نسيان.
+   */
+  | 'TICKET_COST_MISSING';
 export type AlertSeverity = 'HIGH' | 'MEDIUM';
 
 export interface AlertRow {
@@ -1845,8 +1886,36 @@ export interface AlertRow {
   metric: number;
 }
 
+/**
+ * تذكرة محتاجة تكلفة.
+ *
+ * ⚠ نوع مستقل عن `AlertRow` عن قصد. الشاشة محتاجة تعرض عليها
+ * **أزرار** (اكتب التكلفة · تخطّي)، وده محتاج حقول مالهاش مكان
+ * في التنبيه العام.
+ *
+ * والاتنين بيخرجوا من نفس الاستعلام، فمفيش خطر إنهم يختلفوا.
+ */
+export interface TicketCostAlert {
+  ticketId: string;
+  severity: AlertSeverity;
+  title: string;
+  detail: string;
+  /** من كام يوم — من تاريخ التسليم أو الاستلام */
+  daysSince: number;
+  /** التأجيل الحالي لو موجود. بيبان في الشاشة عشان المستخدم يفهم. */
+  snoozedUntil: string | null;
+}
+
 export interface AlertRepository {
   list(tenantId: string, branchId: string | null): Promise<AlertRow[]>;
+  /**
+   * ⚠ استعلام تاني مش جوّه `fn_alerts`.
+   *
+   * السبب فخ ٧: `fn_alerts` دالة شغّالة وتعديلها كان معناه
+   * استبدالها عشان استعلام مستقل تمامًا. ونفس السبب اللي خلّى
+   * تنبيه حدّ السحب يتحسب بره — مكتوب في `alerts.ts`.
+   */
+  ticketCostAlerts(tenantId: string, branchId: string | null): Promise<TicketCostAlert[]>;
 }
 
 // ─────────── التقارير ───────────
