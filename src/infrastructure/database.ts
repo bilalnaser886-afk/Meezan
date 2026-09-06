@@ -3112,6 +3112,41 @@ export function createShopRepository(db: SupabaseClient): ShopRepository {
       }));
     },
 
+    async listMovements(shopId, tenantId) {
+      const { data, error } = await db.rpc('fn_shop_movements', {
+        p_shop_id: shopId,
+        // ⚠ المحل بيتبعت للدالة نفسها مش بيتفلتر هنا. لو فلترنا
+        // بعد الرد، الصفوف كانت هتسافر على الشبكة الأول —
+        // والتسريب بيحصل قبل الفلترة مش بعدها.
+        p_tenant_id: tenantId,
+      });
+      if (error) throw Errors.internal(`fn_shop_movements: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        id: String(row.id),
+        direction: String(row.direction) === 'DEBT' ? ('DEBT' as const) : ('PAYMENT' as const),
+        isDiscount: Boolean(row.is_discount),
+        amountPiastres: Number(row.amount_piastres),
+        note: row.note ? String(row.note) : null,
+        occurredAt: String(row.occurred_at).slice(0, 10),
+        actorName: String(row.actor_name ?? '—'),
+        itemCount: Number(row.item_count ?? 0),
+        // ⚠ البنود جاية jsonb. لو الدالة رجّعت حاجة مش مصفوفة
+        // (نسخة قديمة، أو حقل فاضي)، بنرجّع فاضي بدل ما نقع.
+        // الشاشة بتعرض الحركة بلا تفاصيل — أنقص من انهيار الكشف.
+        items: Array.isArray(row.items)
+          ? (row.items as Array<Record<string, unknown>>).map((i) => ({
+              productId: i.productId ? String(i.productId) : null,
+              name: String(i.name ?? '—'),
+              serial: i.serial ? String(i.serial) : null,
+              quantity: Number(i.quantity ?? 0),
+              unitPrice: Number(i.unitPrice ?? 0),
+              lineTotal: Number(i.lineTotal ?? 0),
+            }))
+          : [],
+      }));
+    },
+
     async create(data) {
       const { data: row, error } = await db
         .from('shop_accounts')
