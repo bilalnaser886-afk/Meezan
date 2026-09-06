@@ -5535,7 +5535,10 @@ ${TIME_JS}
     var abs = Math.abs(Math.trunc(piastres));
     var pounds = Math.floor(abs / 100);
     var rest = abs % 100;
-    return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' + String(rest).padStart(2, '0');
+    var out = pounds.toLocaleString('en-US');
+    // الكسر بيبان لما يكون موجود بس — الصفرين ما بيضيفوش معلومة
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   // بيرجّع { sum, missing } — missing = عدد البنود اللي لسه بلا سعر.
@@ -7993,7 +7996,10 @@ ${MENU_JS}
   function money(piastres) {
     if (piastres === null || piastres === undefined) return 'بلا سعر';
     var abs = Math.abs(Math.trunc(piastres));
-    return Math.floor(abs / 100).toLocaleString('en-US') + '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return out;
   }
 
   async function send(url, body, btn, busyLabel) {
@@ -11169,8 +11175,9 @@ ${MENU_JS}
     var abs = Math.abs(Math.trunc(piastres));
     var pounds = Math.floor(abs / 100);
     var rest = abs % 100;
-    return (neg ? '-' : '') + pounds.toLocaleString('en-US') +
-      '.' + String(rest).padStart(2, '0');
+    var out = pounds.toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   document.addEventListener('click', async function (e) {
@@ -12141,8 +12148,10 @@ ${MENU_JS}
     if (piastres === null || piastres === undefined) return '—';
     var neg = piastres < 0;
     var abs = Math.abs(Math.trunc(piastres));
-    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
-      '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   // سطر في القائمة. strong = سطر إجمالي بخط أعرض وفاصل فوقه.
@@ -12562,8 +12571,10 @@ ${MENU_JS}
 
   function money(p) {
     var neg = p < 0, abs = Math.abs(Math.trunc(p));
-    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
-      '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   async function send(url, body, btn, busy) {
@@ -13328,8 +13339,10 @@ ${MENU_JS}
   function money(piastres) {
     var neg = piastres < 0;
     var abs = Math.abs(Math.trunc(piastres));
-    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
-      '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   async function send(url, body, btn, busy, method) {
@@ -13903,7 +13916,10 @@ ${MENU_JS}
 
   function money(p) {
     var abs = Math.abs(Math.trunc(p || 0));
-    return Math.floor(abs / 100).toLocaleString('en-US') + '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return out;
   }
 
   async function send(url, body, btn, busy, method) {
@@ -15504,8 +15520,9 @@ ${TIME_JS}
     var abs = Math.abs(Math.trunc(n));
     var pounds = Math.floor(abs / 100);
     var rest = abs % 100;
-    return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' +
-      String(rest).padStart(2, '0');
+    var out = pounds.toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   function when(iso) {
