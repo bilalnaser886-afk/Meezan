@@ -61,7 +61,7 @@ jobs:
     steps:
       # ---------- ١) جيب الكود ----------
       - name: جِب الكود
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ---------- ٢) قول بتفحص إيه ----------
       # ⚠ من غير السطر ده، لو شغّالة على الفرعين مش هتعرف
@@ -113,7 +113,7 @@ jobs:
       # الشرط على مستوى الخطوة كلها هو الطريق الوحيد النضيف.
       - name: ركّب Node (بالكاش)
         if: steps.lock.outputs.found == 'yes'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           # ⚠ المفتاح هو بصمة package-lock.json نفسه. أول ما
@@ -123,7 +123,7 @@ jobs:
 
       - name: ركّب Node (بلا كاش)
         if: steps.lock.outputs.found != 'yes'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
