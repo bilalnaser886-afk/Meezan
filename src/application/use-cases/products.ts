@@ -48,6 +48,7 @@ import type {
   ProductRecord,
   ProductRepository,
   ProductType,
+  UpdateProductInput,
   UserRepository,
 } from '../ports';
 
@@ -1230,23 +1231,20 @@ export async function updateProduct(
   if (!existing) throw Errors.notFound('المنتج');
   assertScopeAccess(actor, existing.tenantId, existing.branchId);
 
-  const patch: {
-    name?: string;
-    pricePiastres?: number | null;
-    costPiastres?: number;
-    isActive?: boolean;
-    source?: string | null;
-    serialNumber?: string | null;
-    entryDate?: string;
-    reorderPoint?: number;
-    customsCleared?: boolean;
-    batteryHealth?: number | null;
-    storageCapacity?: string | null;
-    categoryId?: string | null;
-    modelId?: string | null;
-    colorId?: string | null;
-    updatedById: string;
-  } = { updatedById: actor.id };
+  // ══ ⚠ النوع بيتقرا من العقد مش بيتكتب بإيدنا ══
+  //
+  // كان هنا نسخة يدوية من `UpdateProductInput` مكتوبة حقل حقل،
+  // و**ناسية `serialUnavailable`**. الكود كان بيكتب في الحقل ده
+  // فعلاً (أربع مرات تحت)، والنوع بيقول إنه مش موجود.
+  //
+  // ⚠ اشتغل صح وقت التشغيل — المستودع بيقرا الحقل والعقد فيه —
+  // فالغلط ماكانش بيبان غير في `tsc`. وده بالظبط النوع اللي
+  // البوّابة اتعملت عشانه.
+  //
+  // ⚠ والحل مش إضافة الحقل الناقص: ده كان هيسيب نسختين لنفس
+  // القايمة، وأول حقل جديد يتضاف بكرة هيغيب من هنا تاني.
+  // الاشتقاق من العقد بيخلّي التطابق **إجباري** بدل ما يكون عادة.
+  const patch: UpdateProductInput & { updatedById: string } = { updatedById: actor.id };
 
   // ⚠ الدرج بيتفحص بنوع المنتج **الموجود** مش المرسل: النوع
   // ما بيتغيّرش بعد الإنشاء (الجهاز بسريال والإكسسوار بكمية،
