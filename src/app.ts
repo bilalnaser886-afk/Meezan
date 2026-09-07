@@ -181,7 +181,16 @@ for (const file of Object.keys(APP_ICONS)) {
 
     c.header('Content-Type', 'image/png');
     c.header('Cache-Control', ASSET_CACHE);
-    return c.body(bytes);
+    // ⚠ `.buffer` مش `bytes` مباشرةً.
+    //
+    // أنواع Uint8Array الجديدة بقت معمّمة على نوع المخزن
+    // (`ArrayBuffer` أو `SharedArrayBuffer`)، وHono بيقبل
+    // `ArrayBuffer` بس — فالتمرير المباشر ما بيطابقش أي صيغة.
+    //
+    // ⚠ والتحويل آمن هنا تحديدًا: `decode` في `icons.ts` بتعمل
+    // مصفوفة جديدة بمقاس البيانات بالظبط، فالمخزن هو نفس
+    // البايتات بلا زيادة ولا إزاحة.
+    return c.body(bytes.buffer as ArrayBuffer);
   });
 }
 
