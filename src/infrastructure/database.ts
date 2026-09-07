@@ -1235,7 +1235,17 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
       // القص مقصود ومش عطل.
       if (filter.limit === undefined) assertNoTruncation('movements list', data, count);
 
-      return ((data ?? []) as RawMovement[]).map(toMovement);
+      // ⚠ `as unknown as` مش `as` مباشرة.
+      //
+      // سوبابيز ما بيقدرش يستنتج شكل الصف من نص الأعمدة، فبيرجّع
+      // نوع بديل اسمه GenericStringError. والتحويل المباشر منه
+      // لـRawMovement تايبسكربت بيرفضه: النوعين مالهمش أي تشابه.
+      //
+      // ⚠ والتمن إن الخطوة دي بتقفل عين المدقّق تمامًا: لو عمود
+      // اتشال من القاعدة، مفيش حاجة هتقول لك — هتعرف من الشاشة.
+      // ده الوضع القائم أصلاً؛ إحنا بنكتبه صراحةً بدل ما يعدّي
+      // كخطأ مُتجاهَل. ونفس الحل مستخدم في المنتجات من قبل كده.
+      return ((data ?? []) as unknown as RawMovement[]).map(toMovement);
     },
 
     async findById(id) {
@@ -1247,7 +1257,7 @@ export function createMovementRepository(db: SupabaseClient): MovementRepository
         .maybeSingle();
 
       if (error) throw Errors.internal(`movement findById: ${error.message}`);
-      return data ? toMovement(data as RawMovement) : null;
+      return data ? toMovement(data as unknown as RawMovement) : null;
     },
 
     async review(id, status, reviewerId, at) {
@@ -2265,7 +2275,7 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
       const { data, error } = await query;
       if (error) throw Errors.internal(`sales list: ${error.message}`);
 
-      return ((data ?? []) as RawSale[]).map(toSale);
+      return ((data ?? []) as unknown as RawSale[]).map(toSale);
     },
 
     async findById(id, options) {
