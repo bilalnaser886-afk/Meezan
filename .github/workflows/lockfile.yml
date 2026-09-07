@@ -53,7 +53,7 @@ jobs:
       - name: ركّب Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           # ⚠ مفيش `cache` هنا عن قصد — هو ده الملف اللي الكاش
           # بيدوّر عليه، وهو لسه مش موجود.
 
