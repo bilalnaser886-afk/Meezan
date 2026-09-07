@@ -2330,7 +2330,7 @@ export function createSaleRepository(db: SupabaseClient): SaleRepository {
         return line;
       });
 
-      const detail: SaleDetail = { ...toSale(head as RawSale), items };
+      const detail: SaleDetail = { ...toSale(head as unknown as RawSale), items };
       return detail;
     },
 
