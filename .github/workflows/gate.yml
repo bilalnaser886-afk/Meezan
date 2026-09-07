@@ -115,7 +115,7 @@ jobs:
         if: steps.lock.outputs.found == 'yes'
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           # ⚠ المفتاح هو بصمة package-lock.json نفسه. أول ما
           # تغيّر مكتبة، البصمة تتغيّر وكاش جديد يتعمل —
           # فمستحيل يديك نسخ قديمة.
@@ -125,7 +125,7 @@ jobs:
         if: steps.lock.outputs.found != 'yes'
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # ---------- ٤) الأدوات نفسها موجودة؟ ----------
       # ⚠ من غير الخطوة دي: لو الفاحص اتنقل أو المسار اتغيّر،
