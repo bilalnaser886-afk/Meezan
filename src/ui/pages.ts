@@ -994,9 +994,12 @@ const PRINT_SHARED_JS = `
     if (window.jsQR) return Promise.resolve(window.jsQR);
     if (qrLibReady) return qrLibReady;
 
+    // ⚠ تلات مصادر مش اتنين. الأول هو اللي اتجرّب فعلاً في
+    // مشروع تاني شغّال، والباقيين احتياطي — CDN واحد بيقع يوم ما.
     var SOURCES = [
-      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
-      'https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js'
+      'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',
+      'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',
+      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js'
     ];
 
     qrLibReady = new Promise(function (resolve, reject) {
@@ -1143,148 +1146,428 @@ const PRINT_SHARED_JS = `
     return close;
   };
 
+  // ═══════════════════════════════════════════════════════════
+  //  فك الترميز — الطبقة المشتركة
+  //
+  //  ⚠ القراءة الحيّة والصورة الثابتة بيعدّوا من هنا الاتنين.
+  //  نسختين كانوا هيتحسّنوا واحدة ورا التانية للأبد.
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * عتبة أوتسو — بتلاقي الفاصل الأمثل بين الأسود والأبيض من
+   * الصورة نفسها بدل رقم ثابت.
+   *
+   * ⚠ رقم ثابت (زي 128) بيفشل في حالتين شايعين عندنا: الملصق
+   * الحراري اللي باهت من الحرارة، والصورة في ضوء المحل اللي
+   * الأسود فيها بيطلع رمادي فاتح.
+   */
+  function qrOtsu(gray) {
+    var hist = new Uint32Array(256), n = gray.length, i;
+    for (i = 0; i < n; i++) hist[gray[i]]++;
+    var sum = 0;
+    for (i = 0; i < 256; i++) sum += i * hist[i];
+    var sumB = 0, wB = 0, best = -1, thr = 128;
+    for (i = 0; i < 256; i++) {
+      wB += hist[i];
+      if (!wB) continue;
+      var wF = n - wB;
+      if (!wF) break;
+      sumB += i * hist[i];
+      var mB = sumB / wB, mF = (sum - sumB) / wF;
+      var v = wB * wF * (mB - mF) * (mB - mF);
+      if (v > best) { best = v; thr = i; }
+    }
+    return thr;
+  }
+
+  function qrBinarize(d) {
+    var px = d.data, n = px.length >> 2, gray = new Uint8Array(n), i, j;
+    for (i = 0; i < n; i++) {
+      j = i << 2;
+      gray[i] = (px[j] * 77 + px[j + 1] * 151 + px[j + 2] * 28) >> 8;
+    }
+    var thr = qrOtsu(gray);
+    for (i = 0; i < n; i++) {
+      var v = gray[i] > thr ? 255 : 0;
+      j = i << 2;
+      px[j] = px[j + 1] = px[j + 2] = v;
+      px[j + 3] = 255;
+    }
+    return d;
+  }
+
+  var qrCvs = null, qrCtx = null;
+  function qrCanvas() {
+    if (!qrCvs) {
+      qrCvs = document.createElement('canvas');
+      qrCtx = qrCvs.getContext('2d', { willReadFrequently: true });
+    }
+    return qrCtx;
+  }
+
+  function qrClamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  /**
+   * بيقرا منطقة محددة من مصدر صورة (فيديو أو صورة ثابتة).
+   *
+   * ══ ⚠⚠ الهامش الصامت — أهم حاجة في الدالة دي ══
+   *
+   * مواصفة الـQR بتفرض أربع مربّعات فراغ أبيض حوالين الكود، وأي
+   * قارئ بيرفض الكود من غيرها **حتى لو مرسوم مثالي**.
+   *
+   * والنسخة اللي فاتت كانت بترسم القصّة من الحافة للحافة — يعني
+   * الهامش صفر. وده كان بيخلّي الكاميرا تبصّ على الرمز مباشرةً
+   * وما تقراهوش، والموظّف شايفه قدّامه بعينه.
+   *
+   * ⚠ والهامش الصناعي هنا بيحل المشكلة كمان لو الملصق نفسه
+   * مطبوع لازق في حرف الورقة.
+   *
+   * ⚠ والتنعيم بيتقفل وقت التكبير: بيعمل تدرّج رمادي على حواف
+   * المربّعات ويصعّب على القارئ يفصلها. وقت التصغير بس بيفيد.
+   */
+  async function qrReadRegion(src, sx, sy, sw, sh, sizes, det) {
+    var IW = src.naturalWidth || src.videoWidth || src.width || 0;
+    var IH = src.naturalHeight || src.videoHeight || src.height || 0;
+    if (!IW || !IH) return null;
+
+    var x0 = qrClamp(Math.round(sx), 0, IW - 2);
+    var y0 = qrClamp(Math.round(sy), 0, IH - 2);
+    var w0 = qrClamp(Math.round(sw) + (Math.round(sx) - x0), 8, IW - x0);
+    var h0 = qrClamp(Math.round(sh) + (Math.round(sy) - y0), 8, IH - y0);
+
+    var ctx = qrCanvas();
+
+    for (var i = 0; i < sizes.length; i++) {
+      var fit = Math.max(160, Math.min(sizes[i], 1200));
+      var sc = fit / Math.max(w0, h0);
+      var iw = Math.max(60, Math.round(w0 * sc));
+      var ih = Math.max(60, Math.round(h0 * sc));
+
+      // ══ ⚠ 20% مش 15% — والفرق مقصود ══
+      //
+      // المواصفة بتطلب 4 مربّعات فراغ. رمز نسخة 1 فيه 21 مربّع،
+      // يعني الهامش لازم يكون 4/21 = **19%** على الأقل.
+      //
+      // و15% بتدّي 3.1 مربّع بس. ده بيعدّي طول ما الرمز أصغر من
+      // القصّة (الفراغ الطبيعي بيكمّل)، وبيقع بالظبط في الحالة
+      // اللي إحنا بنطلبها من الموظّف: "قرّب لحد ما يملا المربّع".
+      //
+      // ⚠ يعني التعليمة اللي على الشاشة كانت هتكسر القراءة.
+      var q = Math.max(20, Math.round(Math.max(iw, ih) * 0.20));
+      var cw = iw + q * 2, ch = ih + q * 2;
+
+      qrCvs.width = cw;
+      qrCvs.height = ch;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.imageSmoothingEnabled = (iw < w0);
+      try { ctx.imageSmoothingQuality = 'high'; } catch (e0) { /* مش مدعوم */ }
+      ctx.drawImage(src, x0, y0, w0, h0, q, q, iw, ih);
+
+      if (det) {
+        try {
+          var codes = await det.detect(qrCvs);
+          if (codes && codes.length && codes[0].rawValue) {
+            return String(codes[0].rawValue).trim();
+          }
+        } catch (e1) { /* الكاشف رفض الإطار — نكمّل */ }
+      }
+
+      if (window.jsQR) {
+        var d = ctx.getImageData(0, 0, cw, ch);
+        var r = window.jsQR(d.data, cw, ch, { inversionAttempts: 'attemptBoth' });
+        if (r && r.data) return String(r.data).trim();
+
+        // ⚠ محاولة تانية بعد تحويل الصورة لأبيض وأسود صريح.
+        // دي اللي بتنقذ الملصق الباهت.
+        r = window.jsQR(qrBinarize(d).data, cw, ch, { inversionAttempts: 'attemptBoth' });
+        if (r && r.data) return String(r.data).trim();
+      }
+
+      // بنسيب الواجهة تتنفّس — من غيره الشاشة بتتجمّد وقت الحسبة
+      // والموظّف بيفتكر إن التطبيق وقع.
+      await new Promise(function (rs) { setTimeout(rs, 0); });
+    }
+    return null;
+  }
+
+  /**
+   * قراءة صورة ثابتة — التصعيد الكامل.
+   *
+   * ══ ⚠ ليه ده موجود أصلاً؟ ══
+   * الكاميرا من جوّه المتصفح **مش بتركّز** على حاجة صغيرة من
+   * مسافة قريبة زي ما كاميرا النظام بتعمل. مفيش ماكرو ومفيش
+   * تركيز باللمس. الصورة بتطلع مضبّبة والقراءة بتفشل مهما
+   * حسّنا الحسبة.
+   *
+   * ⚠ وكاميرا النظام عندها التركيز والماكرو الحقيقيين. فبنسلّم
+   * التصوير لها وبنقرا الصورة اللي راجعة.
+   *
+   * ⚠ الترتيب من الأرخص للأغلى، وبيقف أول ما يلاقي.
+   */
+  async function qrDecodeFile(file, det) {
+    var img = await new Promise(function (res, rej) {
+      var im = new Image();
+      im.onload = function () { res(im); };
+      im.onerror = function () { rej(new Error('image')); };
+      im.src = URL.createObjectURL(file);
+    });
+
+    var W = img.naturalWidth, H = img.naturalHeight;
+    var val = null;
+
+    // ① الكاشف المدمج على الصورة كاملة بدقتها الأصلية
+    if (det) {
+      try {
+        var c0 = await det.detect(img);
+        if (c0 && c0.length && c0[0].rawValue) val = String(c0[0].rawValue).trim();
+      } catch (e) { /* نكمّل */ }
+    }
+
+    // ② الصورة كاملة بمقاسين
+    if (!val) val = await qrReadRegion(img, 0, 0, W, H, [1100, 700], det);
+
+    // ③ الوسط مقرّب — أغلب الناس بتصوّب على الرمز فعلاً
+    if (!val) {
+      var cs = Math.floor(Math.min(W, H) * 0.35);
+      val = await qrReadRegion(img, (W - cs) / 2, (H - cs) / 2, cs, cs, [640], det);
+    }
+
+    // ④ ⚠ شبكة 3×3 متداخلة — مش الوسط بس.
+    //
+    // لو الملصق في ركن — وده الطبيعي وإنت ماسك الجهاز في إيد
+    // والموبايل في التانية — القص من النص كان مستحيل ينجح مهما
+    // قرّبت.
+    //
+    // ⚠ والخلية = نص الصورة بالظبط. لو أخدناها نسبة من الضلع
+    // القصير، الخطوة على الضلع الطويل بتبقى أكبر من الخلية
+    // وبيفضل شريط في النص محدش بيمرّ عليه.
+    if (!val) {
+      var tw = Math.ceil(W / 2), th = Math.ceil(H / 2);
+      var stepX = Math.ceil((W - tw) / 2), stepY = Math.ceil((H - th) / 2);
+      var cells = [];
+      for (var gy = 0; gy < 3; gy++) {
+        for (var gx = 0; gx < 3; gx++) cells.push([gx, gy]);
+      }
+      // من الوسط لبرّه
+      cells.sort(function (a, b) {
+        return (Math.abs(a[0] - 1) + Math.abs(a[1] - 1)) -
+               (Math.abs(b[0] - 1) + Math.abs(b[1] - 1));
+      });
+      for (var ci = 0; ci < cells.length && !val; ci++) {
+        val = await qrReadRegion(img, cells[ci][0] * stepX, cells[ci][1] * stepY,
+          tw, th, [560], det);
+      }
+    }
+
+    try { URL.revokeObjectURL(img.src); } catch (e2) { /* خلاص */ }
+    return val;
+  }
+
   /**
    * بيفتح الكاميرا ويرجّع نص الـQR المقروء.
    *
-   * ⚠ طريقين: الكاشف المدمج في المتصفح لو موجود (أندرويد —
-   * أسرع وبلا تحميل)، والمكتبة لو مش موجود (الأيفون).
+   * ⚠ تلات طرق، بالترتيب:
+   *   1) الكاشف المدمج في المتصفح — أندرويد. أسرع وبلا تحميل.
+   *   2) المكتبة على البثّ الحيّ — الأيفون.
+   *   3) **صورة من كاميرا النظام** — لما الاتنين يفشلوا.
    *
-   * ⚠ والمكتبة بتتحمّل **وقت أول مسحة** مش مع الصفحة: 35 كيلو
-   * على كل فتحة شاشة لموظّف عمره ما مسح = ثمن بلا مقابل.
+   * ⚠ والتالت مش احتياطي شكلي: هو الطريق الوحيد اللي فيه تركيز
+   * وماكرو حقيقيين. رمز الملصق بتاعنا حوالي 12 مليمتر، وكاميرا
+   * المتصفح مش بتركّز عليه من 15 سنتي.
    */
   window.scanQr = async function () {
     var overlay = document.createElement('div');
-    overlay.className = 'scan-wrap';
+    overlay.className = 'scan-wrap scan-wrap-qr';
     overlay.innerHTML =
       '<div class="scan-box">' +
-        '<video class="scan-video" playsinline muted></video>' +
-        '<p class="scan-hint">صوّب على المربّع اللي على الملصق</p>' +
-        '<button class="btn-mini" type="button" data-qr-cancel>إلغاء</button>' +
-        // ⚠ مخرج يدوي زي ماسح الأرقام بالظبط. الكاميرا والإضاءة
-        // والنت تلات حاجات ممكن تخذلك والزبون واقف قدّامك.
+        '<div class="scan-stage">' +
+          '<video class="scan-video" playsinline muted autoplay></video>' +
+          '<div class="scan-frame"><i></i><i></i><i></i><i></i></div>' +
+        '</div>' +
+        '<p class="scan-hint">حط الرمز جوّه المربّع وقرّب لحد ما يملاه</p>' +
+        '<p class="scan-err"></p>' +
+        // ⚠ زرار التصوير ظاهر من أول لحظة مش بعد الفشل. الموظّف
+        // اللي جرّب مرتين وما نفعش لازم يشوف المخرج قدّامه، مش
+        // يستنى النظام يعترف بالفشل.
+        '<button class="btn-mini" type="button" data-qr-shot>مش راضي يقرا؟ صوّره</button>' +
         '<button class="btn-mini" type="button" data-qr-type>اكتب الكود بإيدك</button>' +
+        '<button class="btn-mini" type="button" data-qr-cancel>إلغاء</button>' +
+        '<input type="file" accept="image/*" capture="environment" data-qr-file hidden>' +
       '</div>';
     document.body.appendChild(overlay);
 
     var video = overlay.querySelector('video');
     var hintEl = overlay.querySelector('.scan-hint');
+    var errEl = overlay.querySelector('.scan-err');
+    var fileEl = overlay.querySelector('[data-qr-file]');
     var stream = null;
     var stopped = false;
-    var typed = null;
+    var done = null;
 
     function cleanup() {
       stopped = true;
-      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      if (stream) {
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* خلاص */ }
+        stream = null;
+      }
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     }
+    function fail(msg) { if (errEl && !stopped) errEl.textContent = msg; }
 
     overlay.querySelector('[data-qr-cancel]').addEventListener('click', cleanup);
     overlay.querySelector('[data-qr-type]').addEventListener('click', function () {
       var v = prompt('اكتب الكود المكتوب تحت الرمز:');
-      if (v && v.trim()) typed = v.trim();
+      if (v && v.trim()) done = v.trim();
       cleanup();
+    });
+    overlay.querySelector('[data-qr-shot]').addEventListener('click', function () {
+      fileEl.value = '';
+      fileEl.click();
     });
 
     try {
-      // نفس إعدادات ماسح الأرقام: دقة عالية وتركيز مستمر.
-      // مربّع الرمز على الملصق نصف مليمتر — الدقة الافتراضية
-      // بتوصّله للكاميرا بيكسلين.
+      // ⚠ focusMode جوّه advanced مش في الأساسي.
+      //
+      // في الأساسي، المتصفح اللي ما بيدعمهوش ممكن يرفض الطلب كله
+      // ويسيبنا بلا كاميرا خالص. في advanced بيتجاهله ويكمّل.
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'environment',
+          facingMode: { ideal: 'environment' },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-          focusMode: 'continuous'
-        }
+          advanced: [{ focusMode: 'continuous' }]
+        },
+        audio: false
       });
       video.srcObject = stream;
-      await video.play();
+      try { await video.play(); } catch (ep) { /* بيكمّل */ }
 
-      // التكبير من الكاميرا نفسها لو بتدعمه — تفاصيل حقيقية
-      // زيادة مش تمديد بيكسلات. في try لوحده لأن أغلب كاميرات
-      // الأيفون ما بتدعمهوش، والفشل هنا ما يصحّش يقفل الماسح.
+      // بنعيد طلب التركيز المستمر بعد ما الكاميرا فتحت كمان —
+      // بعض الأجهزة بتتجاهله في الطلب الأول.
       try {
         var tr = stream.getVideoTracks()[0];
-        var caps = tr.getCapabilities ? tr.getCapabilities() : null;
-        if (caps && caps.zoom && caps.zoom.max > caps.zoom.min) {
+        var caps = tr.getCapabilities ? tr.getCapabilities() : {};
+        if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) {
+          await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        }
+        // ⚠ التكبير من الكاميرا نفسها = تفاصيل حقيقية زيادة، مش
+        // تمديد بيكسلات. أغلب كاميرات الأيفون ما بتدعمهوش،
+        // والفشل هنا ما يصحّش يقفل الماسح.
+        if (caps.zoom && caps.zoom.max > caps.zoom.min) {
           var want = Math.min(2, caps.zoom.max);
           if (want > caps.zoom.min) {
             await tr.applyConstraints({ advanced: [{ zoom: want }] });
           }
         }
-      } catch (zerr) { /* ما بيدعمش التكبير — عادي */ }
+      } catch (zerr) { /* الكاميرا ما بتدعمش — عادي */ }
     } catch (err) {
-      cleanup();
-      throw new Error('تعذّر فتح الكاميرا. تأكّد من السماح بالوصول إليها.');
+      // ⚠ الرفض غير التعذّر. الأولى ليها حل عند المستخدم،
+      // والتانية لأ — فالرسالتين مختلفتين.
+      fail((err && err.name) === 'NotAllowedError'
+        ? 'الكاميرا مرفوضة. افتح إعدادات المتصفح واسمح بالكاميرا للموقع ده.'
+        : 'مش قادرين نفتح الكاميرا. تقدر تصوّر الرمز أو تكتب الكود بإيدك.');
     }
 
     // ══ اختيار القارئ ══
-    var native = null;
+    var det = null;
     try {
       if (window.BarcodeDetector && window.BarcodeDetector.getSupportedFormats) {
         var fmts = await window.BarcodeDetector.getSupportedFormats();
         if (fmts && fmts.indexOf('qr_code') !== -1) {
-          native = new window.BarcodeDetector({ formats: ['qr_code'] });
+          det = new window.BarcodeDetector({ formats: ['qr_code'] });
         }
       }
-    } catch (e) { native = null; }
+    } catch (e3) { det = null; }
 
-    var lib = null;
-    if (!native) {
+    var lib = false;
+    if (!det) {
       if (!stopped) hintEl.textContent = 'بنحمّل القارئ… (أول مرة بس)';
       try {
-        lib = await loadQrLib();
-        if (!stopped) hintEl.textContent = 'صوّب على المربّع اللي على الملصق';
-      } catch (e2) {
-        if (!stopped) {
-          // ⚠ الرسالة صريحة عن السبب. "تعذّر المسح" لوحدها كانت
-          // هتخلّي الموظّف يقرّب ويبعد ويلوم الكاميرا، والمشكلة
-          // في النت.
-          hintEl.textContent = 'تعذّر تحميل القارئ — النت. اكتب الكود بإيدك.';
-        }
+        await loadQrLib();
+        lib = true;
+        if (!stopped) hintEl.textContent = 'حط الرمز جوّه المربّع وقرّب لحد ما يملاه';
+      } catch (e4) {
+        // ⚠ الرسالة بتقول السبب. "تعذّر المسح" لوحدها كانت
+        // هتخلّي الموظّف يقرّب ويبعد ويلوم الكاميرا والمشكلة
+        // في النت.
+        if (!stopped) hintEl.textContent = 'تعذّر تحميل القارئ — النت.';
+        fail('اكتب الكود بإيدك، أو وصّل النت وجرّب تاني.');
       }
     }
 
-    var canvas = document.createElement('canvas');
-    var ctx = canvas.getContext('2d', { willReadFrequently: true });
-    var found = null;
+    // ══ الصورة الثابتة ══
+    fileEl.addEventListener('change', async function () {
+      var f = fileEl.files && fileEl.files[0];
+      if (!f) return;
+      hintEl.textContent = 'بنقرا الصورة…';
+      fail('');
+      try {
+        if (!det && !window.jsQR) { await loadQrLib(); }
+        var got = await qrDecodeFile(f, det);
+        if (got) { done = got; cleanup(); return; }
+        hintEl.textContent = 'حط الرمز جوّه المربّع وقرّب لحد ما يملاه';
+        fail('مقدرتش أقرا الرمز من الصورة — قرّب أكتر وصوّر تاني.');
+      } catch (e5) {
+        hintEl.textContent = 'حط الرمز جوّه المربّع وقرّب لحد ما يملاه';
+        fail('مقدرتش أقرا الصورة. جرّب تاني أو اكتب الكود بإيدك.');
+      }
+    });
 
-    while (!stopped && !typed && !found && (native || lib)) {
+    // ══ القراءة الحيّة ══
+    var startedAt = Date.now();
+    var round = 0;
+    var hinted = false;
+
+    while (!stopped && !done && (det || window.jsQR)) {
       var vw = video.videoWidth || 0;
       var vh = video.videoHeight || 0;
 
       if (vw && vh) {
-        // ⚠ بنصغّر لعرض 1024 كحد أقصى. الإطار الكامل بيخلّي كل
-        // محاولة تاخد وقت من غير أي تحسّن — الرمز بيتقرا من
-        // تباين المربّعات مش من عدد البيكسلات.
-        var scale = vw > 1024 ? 1024 / vw : 1;
-        canvas.width = Math.round(vw * scale);
-        canvas.height = Math.round(vh * scale);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        round++;
 
-        try {
-          if (native) {
-            var hits = await native.detect(canvas);
-            if (hits && hits.length && hits[0].rawValue) found = hits[0].rawValue;
-          } else {
-            var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var res = lib(img.data, img.width, img.height, {
-              // ⚠ الملصق أسود على أبيض، بس بنجرّب المقلوب كمان:
-              // الطابعة الحرارية أحيانًا بتطلّع الرمز باهت،
-              // والكاميرا في ضوء قوي بتقلب التباين.
-              inversionAttempts: 'attemptBoth'
-            });
-            if (res && res.data) found = res.data;
-          }
-        } catch (e3) { /* إطار وحش — نكمّل */ }
+        // ══ ⚠ قصّتين بالتبادل مش واحدة ══
+        //
+        // الإطار الكامل بيمسك الرمز لو الموظّف مصوّب من بعيد.
+        // والوسط المقرّب بيقرا الرمز الصغير من قريب — لأن نفس
+        // الرمز بياخد بيكسلات أكتر بكتير في القصّة الصغيرة.
+        //
+        // ⚠ القصّة الواحدة كانت بتفوّت واحدة من الحالتين دايمًا.
+        // ودي السبب الرئيسي إن القراءة كانت بتفشل من مسافة
+        // طبيعية.
+        var side = (round % 2 === 0)
+          ? Math.min(vw, vh)
+          : Math.floor(Math.min(vw, vh) * 0.55);
+        var sx = Math.floor((vw - side) / 2);
+        var sy = Math.floor((vh - side) / 2);
+
+        var hit = await qrReadRegion(video, sx, sy, side, side, [700], det);
+        if (hit) { done = hit; break; }
       }
 
-      if (found) break;
+      // ⚠ بعد 6 ثواني بنقول له يعمل إيه. من غير ده بيفضل مصوّب
+      // ومستني بلا أي إشارة، ويستنتج إن الماسح باظ.
+      if (!hinted && !stopped && Date.now() - startedAt > 6000) {
+        hinted = true;
+        hintEl.textContent = 'قرّب لحد ما الرمز يملا المربّع وثبّت إيدك — أو صوّره.';
+      }
+
+      // ~8 مرات في الثانية. أكتر من كده بيقتل البطارية بلا فايدة.
       await new Promise(function (r) { setTimeout(r, 120); });
     }
 
-    if (found) { cleanup(); return found; }
-    if (typed) return typed;
+    if (done) { cleanup(); return done; }
+
+    // ⚠ مش بنقفل الشاشة في وشه لو ملقيناش. الكاميرا بتفضل
+    // مفتوحة وزرار التصوير والكتابة قدّامه. القفل التلقائي كان
+    // هيخلّيه يفتح من الأول عشان يوصل للمخرج.
+    await new Promise(function (resolve) {
+      var wait = setInterval(function () {
+        if (stopped || done) { clearInterval(wait); resolve(null); }
+      }, 200);
+    });
+
+    if (done) return done;
     throw new Error('أُلغي المسح.');
   };
 
