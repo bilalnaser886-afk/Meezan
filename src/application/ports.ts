@@ -426,8 +426,20 @@ export type MovementDirection = 'IN' | 'OUT';
 /**
  * كل أنواع الحركة الموجودة في قاعدة البيانات.
  *
- * ⚠ التحويلات (TRANSFER_*) موجودة في القاعدة لكن لسه مش مفعّلة
- * في التطبيق، فمش مدرجة هنا.
+ * ══ ⚠ التحويلات اتضافت — والتعليق القديم كان كذب ══
+ * كان مكتوب هنا: «التحويلات موجودة في القاعدة لكن لسه مش مفعّلة
+ * في التطبيق، فمش مدرجة هنا».
+ *
+ * وده ماكانش صحيح: `31_treasury_transfer.sql` بيكتب
+ * `'TRANSFER_IN'` و`'TRANSFER_OUT'` في الجدول فعلاً، والشاشة
+ * بتعرضهم، وفيه تحويلات مسجّلة في القاعدة.
+ *
+ * ⚠ ونتيجة الغياب ده إن الحارس في `treasury.ts` اللي بيمنع
+ * مراجعة التحويل كان **كود ميّت** في نظر تايبسكربت — بيقارن
+ * قيمة بنوع بيقول إنها مستحيلة.
+ *
+ * ⚠ ودي بالظبط مشكلة «نفس المعلومة في تلات نسخ ومفيش حاجة
+ * بتجبرهم يتطابقوا». الفاحص هو اللي كشفها بعد شهور.
  */
 export type MovementType =
   | 'DEPOSIT'
@@ -436,7 +448,9 @@ export type MovementType =
   | 'ADVANCE'
   | 'ADJUSTMENT'
   | 'SALE'
-  | 'REFUND';
+  | 'REFUND'
+  | 'TRANSFER_IN'
+  | 'TRANSFER_OUT';
 
 /**
  * الأنواع اللي المستخدم يقدر يسجّلها **بإيده** من شاشة الخزنة.
@@ -451,7 +465,18 @@ export type MovementType =
  * `Exclude` هنا بتخلّي ده **خطأ في وقت البناء** مش خطأ وقت التشغيل.
  * تشبيه: مش لافتة مكتوب عليها "ممنوع الدخول"، ده حيط.
  */
-export type ManualMovementType = Exclude<MovementType, 'SALE' | 'REFUND'>;
+export type ManualMovementType = Exclude<
+  MovementType,
+  // ⚠ التحويلات اتضافت للاستثناء مع البيع والمرتجع.
+  //
+  // التحويل بيتكتب جوّه `fn_transfer_treasury` كطرفين مربوطين
+  // بمعرّف مجموعة واحد. لو اتسجّل يدويًا، هيبقى فيه طرف واحد
+  // بلا التاني — فلوس طالعة من خزينة وما وصلتش للتانية.
+  //
+  // ⚠ وقبل كده كانوا مستثنيين **بالصدفة**: مش لأنهم ممنوعين،
+  // لكن لأنهم مكانوش في القايمة أصلاً. دلوقتي المنع صريح.
+  'SALE' | 'REFUND' | 'TRANSFER_IN' | 'TRANSFER_OUT'
+>;
 
 export type MovementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -670,7 +695,17 @@ export interface MovementFilter {
    * الحركة التانية بتتفقد بصمت عند حدّ الصفحة.
    */
   before?: { occurredAt: Date; id: string };
-  limit: number;
+  /**
+   * ⚠ اختياري بقصد — وده تغيير عن قبل كده.
+   *
+   * قبل كده كان إلزامي، وشاشة الحركات كانت بتبعت ٥٠ ثابتة.
+   * يعني الحركة رقم ٥١ كانت بتختفي **من غير أي رسالة**.
+   *
+   * دلوقتي: مفيش رقم = هات الكل. الكشف المرحَّل لسه بيبعت
+   * رقم لأن الصفحة عنده وحدة عرض مش سقف — بيجيب ٦٠ وبعدها
+   * بيكمّل من المؤشّر لحد آخر حركة.
+   */
+  limit?: number;
 }
 
 export interface SalaryStatement {
@@ -1484,6 +1519,23 @@ export interface MaintenanceRepository {
     canManage: boolean,
   ): Promise<{ kind: string; value: string | null }>;
 
+  /**
+   * تأجيل تذكير التكلفة.
+   *
+   * ⚠ بيرجع التاريخ اللي التذكير هيرجع فيه — الشاشة بتعرضه
+   * عشان المستخدم يعرف إنه أجّل مش أطفى.
+   *
+   * ⚠ ومفيش هنا دالة لكتابة التكلفة عن قصد: التعديل العادي
+   * (`updateTicket`) هو الطريق الوحيد، وهو بيحطّ `cost_is_set`
+   * مع الرقم في **نفس التحديث**. طريقين لكتابة نفس العمود كان
+   * هيبقى مصدرين لنفس المعلومة — وهما بيختلفوا يوم ما.
+   */
+  snoozeTicketCost(
+    ticketId: string,
+    actorId: string,
+    days: number,
+  ): Promise<{ snoozedUntil: string }>;
+
   // ─── دفتر الورش ───
   //
   // ⚠ في نفس المستودع مش في مستودع جديد. السبب إن الورشة
@@ -1833,7 +1885,21 @@ export interface TransferRepository {
  * ⚠ التمن: مصدرين للتنبيهات بدل واحد. مقبول لأن الاتنين
  * بيتلمّوا في مكان واحد (`listAlerts`) وبيخرجوا بنفس الشكل.
  */
-export type AlertType = 'LOW_STOCK' | 'QUARANTINE_STALE' | 'TREASURY_OVERDRAFT';
+export type AlertType =
+  | 'LOW_STOCK'
+  | 'QUARANTINE_STALE'
+  | 'TREASURY_OVERDRAFT'
+  /**
+   * ⚠ تذكرة رجعت من الورشة والتكلفة فيها ما اتكتبتش.
+   *
+   * بعد مايجريشن ٥٧، الدين على الورشة بيتولد من `cost_piastres`
+   * لحظة ما الجهاز يرجع. فالخانة الفاضية = شغل اتعمل والدفتر
+   * ساكت.
+   *
+   * ⚠ و«فاضية» هنا معناها `cost_is_set = false` مش `cost = 0`.
+   * الرقمين مختلفين: الصفر قرار (ضمان)، والفاضي نسيان.
+   */
+  | 'TICKET_COST_MISSING';
 export type AlertSeverity = 'HIGH' | 'MEDIUM';
 
 export interface AlertRow {
@@ -1845,8 +1911,36 @@ export interface AlertRow {
   metric: number;
 }
 
+/**
+ * تذكرة محتاجة تكلفة.
+ *
+ * ⚠ نوع مستقل عن `AlertRow` عن قصد. الشاشة محتاجة تعرض عليها
+ * **أزرار** (اكتب التكلفة · تخطّي)، وده محتاج حقول مالهاش مكان
+ * في التنبيه العام.
+ *
+ * والاتنين بيخرجوا من نفس الاستعلام، فمفيش خطر إنهم يختلفوا.
+ */
+export interface TicketCostAlert {
+  ticketId: string;
+  severity: AlertSeverity;
+  title: string;
+  detail: string;
+  /** من كام يوم — من تاريخ التسليم أو الاستلام */
+  daysSince: number;
+  /** التأجيل الحالي لو موجود. بيبان في الشاشة عشان المستخدم يفهم. */
+  snoozedUntil: string | null;
+}
+
 export interface AlertRepository {
   list(tenantId: string, branchId: string | null): Promise<AlertRow[]>;
+  /**
+   * ⚠ استعلام تاني مش جوّه `fn_alerts`.
+   *
+   * السبب فخ ٧: `fn_alerts` دالة شغّالة وتعديلها كان معناه
+   * استبدالها عشان استعلام مستقل تمامًا. ونفس السبب اللي خلّى
+   * تنبيه حدّ السحب يتحسب بره — مكتوب في `alerts.ts`.
+   */
+  ticketCostAlerts(tenantId: string, branchId: string | null): Promise<TicketCostAlert[]>;
 }
 
 // ─────────── التقارير ───────────
@@ -1984,6 +2078,44 @@ export interface SaleRepository {
 // ويمشي؛ المحل جهة ليها حساب جاري بيفضل مفتوح لشهور. دمجهم
 // كان هيخلّي شاشة العملاء فيها أرصدة لناس مالهمش أرصدة.
 
+/**
+ * بند واحد في خروج بضاعة.
+ *
+ * ⚠ الاسم **منسوخ** وقت الخروج مش مقروء من المنتج دلوقتي. لو
+ * الصنف اتحذف أو اتسمّى من جديد بعد شهور، البيان يفضل مقروء —
+ * نفس قاعدة `sale_items` بالظبط.
+ */
+export interface ShopConsignLine {
+  productId: string | null;
+  name: string;
+  serial: string | null;
+  quantity: number;
+  unitPrice: number;
+  /** ⚠ محسوب في القاعدة. الشاشة ما بتضربش بإيدها. */
+  lineTotal: number;
+}
+
+/**
+ * حركة واحدة في دفتر المحلات.
+ *
+ * ══ ⚠ ليه البنود جوّه الحركة مش قايمة منفصلة ══
+ * لو رجعوا صفوف مستقلة، الحركة الواحدة بتتكرر بعدد بنودها —
+ * والرصيد الجاري بيجمع نفس المبلغ خمس مرات لو فيها خمس أصناف.
+ * الرقم بيبان معقول والدفتر ما بيقفلش.
+ */
+export interface ShopMovement {
+  id: string;
+  direction: 'DEBT' | 'PAYMENT';
+  /** خصم = سداد بلا فلوس. الرصيد بينقص والخزنة ما بتتحركش. */
+  isDiscount: boolean;
+  amountPiastres: number;
+  note: string | null;
+  occurredAt: string;
+  actorName: string;
+  itemCount: number;
+  items: ShopConsignLine[];
+}
+
 export interface ShopBalance {
   shopId: string;
   name: string;
@@ -2006,6 +2138,16 @@ export interface ConsignLine {
 
 export interface ShopRepository {
   listBalances(tenantId: string): Promise<ShopBalance[]>;
+  /**
+   * كشف حساب محل واحد.
+   *
+   * ⚠ المحل معامل في الاستعلام مش فلترة بعدية — دفتر حساب محل
+   * تاني بيرجع **فاضي**، مش بيترجع ويتفلتر. الفرق إن الصفوف في
+   * الحالة التانية بتسافر على الشبكة الأول.
+   *
+   * ⚠ ومفيش سقف. الدفتر بيرجع كامل — نفس قرار ملف ٥٨.
+   */
+  listMovements(shopId: string, tenantId: string): Promise<ShopMovement[]>;
   create(data: {
     tenantId: string;
     branchId: string | null;
