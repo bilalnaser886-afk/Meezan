@@ -48,12 +48,12 @@ jobs:
 
     steps:
       - name: جِب الكود
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ركّب Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           # ⚠ مفيش `cache` هنا عن قصد — هو ده الملف اللي الكاش
           # بيدوّر عليه، وهو لسه مش موجود.
 
