@@ -967,6 +967,327 @@ const PRINT_SHARED_JS = `
     throw new Error('أُلغي المسح.');
   };
 
+  // ═══════════════════════════════════════════════════════════
+  //  قارئ الـQR
+  //
+  //  ══ ⚠ ليه فيه مكتبة خارجية هنا والمولّد مكتوب بإيدنا؟ ══
+  //  الاتنين مش نفس الحاجة، والفرق مش تناقض.
+  //
+  //  **الطباعة** لازم تشتغل والنت فاصل: الكاشير واقف قدّامه
+  //  زبون والطابعة على الكاونتر. عشان كده المولّد محلّي بالكامل.
+  //
+  //  **القراءة** مختلفة تمامًا. متصفح الأيفون مفيهوش قارئ رموز
+  //  خالص — BarcodeDetector مش مدعومة في WebKit، وكل متصفحات
+  //  الأيفون بتشتغل على WebKit تحت السطح. وكتابة قارئ بإيدنا شغل
+  //  أكبر بمراحل من المولّد: تصحيح منظور، وتصحيح أخطاء
+  //  ريد-سولومون، وقراءة في إضاءة وحشة.
+  //
+  //  ⚠ والاعتماد الخارجي **موجود من زمان** في المسح: قارئ
+  //  الأرقام اللي فوق بينزّل 4 ميجا من نفس الطريقة بالظبط.
+  //  ده 35 كيلو — واحد من مية منه.
+  //
+  //  ⚠ ومصدرين احتياطيين لنفس السبب القديم: CDN واحد بيقع يوم ما.
+  // ═══════════════════════════════════════════════════════════
+  var qrLibReady = null;
+
+  function loadQrLib() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    if (qrLibReady) return qrLibReady;
+
+    var SOURCES = [
+      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+      'https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js'
+    ];
+
+    qrLibReady = new Promise(function (resolve, reject) {
+      var at = 0;
+      function attempt() {
+        if (at >= SOURCES.length) { reject(new Error('cdn')); return; }
+        var tag = document.createElement('script');
+        tag.src = SOURCES[at++];
+        tag.onload = function () {
+          if (window.jsQR) resolve(window.jsQR); else attempt();
+        };
+        tag.onerror = function () { attempt(); };
+        document.head.appendChild(tag);
+      }
+      attempt();
+    });
+    return qrLibReady;
+  }
+
+  /**
+   * تنضيف نص الرمز وتحويله لكود قابل للمقارنة.
+   *
+   * ⚠ بيشيل الشرط وبيكبّر الحروف عشان يطابق شكل الكود المختصر
+   * اللي المولّد بيكتبه على الملصق.
+   *
+   * ⚠ ولو الرمز فيه رابط، بناخد آخر مقطع فيه. ده مش استخدام
+   * حالي — الملصق دلوقتي فيه الكود عاريان. بس لو حطّينا رابط
+   * يوم ما (عشان كاميرا الأيفون نفسها تفتحه)، الماسح ده يفضل
+   * شغّال من غير تعديل، والملصقات القديمة تفضل مقروءة.
+   */
+  window.qrPick = function (text) {
+    var s = String(text || '').trim();
+    if (!s) return '';
+    if (s.indexOf('/') !== -1) {
+      var parts = s.split('?')[0].split('#')[0].split('/');
+      while (parts.length && !parts[parts.length - 1]) parts.pop();
+      if (parts.length) s = parts[parts.length - 1];
+    }
+    return s.replace(/-/g, '').toUpperCase();
+  };
+
+  /**
+   * الكود المختصر — **التعريف الوحيد في المشروع**.
+   *
+   * ⚠ كان مكتوب جوّه سكربت شاشة البضاعة وحدها. ولما بقى محتاج
+   * في تلات شاشات، النسخ كان هيخالف فخ 17: المنطق المكرر في
+   * مكانين بيموت في الشاشة اللي مالهاش السكربت.
+   *
+   * ⚠ والاتفاق مع المولّد إجباري: لو غيّرت الـ16 هنا، لازم
+   * تغيّرها في shortCode بتاع المولّد كمان — وإلا كل ملصق
+   * مطبوع بيبطّل يتقرا.
+   */
+  window.mzShortCode = function (id) {
+    return String(id || '').replace(/-/g, '').toUpperCase().slice(0, 16);
+  };
+
+  /**
+   * بيدوّر على العنصر اللي معرّفه يطابق الكود المقروء.
+   *
+   * ⚠ بيقارن بالمعرّف الكامل **والمختصر**. السبب إن الملصق فيه
+   * المختصر، بس الماسح ممكن يقرا رمز اتعمل بطريقة تانية.
+   */
+  window.qrFindEl = function (code, attr) {
+    var want = window.qrPick(code);
+    if (!want) return null;
+    var els = document.querySelectorAll('[' + attr + ']');
+    for (var i = 0; i < els.length; i++) {
+      var id = els[i].getAttribute(attr);
+      if (!id) continue;
+      if (String(id).replace(/-/g, '').toUpperCase() === want) return els[i];
+      if (window.mzShortCode(id) === want) return els[i];
+    }
+    return null;
+  };
+
+  function qrEsc(s) {
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /**
+   * ورقة تفاصيل الجهاز بعد المسح.
+   *
+   * ⚠ واحدة لكل الشاشات. الشاشة بتبعت البيانات والأزرار،
+   * والشكل هنا — عشان الموظّف يشوف نفس الحاجة في كل مكان.
+   *
+   * ⚠ وكل نص بيعدّي على qrEsc: أسماء المنتجات جاية من قاعدة
+   * البيانات، والاسم اللي فيه علامة أصغر-من كان هيكسر الورقة.
+   */
+  window.qrSheet = function (o) {
+    var old = document.getElementById('qr-sheet');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+
+    var wrap = document.createElement('div');
+    wrap.className = 'qr-sheet-wrap';
+    wrap.id = 'qr-sheet';
+
+    var rows = '';
+    var list = o.rows || [];
+    for (var i = 0; i < list.length; i++) {
+      rows += '<div class="qr-sheet-row"><span>' + qrEsc(list[i][0]) +
+        '</span><b>' + qrEsc(list[i][1]) + '</b></div>';
+    }
+
+    var acts = o.actions || [];
+    var btns = '';
+    for (var a = 0; a < acts.length; a++) {
+      btns += '<button class="' + (acts[a].primary ? 'btn-primary' : 'btn-mini') +
+        '" type="button" data-qr-act="' + a + '">' + qrEsc(acts[a].label) + '</button>';
+    }
+
+    wrap.innerHTML =
+      '<div class="qr-sheet-card">' +
+        '<div class="qr-sheet-title">' + qrEsc(o.title || '') + '</div>' +
+        rows +
+        (o.note ? '<p class="qr-sheet-note">' + qrEsc(o.note) + '</p>' : '') +
+        '<div class="qr-sheet-acts">' + btns +
+          '<button class="btn-mini" type="button" data-qr-close>إغلاق</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(wrap);
+
+    function close() {
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    }
+
+    wrap.addEventListener('click', function (e) {
+      // الضغط على الخلفية السودا بيقفل
+      if (e.target === wrap) { close(); return; }
+      if (!e.target.closest) return;
+      if (e.target.closest('[data-qr-close]')) { close(); return; }
+
+      var b = e.target.closest('[data-qr-act]');
+      if (!b) return;
+      var idx = parseInt(b.getAttribute('data-qr-act'), 10);
+      close();
+      if (acts[idx] && acts[idx].run) acts[idx].run();
+    });
+
+    return close;
+  };
+
+  /**
+   * بيفتح الكاميرا ويرجّع نص الـQR المقروء.
+   *
+   * ⚠ طريقين: الكاشف المدمج في المتصفح لو موجود (أندرويد —
+   * أسرع وبلا تحميل)، والمكتبة لو مش موجود (الأيفون).
+   *
+   * ⚠ والمكتبة بتتحمّل **وقت أول مسحة** مش مع الصفحة: 35 كيلو
+   * على كل فتحة شاشة لموظّف عمره ما مسح = ثمن بلا مقابل.
+   */
+  window.scanQr = async function () {
+    var overlay = document.createElement('div');
+    overlay.className = 'scan-wrap';
+    overlay.innerHTML =
+      '<div class="scan-box">' +
+        '<video class="scan-video" playsinline muted></video>' +
+        '<p class="scan-hint">صوّب على المربّع اللي على الملصق</p>' +
+        '<button class="btn-mini" type="button" data-qr-cancel>إلغاء</button>' +
+        // ⚠ مخرج يدوي زي ماسح الأرقام بالظبط. الكاميرا والإضاءة
+        // والنت تلات حاجات ممكن تخذلك والزبون واقف قدّامك.
+        '<button class="btn-mini" type="button" data-qr-type>اكتب الكود بإيدك</button>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    var video = overlay.querySelector('video');
+    var hintEl = overlay.querySelector('.scan-hint');
+    var stream = null;
+    var stopped = false;
+    var typed = null;
+
+    function cleanup() {
+      stopped = true;
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    overlay.querySelector('[data-qr-cancel]').addEventListener('click', cleanup);
+    overlay.querySelector('[data-qr-type]').addEventListener('click', function () {
+      var v = prompt('اكتب الكود المكتوب تحت الرمز:');
+      if (v && v.trim()) typed = v.trim();
+      cleanup();
+    });
+
+    try {
+      // نفس إعدادات ماسح الأرقام: دقة عالية وتركيز مستمر.
+      // مربّع الرمز على الملصق نصف مليمتر — الدقة الافتراضية
+      // بتوصّله للكاميرا بيكسلين.
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          focusMode: 'continuous'
+        }
+      });
+      video.srcObject = stream;
+      await video.play();
+
+      // التكبير من الكاميرا نفسها لو بتدعمه — تفاصيل حقيقية
+      // زيادة مش تمديد بيكسلات. في try لوحده لأن أغلب كاميرات
+      // الأيفون ما بتدعمهوش، والفشل هنا ما يصحّش يقفل الماسح.
+      try {
+        var tr = stream.getVideoTracks()[0];
+        var caps = tr.getCapabilities ? tr.getCapabilities() : null;
+        if (caps && caps.zoom && caps.zoom.max > caps.zoom.min) {
+          var want = Math.min(2, caps.zoom.max);
+          if (want > caps.zoom.min) {
+            await tr.applyConstraints({ advanced: [{ zoom: want }] });
+          }
+        }
+      } catch (zerr) { /* ما بيدعمش التكبير — عادي */ }
+    } catch (err) {
+      cleanup();
+      throw new Error('تعذّر فتح الكاميرا. تأكّد من السماح بالوصول إليها.');
+    }
+
+    // ══ اختيار القارئ ══
+    var native = null;
+    try {
+      if (window.BarcodeDetector && window.BarcodeDetector.getSupportedFormats) {
+        var fmts = await window.BarcodeDetector.getSupportedFormats();
+        if (fmts && fmts.indexOf('qr_code') !== -1) {
+          native = new window.BarcodeDetector({ formats: ['qr_code'] });
+        }
+      }
+    } catch (e) { native = null; }
+
+    var lib = null;
+    if (!native) {
+      if (!stopped) hintEl.textContent = 'بنحمّل القارئ… (أول مرة بس)';
+      try {
+        lib = await loadQrLib();
+        if (!stopped) hintEl.textContent = 'صوّب على المربّع اللي على الملصق';
+      } catch (e2) {
+        if (!stopped) {
+          // ⚠ الرسالة صريحة عن السبب. "تعذّر المسح" لوحدها كانت
+          // هتخلّي الموظّف يقرّب ويبعد ويلوم الكاميرا، والمشكلة
+          // في النت.
+          hintEl.textContent = 'تعذّر تحميل القارئ — النت. اكتب الكود بإيدك.';
+        }
+      }
+    }
+
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    var found = null;
+
+    while (!stopped && !typed && !found && (native || lib)) {
+      var vw = video.videoWidth || 0;
+      var vh = video.videoHeight || 0;
+
+      if (vw && vh) {
+        // ⚠ بنصغّر لعرض 1024 كحد أقصى. الإطار الكامل بيخلّي كل
+        // محاولة تاخد وقت من غير أي تحسّن — الرمز بيتقرا من
+        // تباين المربّعات مش من عدد البيكسلات.
+        var scale = vw > 1024 ? 1024 / vw : 1;
+        canvas.width = Math.round(vw * scale);
+        canvas.height = Math.round(vh * scale);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        try {
+          if (native) {
+            var hits = await native.detect(canvas);
+            if (hits && hits.length && hits[0].rawValue) found = hits[0].rawValue;
+          } else {
+            var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            var res = lib(img.data, img.width, img.height, {
+              // ⚠ الملصق أسود على أبيض، بس بنجرّب المقلوب كمان:
+              // الطابعة الحرارية أحيانًا بتطلّع الرمز باهت،
+              // والكاميرا في ضوء قوي بتقلب التباين.
+              inversionAttempts: 'attemptBoth'
+            });
+            if (res && res.data) found = res.data;
+          }
+        } catch (e3) { /* إطار وحش — نكمّل */ }
+      }
+
+      if (found) break;
+      await new Promise(function (r) { setTimeout(r, 120); });
+    }
+
+    if (found) { cleanup(); return found; }
+    if (typed) return typed;
+    throw new Error('أُلغي المسح.');
+  };
+
   /**
    * تصدير إكسيل ملوّن — بلا مكتبة.
    *
@@ -1983,6 +2304,34 @@ function tabBar(active: 'app' | 'pos' | 'products' | 'treasury', access: NavAcce
 }
 
 /**
+ * مربّع المسح — التعريف الوحيد.
+ *
+ * ⚠ تلات شاشات بتستخدمه. لو كل واحدة رسمته لوحدها، أول تعديل
+ * في الشكل هيتنفّذ في واحدة وينسى التانيتين — وده فخ 17 بالحرف.
+ *
+ * ══ ⚠ ليه فيه رسمة جوّه وهو المفروض مربّع فاضي؟ ══
+ * المربّع الفاضي أنضف شكلاً، بس الموظّف الجديد ما يعرفش هو إيه
+ * فما بيدوسش عليه أبدًا. الرسمة دي أركان مربّع — نفس الشكل
+ * النضيف، وبتقول عن نفسها من غير كلمة مكتوبة.
+ *
+ * ⚠ والوجهة سمة على العنصر مش شرط في السكربت: السكربت واحد في
+ * كل الشاشات، والشاشة هي اللي بتعرف رايحة فين.
+ */
+function scanSquare(id: string, target: 'pos' | 'products' | 'here'): Html {
+  return html`<button class="scan-sq" type="button" id="${id}" data-target="${target}"
+    aria-label="امسح رمز الجهاز" title="امسح رمز الجهاز">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M4 8V5a1 1 0 0 1 1-1h3"></path>
+      <path d="M16 4h3a1 1 0 0 1 1 1v3"></path>
+      <path d="M20 16v3a1 1 0 0 1-1 1h-3"></path>
+      <path d="M8 20H5a1 1 0 0 1-1-1v-3"></path>
+      <path d="M7 12h10"></path>
+    </svg>
+  </button>`;
+}
+
+/**
  * تحويل أختام الوقت لتوقيت المستخدم **في المتصفح**.
  *
  * ══ ليه مش على الخادم؟ ══
@@ -2884,6 +3233,29 @@ export function dashboardPage(data: DashboardData): Html {
   ${strip}
   ${alertStrip}
 
+  <!-- ══ بحث ومسح سريع ══
+       ⚠ فوق المربّعات عن قصد: الموظّف اللي ماسك جهاز في إيده
+       عايز يعرف بياناته حالًا، مش يفتح شاشة ويدوّر.
+
+       ⚠ وبيظهر لمن يقدر يشوف البضاعة بس. اللي مالوش الصلاحية
+       كان هيدوس ويترمي على شاشة مقفولة. -->
+  ${canViewProducts
+    ? html`<div class="panel">
+        <div class="panel-body">
+          <div class="field scan-field">
+            <input class="field-input" id="dash-search" type="search"
+              placeholder="ابحث عن جهاز أو امسح الرمز" autocomplete="off">
+            ${scanSquare('dash-scan', canSell ? 'pos' : 'products')}
+          </div>
+          <p class="field-hint">
+            ${canSell
+              ? 'امسح رمز الملصق فيروح للسلة، أو اكتب اسم الجهاز ودوس Enter.'
+              : 'امسح رمز الملصق أو اكتب اسم الجهاز ودوس Enter.'}
+          </p>
+        </div>
+      </div>`
+    : ''}
+
   ${tiles.length > 0 ? html`<div class="tiles">${tiles}</div>` : ''}
 
   ${isStaff && !data.canViewUsers ? staffEmpty : ''}
@@ -3223,6 +3595,48 @@ ${MENU_JS}
       // صامت عن قصد: فشل التنبيه ما يصحّش يوقّع اللوحة
     }
   })();
+
+  // ══════════ البحث والمسح ══════════
+  var dashSearch = document.getElementById('dash-search');
+  var dashScan = document.getElementById('dash-scan');
+
+  if (dashSearch) {
+    dashSearch.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      // ⚠ منع الافتراضي: الخانة جوّه صفحة فيها نماذج تانية،
+      // وEnter كان ممكن يبعت واحد منهم.
+      e.preventDefault();
+      var q = dashSearch.value.trim();
+      if (q) window.location.href = '/products?q=' + encodeURIComponent(q);
+    });
+  }
+
+  if (dashScan) {
+    dashScan.addEventListener('click', async function () {
+      // ⚠ الفحص ده مهم: لو السكربت المشترك ما اتحمّلش لأي سبب،
+      // الزرار كان هيسكت من غير أي رسالة.
+      if (typeof window.scanQr !== 'function') {
+        alert('الماسح غير متاح على هذا المتصفح.');
+        return;
+      }
+      try {
+        var code = window.qrPick(await window.scanQr());
+        if (!code) return;
+        // ⚠ اللوحة مفيهاش بضاعة محمّلة، فمش بتترجم الكود بنفسها.
+        // بتوصّله للشاشة اللي عندها القايمة أصلاً — وده اللي
+        // بيخلّي المسح من هنا بلا أي طلب شبكة زيادة.
+        window.location.href = dashScan.getAttribute('data-target') === 'pos'
+          ? '/pos?add=' + encodeURIComponent(code)
+          : '/products?q=' + encodeURIComponent(code);
+      } catch (err) {
+        // ⚠ الإلغاء بيرمي زي الفشل بالظبط. من غير التفرقة دي،
+        // كل ضغطة على «إلغاء» كانت هتطلّع رسالة خطأ.
+        if (err && err.message && err.message.indexOf('أُلغي') === -1) {
+          alert(err.message);
+        }
+      }
+    });
+  }
 })();
 `;
 }
@@ -5339,9 +5753,12 @@ export function posPage(data: PosPageData): Html {
             <div class="drawers" id="pos-customs"></div>
           </div>
 
-          <div class="field">
+          <div class="field scan-field">
             <input class="field-input" id="pos-search" type="search"
               placeholder="ابحث بالاسم أو السريال" autocomplete="off">
+            <!-- ⚠ الوجهة here: الشاشة دي عندها البضاعة محمّلة،
+                 فبتترجم الكود بنفسها وما بتنقلش لحتة تانية. -->
+            ${scanSquare('pos-scan', 'here')}
           </div>
           <p class="field-hint" id="pos-empty-note">
             افتح درج أو ابحث عشان تشوف البضاعة.
@@ -5379,14 +5796,12 @@ export function posPage(data: PosPageData): Html {
                       تاريخ الخروج
                     </button>`
                   : ''}
-                <!-- ⚠ زرار «طباعة» متشال مؤقتًا بطلبك.
-                     المعالج data-print-sale ودالة الطباعة وبناء
-                     الفاتورة كلهم مكانهم زي ما هم، فالرجوع =
-                     زرار واحد يترجع من غير أي تعديل تاني.
-
-                     ⚠ والحذف صريح مش تعليق: القالب فيه علامات
-                     backtick، وتعليقها جوّه نص قالب بيقفل القالب
-                     ويكسر الصفحة كلها. -->
+                <!-- ⚠ رجع. المعالج data-print-sale وبناء الفاتورة
+                     ما اتلمسوش طول فترة الغياب — الزرار بس هو
+                     اللي كان شايل. -->
+                <button class="btn-mini" type="button" data-print-sale="${s.id}">
+                  طباعة
+                </button>
                 ${data.canRefund
                   ? html`<button class="btn-mini" type="button" data-ret-open="${s.id}">
                       استرجاع
@@ -6944,6 +7359,128 @@ ${TIME_JS}
     }
   });
 
+  // ══════════════════ المسح بالرمز ══════════════════
+  //
+  // ══ ⚠ الورقة بتظهر **قبل** الإضافة، والسبب مش شكلي ══
+  //
+  // لو المسح ضاف على طول، فتح /pos?add=CODE كان بيبقى رابط
+  // **بيغيّر البيانات لمجرّد إنك فتحته**. وتحديث الصفحة، أو
+  // زرار الرجوع، أو نقرة تانية على نفس الرابط = الجهاز اتحطّ
+  // مرتين والكاشير مش واخد باله.
+  //
+  // ⚠ الورقة بتحوّل الإضافة لـ**فعل من الموظّف**. التحديث بيفتح
+  // الورقة تاني ومش بيضيف حاجة.
+  //
+  // ⚠ وبتشتغل من مصدرين بنفس الكود بالظبط: مربّع المسح في
+  // الشاشة دي، والرابط الجاي من اللوحة أو من شاشة البضاعة.
+  // نسختين كانوا هيختلفوا في الرسايل يوم ما.
+
+  /**
+   * بيقرا معامل من العنوان.
+   *
+   * ⚠ مكتوبة بإيدنا بدل URLSearchParams عن قصد: مش مسألة دعم،
+   * مسألة إن الفاحص بيقرا السكربتات دي كنص وبيطلّع إنذار على
+   * أي اسم مش عارفه. الحسبة هنا تلات سطور.
+   */
+  function qrParam(name) {
+    var q = window.location.search;
+    if (!q || q.length < 2) return '';
+    var parts = q.slice(1).split('&');
+    for (var i = 0; i < parts.length; i++) {
+      var kv = parts[i].split('=');
+      if (decodeURIComponent(kv[0]) === name) {
+        return decodeURIComponent(String(kv[1] || '').split('+').join(' '));
+      }
+    }
+    return '';
+  }
+
+  function qrOpenFor(code) {
+    // ⚠ بندوّر جوّه مربّعات البضاعة المرسومة في الصفحة نفسها.
+    // مفيش أي طلب شبكة: الشاشة دي بتحمّل البضاعة القابلة للبيع
+    // مع الصفحة أصلاً، فالترجمة ببلاش.
+    var el = window.qrFindEl(code, 'data-add');
+
+    if (!el) {
+      // ⚠ الاحتمالات مكتوبة كلها. "الرمز غير معروف" لوحدها كانت
+      // هتخلّي الموظّف يعيد المسح خمس مرات، والجهاز مباع أصلاً.
+      window.qrSheet({
+        title: 'الرمز ده مش على بضاعة معروضة',
+        rows: [['الكود المقروء', code]],
+        note: 'يا إما الجهاز اتباع، يا إما هو في فرع تاني، يا إما الملصق من محل غير ده.',
+        actions: []
+      });
+      return;
+    }
+
+    var name = el.getAttribute('data-name') || 'الصنف';
+    var max = parseInt(el.getAttribute('data-max'), 10) || 0;
+    var rawPrice = el.getAttribute('data-price');
+
+    var rows = [
+      ['الصنف', name],
+      // ⚠ الفاضي مش صفر. المنتج اللي مالوش سعر مسجّل بيتكتب
+      // سعره في السلة، والفرق ده موجود في كل النظام.
+      ['السعر', rawPrice ? money(parseInt(rawPrice, 10)) + ' ج.م' : 'يتكتب عند البيع'],
+      ['المتاح', String(max)]
+    ];
+
+    if (max <= 0) {
+      window.qrSheet({
+        title: name,
+        rows: rows,
+        note: 'الكمية المتاحة صفر — مش ممكن يتحطّ في السلة.',
+        actions: []
+      });
+      return;
+    }
+
+    window.qrSheet({
+      title: name,
+      rows: rows,
+      actions: [{
+        label: 'إضافة إلى سلة البيع',
+        primary: true,
+        run: function () {
+          add(el);
+          posSay('اتضاف للسلة: ' + name, true);
+        }
+      }]
+    });
+  }
+
+  var posScan = document.getElementById('pos-scan');
+  if (posScan) {
+    posScan.addEventListener('click', async function () {
+      if (typeof window.scanQr !== 'function') {
+        posSay('الماسح غير متاح على هذا المتصفح.', false);
+        return;
+      }
+      try {
+        var code = window.qrPick(await window.scanQr());
+        if (code) qrOpenFor(code);
+      } catch (err) {
+        // ⚠ الإلغاء بيرمي زي الفشل. من غير التفرقة، كل ضغطة
+        // على «إلغاء» كانت هتطلّع رسالة خطأ.
+        if (err && err.message && err.message.indexOf('أُلغي') === -1) {
+          posSay(err.message, false);
+        }
+      }
+    });
+  }
+
+  // ══ الجاي من شاشة تانية ══
+  //
+  // ⚠ بنمسح المعامل من العنوان بعد ما نقراه. من غير المسح، زرار
+  // الرجوع في المتصفح بيرجّع نفس الورقة بلا سبب، والرابط بيفضل
+  // في السجل وبيتشارك بالغلط.
+  (function () {
+    var incoming = qrParam('add');
+    if (!incoming) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    qrOpenFor(window.qrPick(incoming));
+  })();
+
   render();
 })();
 `;
@@ -7364,9 +7901,15 @@ export function productsPage(data: ProductsPageData): Html {
                     : ''}
 
                   <div class="prod-edit-actions">
-                    <!-- ⚠ «طباعة ملصق» متشال مؤقتًا بطلبك.
-                         مولّد الملصق والرمز والمعالج data-label
-                         كلهم مكانهم. -->
+                    <!-- ⚠ رجع. مولّد الملصق والرمز والمعالج
+                         data-label كلهم ما اتلمسوش.
+
+                         ⚠ وده بقى **مصدر الرمز اللي بيتمسح**:
+                         الملصق اللي بيتطبع من هنا هو نفسه اللي
+                         مربّع المسح بيقراه فوق. -->
+                    <button class="btn-mini" type="button" data-label="${p.id}">
+                      طباعة ملصق
+                    </button>
                     ${isDevice
                       ? html`<button class="btn-mini" type="button" data-save-details="${p.id}">
                           حفظ البيانات
@@ -7847,9 +8390,11 @@ export function productsPage(data: ProductsPageData): Html {
         <!-- ⚠ أداة معايرة، مش وظيفة يومية.
              بتطبع ورقة فيها نفس الكود بأربع مقاسات عشان تقيس
              أصغر مقاس طابعتك بتقراه فعلاً — بدل ما نخمّن.
-             متشالة مؤقتًا مع باقي أزرار الطباعة.
+
+             ⚠ ورجعت مع المسح مش صدفة: دلوقتي بقى فيه ماسح جوّه
+             النظام، فالمعايرة بقت قابلة للقياس فعلاً بدل ما
+             تكون تخمين تاني. -->
         <button class="tool" type="button" data-qr-calib>معايرة الرمز</button>
-        -->
       </div>
 
       <!-- ⚠ أدوات الفلتر بتتغيّر بالدرج المفتوح:
@@ -7952,11 +8497,24 @@ export function productsPage(data: ProductsPageData): Html {
         <div class="drawers" id="customs"></div>
       </div>
       <label class="field-label" for="prod-search">بحث</label>
-      <input class="field-input" id="prod-search" type="search"
-        placeholder="اسم أو سريال" autocomplete="off" spellcheck="false">
-      <button class="btn-mini" type="button" id="prod-scan">مسح بالكاميرا</button>
+      <!-- ══ ⚠ ماسحين مختلفين، مش تكرار ══
+           المربّع جوّه الخانة بيقرا **الرمز** اللي على الملصق:
+           سريع ومضمون، وبيرجّع الصنف بالظبط.
+
+           وزرار «مسح بالكاميرا» تحته بيقرا **الرقم المطبوع**
+           (آيمي أو سريال) لما الملصق مش موجود أو اتخرم.
+
+           ⚠ الاتنين لازم يفضلوا: الرمز بيتقرا أو ما بيتقراش،
+           والقراءة البصرية بتخمّن. اللي بيخمّن ما ينفعش يبقى
+           الوحيد، واللي بيتقرا ما ينفعش يتشال عشان فيه بديل. -->
+      <div class="field scan-field">
+        <input class="field-input" id="prod-search" type="search"
+          placeholder="اسم أو سريال" autocomplete="off" spellcheck="false">
+        ${scanSquare('prod-qr', data.canSell ? 'pos' : 'here')}
+      </div>
+      <button class="btn-mini" type="button" id="prod-scan">مسح الرقم بالكاميرا</button>
       <p class="field-hint" id="prod-search-note">
-        امسح بالكاميرا، أو بالماسح الموصول بالكمبيوتر، أو اكتب جزءًا من الاسم.
+        امسح الرمز من المربّع، أو الرقم من الزرار، أو اكتب جزءًا من الاسم.
       </p>
       ${rows}
     </div>
@@ -9960,6 +10518,101 @@ ${MENU_JS}
     });
   }
 
+  // ══════════ الجاي من اللوحة ══════════
+  //
+  // ⚠ اللوحة بتبعت اللي اتكتب أو اللي اتمسح في ?q=. الشاشة دي
+  // عندها البضاعة، فبتفلتر بيه على طول.
+  //
+  // ⚠ ومش بنمسحه من العنوان هنا — على عكس /pos. الفرق إن ده
+  // **بحث** مش فعل: تحديث الصفحة بيرجّع نفس النتيجة، وده اللي
+  // المستخدم متوقّعه. اللي بنمسحه هناك بيغيّر السلة.
+  (function () {
+    var q = window.location.search;
+    if (!q || q.length < 2 || !searchEl) return;
+    var parts = q.slice(1).split('&');
+    for (var i = 0; i < parts.length; i++) {
+      var kv = parts[i].split('=');
+      if (decodeURIComponent(kv[0]) !== 'q') continue;
+      var val = decodeURIComponent(String(kv[1] || '').split('+').join(' '));
+      if (!val) return;
+      searchEl.value = val;
+      runSearch();
+      return;
+    }
+  })();
+
+  // ══════════ مسح الرمز ══════════
+  //
+  // ⚠ غير زرار «مسح الرقم» تحته: ده بيقرا الرمز المربّع
+  // (مضمون)، وده بيقرا الرقم المطبوع (بيخمّن).
+  var qrBtn = document.getElementById('prod-qr');
+  if (qrBtn) {
+    qrBtn.addEventListener('click', async function () {
+      if (typeof window.scanQr !== 'function') {
+        say('الماسح غير متاح على هذا المتصفح.', false);
+        return;
+      }
+      try {
+        var code = window.qrPick(await window.scanQr());
+        if (!code) return;
+
+        var row = window.qrFindEl(code, 'data-pid');
+
+        // ⚠ ملقيناش الصنف؟ بنحطّ الكود في خانة البحث بدل ما
+        // نقول "مش موجود" ونسكت. الصفوف بتتفلتر قدّامه فيشوف
+        // بعينه إن فعلاً مفيش، وده أوضح من رسالة.
+        if (!row) {
+          searchEl.value = code;
+          runSearch();
+          say('الرمز ده مش على صنف في القايمة دي.', false);
+          return;
+        }
+
+        var name = row.getAttribute('data-name') || 'الصنف';
+        var acts = [];
+
+        // ⚠ زرار السلة بيظهر للي بيبيع بس. الوجهة سمة على
+        // المربّع، والشاشة هي اللي حطّتها حسب الصلاحية.
+        if (qrBtn.getAttribute('data-target') === 'pos') {
+          acts.push({
+            label: 'إضافة إلى سلة البيع',
+            primary: true,
+            run: function () {
+              window.location.href = '/pos?add=' + encodeURIComponent(code);
+            }
+          });
+        }
+
+        acts.push({
+          label: 'افتح الصنف هنا',
+          primary: false,
+          run: function () {
+            searchEl.value = name;
+            runSearch();
+            row.scrollIntoView({ block: 'center' });
+          }
+        });
+
+        window.qrSheet({
+          title: name,
+          // ⚠ الحقول دي هي اللي على الصفّ فعلاً. لو زوّدت حقل
+          // هنا مش موجود في القالب، الورقة بتطلّع خانة فاضية
+          // والموظّف بيفتكر البيانات ناقصة في القاعدة.
+          rows: [
+            ['السريال', row.getAttribute('data-serial') || 'غير مسجّل'],
+            ['السعر', row.getAttribute('data-price') || 'يتكتب عند البيع'],
+            ['المساحة', row.getAttribute('data-storage') || '—']
+          ],
+          actions: acts
+        });
+      } catch (err) {
+        if (err && err.message && err.message.indexOf('أُلغي') === -1) {
+          say(err.message, false);
+        }
+      }
+    });
+  }
+
   // ══════════ المسح بالكاميرا ══════════
   var scanBtn = document.getElementById('prod-scan');
   if (scanBtn) {
@@ -10036,7 +10689,14 @@ ${MENU_JS}
   //
   // ⚠ ولسه ثابت: مشتق من المعرّف اللي ما بيتغيّرش، فالملصق
   // المطبوع النهاردة يفضل شغّال بعد سنة.
+  // ⚠ التعريف اتنقل للسكربت المشترك (window.mzShortCode) لما
+  // بقى محتاج في تلات شاشات. الغلاف ده باقي عشان كل النداءات
+  // في الملف تفضل زي ما هي.
+  //
+  // ⚠ والبديل لو المشترك ما اتحمّلش: نفس الحسبة محليًا. من غيره
+  // كان أي عطل في السكربت المشترك بيوقّع البحث كله في الشاشة دي.
   function shortCode(id) {
+    if (typeof window.mzShortCode === 'function') return window.mzShortCode(id);
     return String(id || '').replace(/-/g, '').toUpperCase().slice(0, 16);
   }
 
