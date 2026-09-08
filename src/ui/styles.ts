@@ -482,6 +482,41 @@ button{font:inherit}
 /* زرارين جنب بعض في شاشة المسح: إلغاء والكتابة اليدوية */
 .scan-box .btn-mini{margin:0 4px}
 
+/* ═══ ماسح الرمز — إطار التصويب ═══
+
+   ⚠ الإطار مش زينة. هو اللي بيقول للموظّف يحط الرمز فين،
+   والقارئ بيقص من **نص الصورة** — فاللي بره الإطار ممكن
+   يتفوّت. من غير الإطار الموظّف بيصوّب على الملصق كله
+   والرمز بيبقى في ركن.
+
+   ⚠ والفيديو ملوّ الشاشة (cover) مش محبوس في مربّع: الرمز
+   بياخد بيكسلات أكتر، وده الفرق بين يتقرا وما يتقراش. */
+.scan-wrap-qr .scan-box{width:min(100vw,560px)}
+.scan-stage{position:relative;width:100%;height:56vh;
+  border-radius:var(--r);overflow:hidden;background:#000}
+.scan-wrap-qr .scan-video{position:absolute;inset:0;
+  width:100%;height:100%;max-height:none;border-radius:0;
+  object-fit:cover}
+.scan-frame{position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:min(62%,240px);aspect-ratio:1;
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.5);
+  border-radius:18px;pointer-events:none}
+.scan-frame i{position:absolute;width:30px;height:30px;border:3px solid #fff}
+.scan-frame i:nth-child(1){inset-block-start:0;inset-inline-start:0;
+  border-width:3px 0 0 3px;border-start-start-radius:16px}
+.scan-frame i:nth-child(2){inset-block-start:0;inset-inline-end:0;
+  border-width:3px 3px 0 0;border-start-end-radius:16px}
+.scan-frame i:nth-child(3){inset-block-end:0;inset-inline-start:0;
+  border-width:0 0 3px 3px;border-end-start-radius:16px}
+.scan-frame i:nth-child(4){inset-block-end:0;inset-inline-end:0;
+  border-width:0 3px 3px 0;border-end-end-radius:16px}
+/* ⚠ سطر الخطأ لونه مختلف عن التلميحة: التلميحة بتقول اعمل
+   إيه، والخطأ بيقول إيه اللي حصل. لو الاتنين بنفس الشكل،
+   الموظّف بيقرا الأولانية بس. */
+.scan-err{color:#FCA5A5;font-size:var(--fs-3);margin:0 0 10px;
+  min-height:1.2em;padding:0 10px;line-height:1.8}
+
 /* ═══ مربّع المسح جوّه خانة البحث ═══
 
    ⚠ المربّع على الطرف الشمال (inline-end في RTL) عن قصد.
