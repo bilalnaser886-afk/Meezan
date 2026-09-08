@@ -1418,6 +1418,7 @@ const IDLE_SHARED_JS = `
   var lastActivity = Date.now();
   var locked = false;
   var lockRoot = document.getElementById('lock-root');
+  var idleRoot = document.getElementById('idle-root');
 
   ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (evt) {
     window.addEventListener(evt, function () {
@@ -11916,6 +11917,17 @@ export function passwordPage(data: {
   tenantName: string;
   roleKey: string;
   branchLabel: string | null;
+  /**
+   * ⚠ التلات حقول دول **إلزامية عن قصد** زي اسم المحل في shell.
+   *
+   * لو خلّيناهم اختياريين، أي مسار ينساهم هيعرض شريط فيه تبويب
+   * واحد — والموظّف صاحب الصلاحيات هيلاقي نص الشريط ناقص من غير
+   * ما يعرف ليه، ومحدش هيلاحظ. وهم إلزاميين دلوقتي فالمترجم
+   * بيرفض المسار قبل ما ينشر.
+   */
+  canSell: boolean;
+  canViewProducts: boolean;
+  canUseTreasury: boolean;
 }): Html {
   return shell({
     title: 'تغيير كلمة المرور',
@@ -11968,6 +11980,12 @@ export function passwordPage(data: {
     </div>
   </details>
 </main>
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
 
 <div id="idle-root"></div>
 <div id="lock-root"></div>`,
@@ -13320,7 +13338,15 @@ export function shopsPage(data: ShopsPageData): Html {
     </div>
   </details>
 </main>
-`,
+
+${tabBar('app', {
+  showPos: data.canSell,
+  showProducts: data.canViewProducts,
+  showTreasury: data.canUseTreasury,
+})}
+
+<div id="idle-root"></div>
+<div id="lock-root"></div>`,
   });
 }
 
