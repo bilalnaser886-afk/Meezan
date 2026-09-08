@@ -5535,7 +5535,10 @@ ${TIME_JS}
     var abs = Math.abs(Math.trunc(piastres));
     var pounds = Math.floor(abs / 100);
     var rest = abs % 100;
-    return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' + String(rest).padStart(2, '0');
+    var out = pounds.toLocaleString('en-US');
+    // الكسر بيبان لما يكون موجود بس — الصفرين ما بيضيفوش معلومة
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   // بيرجّع { sum, missing } — missing = عدد البنود اللي لسه بلا سعر.
@@ -7034,6 +7037,24 @@ export interface ProductsPageData {
     reorderPoint: number;
     customsCleared: boolean;
     /**
+     * ⚠ علامة «سريال غير متاح» — من ملف ٤٠.
+     *
+     * ══ ونفس الغلطة بالحرف اللي مكتوبة تحت ══
+     * العمود اتضاف في القاعدة، والصفحة بتقرا منه في تلات
+     * أماكن، **والنوع هنا ما اتحدّثش**. `tsc` كان بيرنّ عليه
+     * من شهور والفحص مش بيتشغّل، فالتحذير فضل واقف مكانه.
+     *
+     * ⚠ ودي المرة **التانية** في نفس النوع بالظبط. النوع
+     * المكتوب بإيد بيتأخّر عن القاعدة كل مرة — والحل الدائم
+     * إنه يتشقّ من `ProductRecord` بدل ما يتكتب حقل حقل.
+     * سايبه دلوقتي لأنه تغيير أوسع من إصلاح البوّابة.
+     *
+     * ⚠ والقيمة معناها **قرار** مش نقص: الجهاز اللي مالوش
+     * سريال متاح متعلّم صراحةً، والفاضي بلا علامة مرفوض من
+     * القاعدة أصلاً (قيد `device_serial_or_marked`).
+     */
+    serialUnavailable: boolean;
+    /**
      * ⚠ الحقلين دول كانوا **ناقصين من النوع** رغم إن الصفحة
      * بتقرا منهم في أربع أماكن (`23_device_specs.sql` ضاف
      * الأعمدة، والنوع هنا ما اتحدّثش).
@@ -7297,14 +7318,16 @@ export function productsPage(data: ProductsPageData): Html {
                             maxlength="500" autocomplete="off">
 
                           <label class="field-label" for="repcost-${p.id}">
-                            التكلفة المتوقّعة
+                            التكلفة المتوقّعة — إلزامية
                           </label>
                           <input class="field-input" id="repcost-${p.id}" type="text"
-                            inputmode="decimal" dir="ltr">
+                            inputmode="decimal" dir="ltr" placeholder="اكتب 0 لو مجاني">
 
                           <p class="field-hint">
                             تُخصم القطعة من المخزون فورًا — لا يصحّ أن تُباع وهي في الورشة.
-                            التكلفة الفعلية تُكتب عند الاستلام.
+                            والتكلفة تُسجَّل ديناً على الورشة من الآن، وتُصحَّح تلقائياً
+                            إن اختلفت عند الاستلام.
+                            لو الإصلاح داخلي أو تحت الضمان، اكتب 0.
                           </p>
 
                           <button class="btn-mini" type="button" data-rep-send="${p.id}">
@@ -7991,7 +8014,10 @@ ${MENU_JS}
   function money(piastres) {
     if (piastres === null || piastres === undefined) return 'بلا سعر';
     var abs = Math.abs(Math.trunc(piastres));
-    return Math.floor(abs / 100).toLocaleString('en-US') + '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return out;
   }
 
   async function send(url, body, btn, busyLabel) {
@@ -10305,12 +10331,30 @@ ${MENU_JS}
     var fault = (document.getElementById('repfault-' + pid) || {}).value || '';
     if (fault.trim().length < 3) { say('اكتب وصف العطل.', false); return; }
 
+    // ⚠ التكلفة بقت إلزامية بعد مايجريشن ٥٧.
+    //
+    // الدين على الورشة بيتولد لحظة الإرسال من الرقم ده، فالخانة
+    // الفاضية معناها جهاز خرج والدفتر ساكت.
+    //
+    // ⚠ والصفر مسموح عن قصد — والفرق بينه وبين الفاضي هو كل
+    // الفكرة: الفاضي نسيان، والصفر قرار (ضمان أو إصلاح داخلي).
+    //
+    // ⚠ والفحص ده **لافتة مش قفل**. القفل في maintenance.ts
+    // على الخادم، لأن أي حد يقدر يبعت الطلب من المتصفح.
+    var costEl = document.getElementById('repcost-' + pid);
+    var cost = costEl ? String(costEl.value || '').trim() : '';
+    if (cost === '') {
+      say('اكتب التكلفة المتوقّعة. لو مجاني أو تحت الضمان، اكتب 0.', false);
+      if (costEl) costEl.focus();
+      return;
+    }
+
     if (!confirm('إرسال للصيانة؟ القطعة هتتخصم من المخزون.')) return;
 
     var result = await send('/api/maintenance/product/' + encodeURIComponent(pid), {
       shopId: (document.getElementById('repshop-' + pid) || {}).value || null,
       fault: fault,
-      cost: (document.getElementById('repcost-' + pid) || {}).value || null
+      cost: cost
     }, sendBtn, 'جارٍ الإرسال…');
 
     if (result) {
@@ -11149,8 +11193,9 @@ ${MENU_JS}
     var abs = Math.abs(Math.trunc(piastres));
     var pounds = Math.floor(abs / 100);
     var rest = abs % 100;
-    return (neg ? '-' : '') + pounds.toLocaleString('en-US') +
-      '.' + String(rest).padStart(2, '0');
+    var out = pounds.toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   document.addEventListener('click', async function (e) {
@@ -12121,8 +12166,10 @@ ${MENU_JS}
     if (piastres === null || piastres === undefined) return '—';
     var neg = piastres < 0;
     var abs = Math.abs(Math.trunc(piastres));
-    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
-      '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   // سطر في القائمة. strong = سطر إجمالي بخط أعرض وفاصل فوقه.
@@ -12542,8 +12589,10 @@ ${MENU_JS}
 
   function money(p) {
     var neg = p < 0, abs = Math.abs(Math.trunc(p));
-    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
-      '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   async function send(url, body, btn, busy) {
@@ -13308,8 +13357,10 @@ ${MENU_JS}
   function money(piastres) {
     var neg = piastres < 0;
     var abs = Math.abs(Math.trunc(piastres));
-    return (neg ? '-' : '') + Math.floor(abs / 100).toLocaleString('en-US') +
-      '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   async function send(url, body, btn, busy, method) {
@@ -13413,12 +13464,15 @@ ${MENU_JS}
         panel.innerHTML =
           '<div class="tools">' +
             '<button class="btn-mini" type="button" ' +
+              'data-sh-led="' + sh.shopId + '">كشف الحساب</button>' +
+            '<button class="btn-mini" type="button" ' +
               'data-sh-edit="' + sh.shopId + '">تعديل البيانات</button>' +
             '<button class="btn-mini" type="button" ' +
               'data-sh-csv="' + sh.shopId + '">تصدير إكسل</button>' +
             '<button class="btn-mini" type="button" ' +
               'data-sh-pdf="' + sh.shopId + '">تصدير PDF</button>' +
           '</div>' +
+          '<div class="sh-led" id="shl-' + sh.shopId + '"></div>' +
           '<p class="field-hint">' +
             'خروج البضاعة بيتعمل من شاشة البيع، مش من هنا. ' +
             'الرصيد ناتج جمع الحركات مش رقم مخزّن.' +
@@ -13498,26 +13552,164 @@ ${MENU_JS}
     }
   });
 
+  // ══════════ كشف الحساب ══════════
+  //
+  // ⚠ الدفتر ده **دين ليك** مش عليك. يعني إنت اللي بتطالب،
+  // وإنت اللي محتاج تثبت — والتاجر اللي بيقول "خدت جهازين مش
+  // تلاتة" بيتردّ عليه بالبنود مش بالإجمالي.
+  //
+  // ⚠ وقبل كده كانت الشاشة بتوري **أرصدة بس**. الملف المصدَّر
+  // كان بيقول "باقي عليه كذا" وما بيقولش الرقم اتكوّن من إيه.
+  var LEDGERS = {};
+
+  async function loadShopLedger(id) {
+    // ⚠ الكاش عشان التصدير: الزرار جوّه الكارت فالكشف بيكون
+    // اتحمّل غالبًا — و"غالبًا" مش كفاية لملف رايح لتاجر.
+    if (LEDGERS[id]) return LEDGERS[id];
+
+    var res = await fetch('/api/shops/' + encodeURIComponent(id) + '/movements',
+      { credentials: 'same-origin' });
+    var d = await res.json().catch(function () { return null; });
+    if (!res.ok || !d || !d.ok) return null;
+
+    LEDGERS[id] = { name: d.shopName || 'محل', movements: d.movements || [] };
+    return LEDGERS[id];
+  }
+
+  function shLedgerRows(led) {
+    var out = [];
+    for (var i = 0; i < led.movements.length; i++) {
+      var m = led.movements[i];
+      var kind = m.direction === 'DEBT'
+        ? 'خروج بضاعة'
+        : (m.isDiscount ? 'خصم' : 'تحصيل');
+
+      // ⚠ سطر للحركة، وسطر لكل بند تحتها.
+      //
+      // الحركة بتقول "دين ٥٠٠٠"، والبنود بتقول إيه اللي خرج.
+      // الاتنين لازم يكونوا في نفس الملف — الرقم لوحده مش
+      // بيقفل خلاف.
+      out.push([
+        m.occurredAt,
+        kind + (m.note ? ' — ' + m.note : ''),
+        m.itemCount > 0 ? (m.itemCount + ' صنف') : '—',
+        m.actorName,
+        (m.direction === 'DEBT' ? '+' : '-') + money(m.amountPiastres)
+      ]);
+
+      for (var j = 0; j < m.items.length; j++) {
+        var it = m.items[j];
+        out.push([
+          '',
+          '     • ' + it.name + (it.serial ? ' · ' + it.serial : ''),
+          it.quantity + ' × ' + money(it.unitPrice),
+          '',
+          money(it.lineTotal)
+        ]);
+      }
+    }
+    return out;
+  }
+
+  function shTotals(led) {
+    var debt = 0, paid = 0;
+    for (var i = 0; i < led.movements.length; i++) {
+      var m = led.movements[i];
+      if (m.direction === 'DEBT') debt += m.amountPiastres; else paid += m.amountPiastres;
+    }
+    return { debt: debt, paid: paid, balance: debt - paid };
+  }
+
+  async function showShopLedger(id) {
+    var host = document.getElementById('shl-' + id);
+    if (!host) return;
+
+    if (host.getAttribute('data-open') === '1') {
+      host.textContent = ''; host.removeAttribute('data-open'); return;
+    }
+
+    host.textContent = 'جارٍ التحميل…';
+    var led = await loadShopLedger(id);
+    host.textContent = '';
+
+    if (!led) { say('تعذّر تحميل الكشف.', false); return; }
+
+    if (led.movements.length === 0) {
+      var e0 = document.createElement('p');
+      e0.className = 'field-hint';
+      e0.textContent = 'مفيش حركات على الحساب ده.';
+      host.appendChild(e0);
+      host.setAttribute('data-open', '1');
+      return;
+    }
+
+    for (var i = 0; i < led.movements.length; i++) {
+      var m = led.movements[i];
+
+      // ⚠ display:block على الحاوية.
+      //
+      // كلاس prod-row صف مرن — على الشاشة العريضة بيصفّ
+      // السطور جنب بعض، وأربع حركات بتبان في سطر واحد. نفس
+      // الغلطة اللي اتصلّحت في كشف الورش.
+      var r = document.createElement('div');
+      r.className = 'prod-row';
+      r.style.display = 'block';
+
+      var nm = document.createElement('div');
+      nm.className = 'prod-row-name';
+      var kind = m.direction === 'DEBT'
+        ? 'خروج بضاعة'
+        : (m.isDiscount ? 'خصم' : 'تحصيل');
+      nm.textContent = kind + (m.note ? ' — ' + m.note : '');
+      r.appendChild(nm);
+
+      var sub = document.createElement('div');
+      sub.className = 'prod-row-sub';
+      sub.textContent = (m.direction === 'DEBT' ? '+' : '-') + money(m.amountPiastres) +
+        ' · ' + m.occurredAt + ' · ' + m.actorName;
+      r.appendChild(sub);
+
+      // البنود تحت الحركة — كل صنف في سطره
+      for (var j = 0; j < m.items.length; j++) {
+        var it = m.items[j];
+        var ln = document.createElement('div');
+        ln.className = 'field-hint';
+        // ⚠ textContent مش innerHTML — اسم الصنف نص من المستخدم
+        ln.textContent = '• ' + it.name + (it.serial ? ' · ' + it.serial : '') +
+          ' · ' + it.quantity + ' × ' + money(it.unitPrice) +
+          ' = ' + money(it.lineTotal);
+        r.appendChild(ln);
+      }
+
+      host.appendChild(r);
+    }
+
+    var t = shTotals(led);
+    var tot = document.createElement('p');
+    tot.className = 'field-label';
+    tot.textContent = 'خرج ' + money(t.debt) + ' · تحصّل ' + money(t.paid) +
+      ' · الباقي ' + money(t.balance);
+    host.appendChild(tot);
+
+    host.setAttribute('data-open', '1');
+  }
+
   // ══ التصدير ══
   //
   // ⚠ بنستخدم exportXls و exportPdf المشتركين — نفس اللي
   // بيستخدمه الموردين وحساب الورش. ملوّن ومنظّم وعرض الأعمدة
   // بيتحسب من المحتوى.
   //
-  // ══ ⚠⚠ وفرق لازم تعرفه ══
-  // الملف ده **ملخّص مش كشف**، على عكس الموردين والورش.
+  // ⚠ والملف بقى **كشف مش ملخّص**: كل حركة ببنودها. لو التاجر
+  // اختلف معاك على رقم، الملف ده بيحسم الخلاف.
   //
-  // السبب مش كسل: شاشة المحلات مالهاش دفتر حركات أصلاً —
-  // مفيش مسار بيرجّع حركات المحل الواحد، فمفيش حاجة نعرضها
-  // ولا نصدّرها. اللي موجود هو الأرصدة بس.
-  //
-  // ⚠ يعني الملف بيقول «باقي عليه كذا» وما بيقولش الرقم ده
-  // اتكوّن من أنهي بضاعة. ولو التاجر اختلف معاك على رقم،
-  // الملف ده مش هيحسم الخلاف.
-  //
-  // الحل الكامل محتاج دالة حركات في القاعدة ومسار وشاشة —
-  // نفس اللي عملناه للورش بالظبط.
-  document.addEventListener('click', function (e) {
+  // ⚠ ونفس الصفوف اللي بتتعرض هي اللي بتتصدّر. لو بنينا
+  // للتصدير قايمة تانية، الملف والشاشة كانوا هيختلفوا يوم ما
+  // — والاختلاف ده بيتكتشف عند العميل مش عندنا.
+  document.addEventListener('click', async function (e) {
+    var ledBtn = e.target.closest ? e.target.closest('[data-sh-led]') : null;
+    if (ledBtn) { await showShopLedger(ledBtn.getAttribute('data-sh-led')); return; }
+
     var csvBtn = e.target.closest ? e.target.closest('[data-sh-csv]') : null;
     var pdfBtn = e.target.closest ? e.target.closest('[data-sh-pdf]') : null;
     if (!csvBtn && !pdfBtn) return;
@@ -13534,16 +13726,23 @@ ${MENU_JS}
       return;
     }
 
+    // ⚠ ضمانة إن الدفتر موجود قبل ما نصدّر
+    var led = await loadShopLedger(id);
+    if (!led) { say('تعذّر تحميل الكشف.', false); return; }
+
+    var t = shTotals(led);
     var stamp = new Date().toISOString().slice(0, 10);
     var opts = {
       title: 'حساب ' + (sh.name || 'محل'),
-      subtitle: 'ملخّص حساب محل · ' + stamp,
-      columns: ['البند', 'القيمة'],
-      rows: [
-        ['خرج بالأجل', money(sh.totalOut)],
-        ['المحصّل', money(sh.totalPaid)]
+      subtitle: 'كشف حساب محل · ' + stamp,
+      columns: ['التاريخ', 'البيان', 'التفاصيل', 'سجّلها', 'المبلغ'],
+      rows: shLedgerRows(led),
+      totals: [
+        'الباقي عليه',
+        'خرج ' + money(t.debt) + ' · تحصّل ' + money(t.paid),
+        '', '',
+        money(t.balance)
       ],
-      totals: ['الباقي عليه', money(sh.balancePiastres)],
       filename: 'حساب-' + (sh.name || 'محل') + '-' + stamp
     };
 
@@ -13631,6 +13830,24 @@ export function maintenancePage(data: MaintenancePageData): Html {
 
 <main class="shell">
   <div class="alert-box" id="mtmsg" role="alert" hidden><span id="mtmsg-text"></span></div>
+
+  <!--
+    تذكير التكلفة الناقصة.
+
+    بيتملّي بالجافاسكربت بعد ما الصفحة تفتح، ومخفي لحد ما يلاقي
+    حاجة. الكتلة الفاضية اللي بتقول "مفيش" بتاخد مساحة وبتتعلّم
+    العين تعدّي عليها.
+  -->
+  <section class="panel" id="costdue" hidden>
+    <div class="panel-body">
+      <p class="field-label" id="costdue-head"></p>
+      <p class="field-hint">
+        الجهاز رجع من الورشة والتكلفة ما اتكتبتش. اكتب الرقم — ولو
+        الإصلاح مجاني أو تحت الضمان اكتب 0 والتذكير يسكت.
+      </p>
+      <div id="costdue-list"></div>
+    </div>
+  </section>
 
   <details class="panel">
     <summary>استلام جهاز عميل</summary>
@@ -13865,7 +14082,10 @@ ${MENU_JS}
 
   function money(p) {
     var abs = Math.abs(Math.trunc(p || 0));
-    return Math.floor(abs / 100).toLocaleString('en-US') + '.' + String(abs % 100).padStart(2, '0');
+    var rest = abs % 100;
+    var out = Math.floor(abs / 100).toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return out;
   }
 
   async function send(url, body, btn, busy, method) {
@@ -15176,7 +15396,117 @@ ${MENU_JS}
     });
   }
 
+  // ══════════ تذكير التكلفة الناقصة ══════════
+  //
+  // ⚠ نفس مصدر تنبيهات اللوحة بالظبط — بيقرا من
+  // /api/reports/alerts وبيفلتر نوع واحد. لو عملنا استعلام
+  // تاني، الشاشتين كانوا هيقولوا رقمين مختلفين يوم ما.
+  //
+  // ⚠ والتذكير بيظهر لما يلاقي حاجة بس. الكتلة الفاضية اللي
+  // بتقول "مفيش" بتتعلّم العين تعدّي عليها.
+  async function loadCostDue() {
+    var box  = document.getElementById('costdue');
+    var head = document.getElementById('costdue-head');
+    var list = document.getElementById('costdue-list');
+    if (!box || !list || !CAN_MANAGE) return;
+
+    try {
+      var res = await fetch('/api/reports/alerts', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var rows = (data.rows || []).filter(function (r) {
+        return r.alertType === 'TICKET_COST_MISSING';
+      });
+
+      if (rows.length === 0) { box.hidden = true; return; }
+
+      if (head) head.textContent = 'تكاليف إصلاح ناقصة (' + rows.length + ')';
+      list.textContent = '';
+
+      rows.forEach(function (r) {
+        var row = document.createElement('div');
+        row.className = 'field';
+
+        var name = document.createElement('p');
+        name.className = 'field-label';
+        // ⚠ textContent مش innerHTML — اسم العميل نص من المستخدم
+        name.textContent = r.detail + ' · من ' + r.metric + ' يوم';
+        row.appendChild(name);
+
+        var inp = document.createElement('input');
+        inp.className = 'field-input';
+        inp.type = 'text';
+        inp.inputMode = 'decimal';
+        inp.dir = 'ltr';
+        inp.placeholder = 'التكلفة — اكتب 0 لو مجاني';
+        inp.id = 'costdue-inp-' + r.entityId;
+        row.appendChild(inp);
+
+        var save = document.createElement('button');
+        save.className = 'btn-mini';
+        save.type = 'button';
+        save.textContent = 'حفظ التكلفة';
+        save.setAttribute('data-costdue-save', r.entityId);
+        row.appendChild(save);
+
+        var skip = document.createElement('button');
+        skip.className = 'btn-mini';
+        skip.type = 'button';
+        skip.textContent = 'تخطّي 3 أيام';
+        skip.setAttribute('data-costdue-skip', r.entityId);
+        row.appendChild(skip);
+
+        list.appendChild(row);
+      });
+
+      box.hidden = false;
+    } catch (e) {
+      // صامت عن قصد: فشل التذكير ما يصحّش يوقّع شاشة الصيانة
+    }
+  }
+
+  document.addEventListener('click', async function (e) {
+    if (!e.target.closest) return;
+
+    var saveBtn = e.target.closest('[data-costdue-save]');
+    if (saveBtn) {
+      var sid = saveBtn.getAttribute('data-costdue-save');
+      var el  = document.getElementById('costdue-inp-' + sid);
+      var val = el ? String(el.value || '').trim() : '';
+
+      // ⚠ الفاضي مرفوض والصفر مقبول — وده كل الفكرة.
+      // الفاضي نسيان، والصفر قرار.
+      if (val === '') {
+        say('اكتب التكلفة. لو مجاني أو تحت الضمان، اكتب 0.', false);
+        if (el) el.focus();
+        return;
+      }
+
+      var ok = await send('/api/maintenance/tickets/' + encodeURIComponent(sid),
+        { cost: val }, saveBtn, 'جارٍ الحفظ…');
+      if (ok) { say('اتسجّلت التكلفة.', true); await loadCostDue(); load(); }
+      return;
+    }
+
+    var skipBtn = e.target.closest('[data-costdue-skip]');
+    if (skipBtn) {
+      var kid = skipBtn.getAttribute('data-costdue-skip');
+      var out = await send(
+        '/api/maintenance/tickets/' + encodeURIComponent(kid) + '/snooze-cost',
+        {}, skipBtn, 'جارٍ التأجيل…');
+      // ⚠ التاريخ جاي من الخادم مش محسوب هنا. لو حسبناه في
+      // الشاشة، أي موبايل بتوقيت غلط كان هيعرض تاريخ تاني.
+      if (out) {
+        say('اتأجّل. هيرجع يفكّرك يوم ' + (out.snoozedUntil || '—'), true);
+        await loadCostDue();
+      }
+      return;
+    }
+  });
+
   load();
+  loadCostDue();
 })();
 `;
 }
@@ -15356,8 +15686,9 @@ ${TIME_JS}
     var abs = Math.abs(Math.trunc(n));
     var pounds = Math.floor(abs / 100);
     var rest = abs % 100;
-    return (neg ? '-' : '') + pounds.toLocaleString('en-US') + '.' +
-      String(rest).padStart(2, '0');
+    var out = pounds.toLocaleString('en-US');
+    if (rest !== 0) out = out + '.' + String(rest).padStart(2, '0');
+    return (neg ? '-' : '') + out;
   }
 
   function when(iso) {
