@@ -67,6 +67,18 @@ const TICKET_STATUSES: TicketStatus[] = [
   'CANCELLED',
 ];
 
+/**
+ * مدة تأجيل تذكير التكلفة.
+ *
+ * ⚠ مكتوبة هنا **مرة واحدة**. الشاشة بتقرا النص من الرد مش
+ * بتكتب "٣ أيام" بإيدها — عشان لو الرقم اتغيّر يوم ما، ما
+ * يبقاش عندنا شاشة بتقول تلاتة وخادم بيأجّل خمسة.
+ *
+ * ⚠ ونفس السبب اللي خلّى نسبة تنبيه حدّ السحب (٢٠٪) مكتوبة
+ * في `overdraftView` بس.
+ */
+const SNOOZE_DAYS = 3;
+
 // ─────────── حراسة ───────────
 
 function assertView(actor: AuthenticatedUser): void {
@@ -156,12 +168,22 @@ export async function sendToMaintenance(
     throw Errors.validation('اكتب وصف العطل (من 3 إلى 500 حرف).');
   }
 
+  // ⚠ القفل هنا مش في الشاشة.
+  //
+  // الشاشة بتمنع الإرسال بخانة فاضية، بس إخفاء زرار مش بيمنع
+  // حد يبعت الطلب من المتصفح مباشرةً. والفرق بين الاتنين هو
+  // الفرق بين لافتة وقفل.
+  //
+  // ⚠ وبعد مايجريشن ٥٧، الرقم ده هو اللي بيتولّد منه الدين على
+  // الورشة لحظة الإرسال. فاضي = جهاز خرج والدفتر ساكت.
+  const costPiastres = requiredCost(input.cost);
+
   const result = await deps.maintenance.sendToShop({
     productId,
     actorId: actor.id,
     shopId: input.shopId || null,
     fault,
-    costPiastres: money(input.cost),
+    costPiastres,
   });
 
   await deps.audit.record({
@@ -171,7 +193,17 @@ export async function sendToMaintenance(
     entityId: result.recordId,
     // ⚠ الإرسال بيخصم من المخزون. لازم يتسجّل مين ولإيه —
     // وإلا الجهاز بيختفي من المخزن والدفتر ساكت.
-    metadata: { productId, productName: result.productName, fault, shopId: input.shopId ?? null },
+    //
+    // ⚠ والتكلفة اتضافت للسجل بعد مايجريشن ٥٧: الرقم ده بقى
+    // بيولّد دين على الورشة لحظته، فلازم يبقى مكتوب مين حطّه
+    // وبكام — حتى لو اتعدّل بعدين وقت الاستلام.
+    metadata: {
+      productId,
+      productName: result.productName,
+      fault,
+      shopId: input.shopId ?? null,
+      costPiastres,
+    },
   });
 
   return result;
@@ -549,7 +581,23 @@ export async function updateTicket(
     if (input.status === 'DELIVERED') patch.delivered_date = new Date().toISOString().slice(0, 10);
   }
 
-  if (input.cost !== undefined) patch.cost_piastres = money(input.cost);
+  if (input.cost !== undefined) {
+    patch.cost_piastres = money(input.cost);
+
+    // ⚠ العلامة بتتحط لما الموظّف **يكتب** رقم — حتى لو صفر.
+    //
+    // من غير السطر ده، الموظّف اللي بيكتب صفر على تذكرة رقمها
+    // صفر أصلاً ما بيغيّرش أي عمود، فالمشغّل في القاعدة ما
+    // بيشوفش حاجة والتذكير بيفضل يرنّ عليه للأبد.
+    //
+    // ⚠ والفرق بين الفاضي والصفر هو كل الفكرة: الفاضي نسيان،
+    // والصفر قرار (ضمان أو إصلاح مجاني).
+    if (String(input.cost ?? '').trim() !== '') {
+      patch.cost_is_set = true;
+      // التذكير خلص شغله — تاريخ التأجيل بقى بيانات ميّتة
+      patch.cost_alert_snoozed_until = null;
+    }
+  }
   if (input.workNote !== undefined) {
     patch.work_note = text(input.workNote, 1000, 'ملاحظة العمل طويلة جدًا.');
   }
@@ -566,6 +614,51 @@ export async function updateTicket(
     entityId: ticketId,
     metadata: { changed: Object.keys(patch) },
   });
+}
+
+/**
+ * تأجيل تذكير التكلفة تلات أيام.
+ *
+ * ══ ⚠ ده تأجيل مش إخفاء، والفرق مقصود ══
+ * ملف ٢٠ رفض زرار إخفاء للتنبيهات وكتب السبب: «مفتاح تاني لنفس
+ * اللمبة — والمفتاحين بيختلفوا يوم ما».
+ *
+ * والتأجيل ده **مش** المفتاح ده:
+ *   • بينتهي لوحده. حد أجّل ونسي؟ التذكير بيرجع.
+ *   • المفتاح الوحيد اللي بيطفيه نهائيًا لسه هو الشرط نفسه:
+ *     اكتب التكلفة.
+ *
+ * ⚠ والرفض لو التكلفة مكتوبة خلاص جوّه دالة القاعدة، مش هنا.
+ * السبب إن الحالة ممكن تتغيّر بين قراءتنا وكتابتنا، والفحص
+ * جنب البيانات هو الوحيد اللي مفيش بينه وبين الكتابة رحلة شبكة.
+ */
+export async function snoozeTicketCost(
+  deps: MaintenanceDeps,
+  actor: AuthenticatedUser,
+  ticketId: string,
+): Promise<{ snoozedUntil: string }> {
+  assertManage(actor);
+
+  const ticket = await deps.maintenance.findTicket(ticketId);
+  if (!ticket || ticket.tenantId !== actor.tenantId) throw Errors.notFound('التذكرة');
+
+  if (actor.roleKey !== 'SUPER_ADMIN' && ticket.branchId !== actor.branchId) {
+    throw Errors.forbidden('branch scope');
+  }
+
+  const result = await deps.maintenance.snoozeTicketCost(ticketId, actor.id, SNOOZE_DAYS);
+
+  // ⚠ التأجيل بيتسجّل. من غير السجل، «التذكير ده مبيظهرش ليه؟»
+  // سؤال مالوش إجابة — ومحدش هيعرف مين أجّله ولا كام مرة.
+  await deps.audit.record({
+    actorId: actor.id,
+    action: 'ticket.cost.snooze',
+    entity: 'RepairTicket',
+    entityId: ticketId,
+    metadata: { days: SNOOZE_DAYS, until: result.snoozedUntil },
+  });
+
+  return result;
 }
 
 /**
@@ -680,6 +773,42 @@ function money(raw: string | null | undefined): number {
   } catch (error) {
     throw Errors.validation(error instanceof MoneyError ? error.message : 'المبلغ غير صالح.');
   }
+}
+
+/**
+ * التكلفة وقت الإرسال — **إلزامية**، والصفر لسه مقبول.
+ *
+ * ══ ⚠ ليه دالة تانية بدل ما نعدّل `money`؟ ══
+ * `money` بتتنادى من تسجيل التذكرة وتعديلها كمان، وهناك الخانة
+ * الفاضية معناها "لسه ما اتسعّرش" وده وضع شرعي. تعديلها كان
+ * هيقفل مسارات مالهاش علاقة بالقرار ده.
+ *
+ * ══ ⚠ والفرق بين الفاضي والصفر مقصود ══
+ * الخانة الفاضية بتسيب سؤال معلّق للأبد: الموظّف نسي، ولا
+ * الإصلاح مجاني فعلاً؟ بعد شهرين محدش هيعرف.
+ *
+ *     فاضي  →  نسيان. مرفوض.
+ *     صفر    →  قرار: ضمان، أو فحص مجاني، أو إصلاح داخلي بلا قطع.
+ *
+ * ⚠ ودي نفس تفريقة `serial_unavailable` في ملف ٤٠ بالحرف، ونفس
+ * فخ ١٥: «الصفر معناه فورًا مش أبدًا».
+ *
+ * ══ وليه بقت إلزامية أصلاً ══
+ * بعد مايجريشن ٥٧، الدين على الورشة بيتولد **لحظة الإرسال**
+ * من التكلفة المكتوبة. فالخانة الفاضية = جهاز خرج بلا دين، وهي
+ * بالظبط الفجوة اللي الملف ده اتعمل عشان يقفلها.
+ *
+ * ⚠ التكلفة دي **تقدير** ولسه بتتصحّح وقت الاستلام — المشغّل
+ * في القاعدة بيزامن المبلغ لوحده. فالإلزام هنا مش بيطلب رقم
+ * نهائي، بيطلب رقم **مكتوب**.
+ */
+function requiredCost(raw: string | null | undefined): number {
+  if (String(raw ?? '').trim() === '') {
+    throw Errors.validation(
+      'اكتب التكلفة المتوقّعة. لو الإصلاح مجاني أو تحت الضمان، اكتب 0.',
+    );
+  }
+  return money(raw);
 }
 
 /**
