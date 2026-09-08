@@ -13,6 +13,7 @@ import {
   consignToShop,
   createShopAccount,
   listShopAccounts,
+  listShopMovements,
   recordShopPayment,
   updateShopAccount,
 } from '../application/use-cases/shops';
@@ -101,6 +102,7 @@ import {
   sendToMaintenance,
   updateTicket,
   updateTicketUnlock,
+  snoozeTicketCost,
 } from '../application/use-cases/maintenance';
 import {
   createSupplier,
@@ -1972,6 +1974,28 @@ shopRoutes.get(
   },
 );
 
+/**
+ * كشف حساب محل واحد.
+ *
+ * ⚠ `touchActivity: false` — نفس منطق القوايم التانية: فتح
+ * كشف مش نشاط بشري بيمدّد الجلسة.
+ *
+ * ⚠ والاسم راجع مع الحركات في نفس الرد. من غيره الشاشة كانت
+ * هتحتاج رحلة تانية للأرصدة عشان تكتب عنوان الكشف.
+ */
+shopRoutes.get(
+  '/:id/movements',
+  requireAuth({ ...SHOP_GUARD, touchActivity: false }),
+  async (c) => {
+    const id = c.req.param('id');
+    if (!id) throw Errors.validation('معرّف الحساب مفقود.');
+
+    const container = buildContainer(c.env);
+    const result = await listShopMovements(container.shops, c.get('user'), id);
+    return c.json({ ok: true, ...result });
+  },
+);
+
 shopRoutes.post('/', requireAuth(SHOP_GUARD), async (c) => {
   const body = await readJson<{
     name?: string;
@@ -2199,6 +2223,26 @@ maintenanceRoutes.post('/tickets/:id', requireAuth(MANAGE), async (c) => {
     repairShopId: body.repairShopId ?? undefined,
   });
   return c.json({ ok: true });
+});
+
+/**
+ * تأجيل تذكير التكلفة تلات أيام.
+ *
+ * ⚠ `POST` مش تعديل حقل — ده فعل. الشاشة بتضغط "تخطّي" وخلاص،
+ * ومفيش جسم للطلب أصلاً. وعدد الأيام محسوم في حالة الاستخدام
+ * مش بيتبعت من المتصفح: لو اتبعت، أي حد يأجّل سنة.
+ *
+ * ⚠ ومفيش هنا مسار لكتابة التكلفة: المسار اللي فوق
+ * (`/tickets/:id`) بيعملها، وهو بيحطّ العلامة مع الرقم في نفس
+ * التحديث. مسار تاني كان هيبقى طريق موازي لنفس العمود.
+ */
+maintenanceRoutes.post('/tickets/:id/snooze-cost', requireAuth(MANAGE), async (c) => {
+  const id = c.req.param('id');
+  if (!id) throw Errors.validation('معرّف التذكرة مفقود.');
+
+  const container = buildContainer(c.env);
+  const result = await snoozeTicketCost(container.maintenance, c.get('user'), id);
+  return c.json({ ok: true, ...result });
 });
 
 /**
