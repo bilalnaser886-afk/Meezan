@@ -644,6 +644,15 @@ app.get('/password', requireAuth({ redirectOnFail: true }), (c) => {
       tenantName: user.tenantName,
       roleKey: user.roleKey,
       branchLabel: null,
+      // ⚠ الشريط السفلي كان ناقص في الشاشة دي، فاللي بيدخل من
+      // القايمة كان بيلاقي نفسه بلا طريق رجوع.
+      //
+      // والحقول دي إلزامية في الشاشة عن قصد: لو كانت اختيارية،
+      // نسيانها كان هيعرض شريط بتبويب واحد حتى للمالك اللي عنده
+      // كل الصلاحيات — عطل ساكت بدل غلطة بناء صريحة.
+      canSell: user.permissions.includes(PERMISSIONS.SALES_CREATE),
+      canViewProducts: user.permissions.includes(PERMISSIONS.INVENTORY_VIEW),
+      canUseTreasury: user.permissions.includes(PERMISSIONS.EXPENSE_CREATE),
     }),
   );
 });
