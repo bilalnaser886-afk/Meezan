@@ -482,6 +482,48 @@ button{font:inherit}
 /* زرارين جنب بعض في شاشة المسح: إلغاء والكتابة اليدوية */
 .scan-box .btn-mini{margin:0 4px}
 
+/* ═══ مربّع المسح جوّه خانة البحث ═══
+
+   ⚠ المربّع على الطرف الشمال (inline-end في RTL) عن قصد.
+   الكتابة بتبدأ من اليمين، فالطرف ده هو الوحيد اللي مستحيل
+   الإصبع يلمسه وهو بيكتب.
+
+   ⚠ والحشو على الخانة مش هامش على المربّع: الهامش كان هيسيب
+   النص يعدّي تحت المربّع لما يطول. */
+.scan-field{position:relative}
+.scan-field .field-input{padding-inline-end:46px}
+.scan-sq{position:absolute;inset-inline-end:7px;top:50%;
+  transform:translateY(-50%);
+  width:34px;height:34px;padding:0;
+  display:grid;place-items:center;
+  border:1px solid var(--line);border-radius:9px;
+  background:var(--card);color:var(--ink);cursor:pointer;
+  /* ⚠ 34 بكسل مش أصغر: ده الحد اللي الإصبع بيصيبه من أول مرة.
+     أي حاجة تحته بتخلّي الموظّف يدوس مرتين وتلاتة. */
+  -webkit-tap-highlight-color:transparent}
+.scan-sq:active{background:var(--line)}
+.scan-sq svg{width:19px;height:19px;display:block}
+
+/* ═══ ورقة تفاصيل الجهاز بعد المسح ═══ */
+.qr-sheet-wrap{position:fixed;inset:0;z-index:290;
+  display:grid;place-items:end center;
+  background:rgba(0,0,0,.55);
+  padding:0 0 env(safe-area-inset-bottom)}
+.qr-sheet-card{width:min(100%,520px);background:var(--card);
+  border-top-left-radius:18px;border-top-right-radius:18px;
+  border:1px solid var(--line);border-bottom:0;
+  padding:18px var(--pad) 20px;
+  max-height:82vh;overflow:auto}
+.qr-sheet-title{font-family:var(--font-display);font-size:var(--fs-7);
+  font-weight:600;margin-bottom:12px}
+.qr-sheet-row{display:flex;justify-content:space-between;gap:14px;
+  padding:8px 0;border-bottom:1px solid var(--line)}
+.qr-sheet-row span{color:var(--ink-soft)}
+.qr-sheet-row b{font-family:var(--font-mono);text-align:end}
+.qr-sheet-note{color:var(--ink-soft);font-size:var(--fs-2);margin:10px 0 0}
+.qr-sheet-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.qr-sheet-acts .btn-primary{flex:1 1 100%}
+
 @media print{
   body > *{display:none !important}
   #print-root{display:block !important;color:#000;background:#fff}
