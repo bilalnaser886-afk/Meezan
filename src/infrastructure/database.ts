@@ -68,6 +68,9 @@ import type {
   TicketStatus,
   TransferRepository,
   AlertRow,
+  ExitedProductInfo,
+  ModelStockGroup,
+  ModelStockRepository,
   ReportRepository,
   ReturnRepository,
   SaleRepository,
@@ -1801,6 +1804,31 @@ export function createColorRepository(db: SupabaseClient): ColorRepository {
 
 export function createProductRepository(db: SupabaseClient): ProductRepository {
   return {
+    /**
+     * ⚠ استعلام مستقل مش عمود جوّه `list`.
+     *
+     * السبب إن المعلومة دي من **جدول تاني** (`sale_items`)،
+     * وضمّها لقائمة البضاعة كان معناه ربط كل صف بفواتيره في
+     * كل فتحة للشاشة — تمن كبير على معلومة بتخصّ الصفوف اللي
+     * كميتها صفر بس.
+     */
+    async exitedInfo(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_exited_products', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_exited_products: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map(
+        (row): ExitedProductInfo => ({
+          productId: String(row.product_id),
+          soldQuantity: Number(row.sold_quantity ?? 0),
+          lastSoldAt: row.last_sold_at ? String(row.last_sold_at) : null,
+          quarantinedQuantity: Number(row.quarantined_quantity ?? 0),
+        }),
+      );
+    },
+
     async list(scope, options: ProductListOptions) {
       let query = db
         .from('products')
@@ -2997,6 +3025,106 @@ export function createAlertRepository(db: SupabaseClient): AlertRepository {
         // معلومة للشاشة: "متأجّل لحد كذا" غير "مش متأجّل".
         snoozedUntil: row.snoozed_until ? String(row.snoozed_until) : null,
       }));
+    },
+  };
+}
+
+
+// ═══════════════ مخزون الموديلات ═══════════════
+
+/**
+ * ⚠ الوحدة هنا **المجموعة** مش المنتج: فرع + درج + موديل.
+ *
+ * والدوال دي كلها في مايجريشن ٦١، ومفيش فيها ولا دالة قديمة
+ * اتلمست — `fn_alerts` زي ما هي بالحرف (فخ ٧).
+ *
+ * ⚠ ومفيش أي حساب نسبة هنا. الملف ده بيترجم شكل الرد وبس،
+ * والقرار في `alerts.ts`. لو حطّينا النسبة في الاتنين، هيختلفوا
+ * يوم ما وهتلاقي الشاشة بتقول حاجة والتنبيه بيقول حاجة.
+ */
+export function createModelStockRepository(db: SupabaseClient): ModelStockRepository {
+  return {
+    async groups(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_model_stock_groups', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_model_stock_groups: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map(
+        (row): ModelStockGroup => ({
+          branchId: String(row.branch_id),
+          branchName: String(row.branch_name),
+          drawerKey: String(row.drawer_key),
+          // ⚠ `null` مقصود للأجهزة وللإكسسوار بلا درج — الاسم
+          // المعروض بيتركّب في `alerts.ts` مش هنا.
+          drawerName: row.drawer_name === null || row.drawer_name === undefined
+            ? null
+            : String(row.drawer_name),
+          modelId: String(row.model_id),
+          modelName: String(row.model_name),
+          modelFamily:
+            row.model_family === 'IPHONE' || row.model_family === 'ANDROID'
+              ? row.model_family
+              : null,
+          currentQuantity: Number(row.current_quantity),
+          peakQuantity: Number(row.peak_quantity),
+          discontinued: row.discontinued === true,
+        }),
+      );
+    },
+
+    async unassignedCount(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_model_stock_unassigned', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_model_stock_unassigned: ${error.message}`);
+      return Number(data ?? 0);
+    },
+
+    async resetPeak(tenantId, branchId, drawerKey, modelId) {
+      const { data, error } = await db.rpc('fn_reset_model_peak', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+        p_drawer_key: drawerKey,
+        p_model_id: modelId,
+      });
+
+      if (error) {
+        // ⚠ MZ404 بتتبعت من الدالة لما المجموعة مش موجودة.
+        // الرسالة الصريحة أهم من الصفر الصامت: "تم" على حاجة
+        // ما حصلتش أوحش من رسالة خطأ.
+        if (error.code === 'MZ404') throw Errors.notFound('المجموعة');
+        throw Errors.internal(`fn_reset_model_peak: ${error.message}`);
+      }
+
+      return Number(data ?? 0);
+    },
+
+    async setDiscontinued(tenantId, branchId, drawerKey, modelId, value, at) {
+      // ⚠ المحل جزء من الشرط مش سياق حواليه. من غيره، أي حد
+      // يعرف معرّفات مجموعة في محل تاني يقدر يسكّت تنبيهها.
+      const { data, error } = await db
+        .from('model_stock_peaks')
+        .update({
+          discontinued: value,
+          // ⚠ التاريخ بيتمسح مع الإلغاء. لو سبناه، الصف بيقول
+          // "مش متوقّف" و"اتوقف يوم كذا" في نفس الوقت.
+          discontinued_at: value ? at.toISOString() : null,
+          updated_at: at.toISOString(),
+        })
+        .eq('tenant_id', tenantId)
+        .eq('branch_id', branchId)
+        .eq('drawer_key', drawerKey)
+        .eq('model_id', modelId)
+        .select('id');
+
+      if (error) throw Errors.internal(`model stock discontinued: ${error.message}`);
+
+      // ⚠ مفيش صف اتعدّل = المجموعة مش موجودة أو مش بتاعتك.
+      // من غير الفحص ده، الشاشة بتقول "تم" والدفتر ما اتغيّرش.
+      if (!data || data.length === 0) throw Errors.notFound('المجموعة');
     },
   };
 }
