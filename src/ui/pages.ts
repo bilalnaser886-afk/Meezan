@@ -8523,6 +8523,18 @@ export function productsPage(data: ProductsPageData): Html {
   // مش متابعة.
   const exitedGroups = (() => {
     const nameOf = new Map(data.categories.map((c) => [c.id, c.name]));
+    // ══ 🔴 عيلة الموديل — ودي اللي كانت ناقصة ══
+    //
+    // «درج الآيفون» و«درج الأندرويد» **مش أدراج مخزّنة**. الجهاز
+    // مالوش `category_id` خالص — مكتوب بالنص عند خانة الدرج في
+    // نموذج الإضافة: «مخفية للأجهزة، الجهاز هيتجمّع بموديله».
+    //
+    // فأول نسخة من اللوحة دي جمّعت بالدرج المخزّن، وكل الأجهزة
+    // وقعت تحت «بلا درج».
+    //
+    // ⚠ ومحدش من الأدوات شاف ده: الفاحص شاف كتابة سليمة، و`tsc`
+    // شاف عمود موجود. **الشاشة** هي اللي كشفته.
+    const familyOf = new Map(data.models.map((m) => [m.id, m.family]));
     // ⚠ ترتيب الأدراج من `sortOrder` مش أبجدي.
     //
     // الأبجدي كان هيخلّي اللوحة دي مرتّبة بشكل مختلف عن كل شاشة
@@ -8531,15 +8543,46 @@ export function productsPage(data: ProductsPageData): Html {
     const orderOf = new Map(data.categories.map((c) => [c.id, c.sortOrder]));
     const buckets = new Map<string, typeof exited>();
 
-    for (const p of exited) {
-      // ⚠ «بلا درج» مجموعة زي أي مجموعة، مش صفوف مرمية في
-      // الآخر. الصنف اللي مالوش درج هو بالظبط اللي بيهرب من
+    // ⚠ نفس تعريف الدرج اللي في القاعدة (`fn_drawer_key`)، بس
+    // بيفصل الأجهزة بالعيلة كمان عشان العرض: الآيفون في عنوان
+    // والأندرويد في عنوان.
+    const drawerOf = (p: (typeof exited)[number]): { key: string; name: string } => {
+      if (p.productType === 'device') {
+        const family = p.modelId ? familyOf.get(p.modelId) : null;
+        if (family === 'IPHONE') return { key: 'DEVICE:IPHONE', name: 'درج الآيفون' };
+        if (family === 'ANDROID') return { key: 'DEVICE:ANDROID', name: 'درج الأندرويد' };
+        // ⚠ جهاز بلا موديل أو بموديل بلا عيلة. اسم صريح أحسن
+        // من حشره في درج غلط — هو أصلاً اللي محتاج تصنيف.
+        return { key: 'DEVICE:__none__', name: 'أجهزة بلا عيلة' };
+      }
+
+      // ⚠ «إكسسوار بلا درج» مجموعة زي أي مجموعة، مش صفوف مرمية
+      // في الآخر. الصنف اللي مالوش درج هو بالظبط اللي بيهرب من
       // كل تنظيم — فبيتحط في عنوان صريح باسمه.
-      const key = p.categoryId ?? '__none__';
-      const list = buckets.get(key);
+      if (!p.categoryId) return { key: '__none__', name: 'إكسسوار بلا درج' };
+      return { key: p.categoryId, name: nameOf.get(p.categoryId) ?? 'درج محذوف' };
+    };
+
+    const labelOf = new Map<string, string>();
+
+    for (const p of exited) {
+      const drawer = drawerOf(p);
+      labelOf.set(drawer.key, drawer.name);
+      const list = buckets.get(drawer.key);
       if (list) list.push(p);
-      else buckets.set(key, [p]);
+      else buckets.set(drawer.key, [p]);
     }
+
+    // ⚠ الأجهزة قبل الإكسسوار، و«بلا درج» في الآخر دايمًا.
+    // تقدير مكانهم بين الأدراج كان هيخلّيهم يتنقلوا كل ما درج
+    // جديد يتضاف.
+    const rank = (id: string): number => {
+      if (id === 'DEVICE:IPHONE') return -3;
+      if (id === 'DEVICE:ANDROID') return -2;
+      if (id === 'DEVICE:__none__') return -1;
+      if (id === '__none__') return 1_000_000;
+      return orderOf.get(id) ?? 999_999;
+    };
 
     const at = (id: string): number => {
       const iso = exitMap.get(id)?.lastSoldAt;
@@ -8549,16 +8592,16 @@ export function productsPage(data: ProductsPageData): Html {
     return [...buckets.entries()]
       .map(([id, items]) => ({
         id,
-        name: id === '__none__' ? 'بلا درج' : (nameOf.get(id) ?? 'درج محذوف'),
+        name: labelOf.get(id) ?? 'درج',
         items: [...items].sort((a, b) => at(b.id) - at(a.id)),
       }))
-      // ⚠ «بلا درج» آخر واحد دايمًا. هو مش درج حقيقي، وتقدير
-      // مكانه بين الأدراج كان هيخلّيه يتنقل كل ما درج يتضاف.
-      .sort((a, b) => {
-        if (a.id === '__none__') return 1;
-        if (b.id === '__none__') return -1;
-        return (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0);
-      });
+      // ⚠ الترتيب: الأجهزة الأول، وبعدين الأدراج بترتيبها
+      // المسجّل، و«بلا درج» آخر حاجة.
+      //
+      // ورتبة الدرج من `sortOrder` مش أبجدي: المستخدم بيتعلّم
+      // مكان الدرج بعينه، وترتيب مختلف في شاشة واحدة بيضيّع
+      // التعلّم ده.
+      .sort((a, b) => rank(a.id) - rank(b.id));
   })();
 
   const exitedPanel =
@@ -11831,7 +11874,11 @@ ${MENU_JS}
         name.className = 'prod-row-name';
         // ⚠ textContent مش innerHTML — أسماء الأدراج والموديلات
         // نص من المستخدم.
-        name.textContent = g.categoryName + ' · ' + g.modelName;
+        // ⚠ الاسم جاي **مركّب من الخادم**. «درج الآيفون» مش
+        // درج مخزّن — هو محسوب من عيلة الموديل، والتركيب في
+        // مكان واحد (drawerLabel) عشان الشاشة والإشعار يقولوا
+        // نفس الكلمة.
+        name.textContent = g.drawerLabel + ' · ' + g.modelName;
         main.appendChild(name);
 
         var sub = document.createElement('span');
@@ -11850,7 +11897,7 @@ ${MENU_JS}
           // ⚠ المفتاح المركّب بيتكتب في سِمة واحدة عشان الزرار
           // يفضل مستقل عن ترتيب الصفوف. لو اعتمدنا على الفهرس،
           // أول تحديث بيخلّي الزرار يشاور على مجموعة تانية.
-          var key = g.branchId + '|' + g.categoryId + '|' + g.modelId;
+          var key = g.branchId + '|' + g.drawerKey + '|' + g.modelId;
 
           var reset = document.createElement('button');
           reset.className = 'btn-mini';
@@ -11897,7 +11944,7 @@ ${MENU_JS}
   function msTarget(key) {
     var parts = String(key || '').split('|');
     if (parts.length !== 3) return null;
-    return { branchId: parts[0], categoryId: parts[1], modelId: parts[2] };
+    return { branchId: parts[0], drawerKey: parts[1], modelId: parts[2] };
   }
 
   document.addEventListener('click', async function (e) {
