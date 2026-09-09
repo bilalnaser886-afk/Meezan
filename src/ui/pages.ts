@@ -1196,6 +1196,76 @@ const PRINT_SHARED_JS = `
     return d;
   }
 
+  /**
+   * عتبة **محلية** — كل بيكسل بيتقارن بمتوسط جيرانه هو.
+   *
+   * ══ ⚠ ليه دي موجودة والعتبة العامة فوق موجودة كمان؟ ══
+   *
+   * أوتسو بتحسب رقم **واحد** للصورة كلها. والصورة اللي جاية من
+   * الكاميرا مش الملصق لوحده — فيها صباعك والخلفية الغامقة ونور
+   * السقف. فالحسبة بتتلخبط: بتلاقي الفاصل بين "الخلفية الغامقة"
+   * و"الملصق الفاتح"، والرمادي الباهت بتاع الرمز بيقع كله في
+   * ناحية الأبيض.
+   *
+   * ⚠ يعني الرمز بيتمسح بالكامل قبل ما القارئ يشوفه.
+   *
+   * والعتبة المحلية بتقارن كل نقطة بجيرانها في مربّع صغير حواليها،
+   * فالخلفية والنور ما بيدخلوش الحسبة أصلاً.
+   *
+   * ⚠ وسبت العامة معاها مش بدلها: العامة أسرع وبتنجح مع الملصق
+   * النضيف على خلفية فاتحة. الاتنين بيمسكوا حالات مختلفة.
+   *
+   * ⚠ والصورة التجميعية (integral image) مش استعراض: من غيرها،
+   * حساب متوسط الجيران لكل نقطة على لوحة 700 في 700 بيبقى مئات
+   * الملايين من العمليات، والشاشة بتتجمّد.
+   */
+  function qrBinarizeLocal(d) {
+    var w = d.width, h = d.height, px = d.data;
+    var n = w * h, i, j, x, y;
+
+    var gray = new Uint8Array(n);
+    for (i = 0; i < n; i++) {
+      j = i << 2;
+      gray[i] = (px[j] * 77 + px[j + 1] * 151 + px[j + 2] * 28) >> 8;
+    }
+
+    var W1 = w + 1;
+    var integ = new Float64Array(W1 * (h + 1));
+    for (y = 0; y < h; y++) {
+      var rowsum = 0;
+      for (x = 0; x < w; x++) {
+        rowsum += gray[y * w + x];
+        integ[(y + 1) * W1 + (x + 1)] = integ[y * W1 + (x + 1)] + rowsum;
+      }
+    }
+
+    // ⚠ نصف النافذة = 1/16 من الضلع. لازم تغطّي **كذا مربّع** مش
+    // مربّع واحد: لو النافذة أصغر من المربّع، كل نقطة بتتقارن
+    // بنفسها والصورة بتطلع ضوضاء.
+    var r = Math.max(6, Math.round(Math.min(w, h) / 16));
+
+    for (y = 0; y < h; y++) {
+      var y0 = y - r < 0 ? 0 : y - r;
+      var y1 = y + r >= h ? h - 1 : y + r;
+      for (x = 0; x < w; x++) {
+        var x0 = x - r < 0 ? 0 : x - r;
+        var x1 = x + r >= w ? w - 1 : x + r;
+        var area = (x1 - x0 + 1) * (y1 - y0 + 1);
+        var sum = integ[(y1 + 1) * W1 + (x1 + 1)]
+                - integ[y0 * W1 + (x1 + 1)]
+                - integ[(y1 + 1) * W1 + x0]
+                + integ[y0 * W1 + x0];
+        // ⚠ الطرح ثابت صغير: من غيره الورق الأبيض المتجانس بيتقسم
+        // نصين عشوائيًا لأن كل نقطة بتقارن بمتوسط شبه مساوي ليها.
+        var v = gray[y * w + x] < (sum / area) - 6 ? 0 : 255;
+        j = (y * w + x) << 2;
+        px[j] = px[j + 1] = px[j + 2] = v;
+        px[j + 3] = 255;
+      }
+    }
+    return d;
+  }
+
   var qrCvs = null, qrCtx = null;
   function qrCanvas() {
     if (!qrCvs) {
@@ -1225,7 +1295,7 @@ const PRINT_SHARED_JS = `
    * ⚠ والتنعيم بيتقفل وقت التكبير: بيعمل تدرّج رمادي على حواف
    * المربّعات ويصعّب على القارئ يفصلها. وقت التصغير بس بيفيد.
    */
-  async function qrReadRegion(src, sx, sy, sw, sh, sizes, det) {
+  async function qrReadRegion(src, sx, sy, sw, sh, sizes, det, deep) {
     var IW = src.naturalWidth || src.videoWidth || src.width || 0;
     var IH = src.naturalHeight || src.videoHeight || src.height || 0;
     if (!IW || !IH) return null;
@@ -1278,10 +1348,24 @@ const PRINT_SHARED_JS = `
         var r = window.jsQR(d.data, cw, ch, { inversionAttempts: 'attemptBoth' });
         if (r && r.data) return String(r.data).trim();
 
-        // ⚠ محاولة تانية بعد تحويل الصورة لأبيض وأسود صريح.
-        // دي اللي بتنقذ الملصق الباهت.
+        // محاولة 2: أبيض وأسود بعتبة عامة — الملصق النضيف
         r = window.jsQR(qrBinarize(d).data, cw, ch, { inversionAttempts: 'attemptBoth' });
         if (r && r.data) return String(r.data).trim();
+
+        // محاولة 3: عتبة محلية — الملصق الباهت وسط خلفية غامقة.
+        //
+        // ⚠ بنسحب البيانات من اللوحة تاني: qrBinarize بتعدّل
+        // المصفوفة في مكانها، فالمحاولة دي كانت هتشتغل على صورة
+        // متعدّلة أصلاً وتطلّع ضوضاء.
+        //
+        // ⚠ وبتشتغل في الوضع العميق بس. هي أغلى محاولة، وفي
+        // القراءة الحيّة بنبادل بينها وبين السريعة عشان الاتنين
+        // يتغطّوا من غير ما العدّاد ينزل.
+        if (deep) {
+          var d2 = ctx.getImageData(0, 0, cw, ch);
+          r = window.jsQR(qrBinarizeLocal(d2).data, cw, ch, { inversionAttempts: 'attemptBoth' });
+          if (r && r.data) return String(r.data).trim();
+        }
       }
 
       // بنسيب الواجهة تتنفّس — من غيره الشاشة بتتجمّد وقت الحسبة
@@ -1325,12 +1409,12 @@ const PRINT_SHARED_JS = `
     }
 
     // ② الصورة كاملة بمقاسين
-    if (!val) val = await qrReadRegion(img, 0, 0, W, H, [1100, 700], det);
+    if (!val) val = await qrReadRegion(img, 0, 0, W, H, [1100, 700], det, true);
 
     // ③ الوسط مقرّب — أغلب الناس بتصوّب على الرمز فعلاً
     if (!val) {
       var cs = Math.floor(Math.min(W, H) * 0.35);
-      val = await qrReadRegion(img, (W - cs) / 2, (H - cs) / 2, cs, cs, [640], det);
+      val = await qrReadRegion(img, (W - cs) / 2, (H - cs) / 2, cs, cs, [640], det, true);
     }
 
     // ④ ⚠ شبكة 3×3 متداخلة — مش الوسط بس.
@@ -1356,7 +1440,7 @@ const PRINT_SHARED_JS = `
       });
       for (var ci = 0; ci < cells.length && !val; ci++) {
         val = await qrReadRegion(img, cells[ci][0] * stepX, cells[ci][1] * stepY,
-          tw, th, [560], det);
+          tw, th, [560], det, true);
       }
     }
 
@@ -1541,7 +1625,16 @@ const PRINT_SHARED_JS = `
         var sx = Math.floor((vw - side) / 2);
         var sy = Math.floor((vh - side) / 2);
 
-        var hit = await qrReadRegion(video, sx, sy, side, side, [700], det);
+        // ⚠ الوضع العميق على الجولات الفردية بس.
+        //
+        // العتبة المحلية أغلى محاولة عندنا. لو اشتغلت كل جولة،
+        // عدد المحاولات في الثانية بينزل للنص — والقراءة الحيّة
+        // بتعتمد على كتر المحاولات مش على جودة الواحدة.
+        //
+        // بالتبادل: كل ثانية بتاخد أربع محاولات سريعة وأربع
+        // عميقة، والاتنين على قصّتين مختلفتين.
+        var hit = await qrReadRegion(video, sx, sy, side, side, [700], det,
+          (round % 2 === 1));
         if (hit) { done = hit; break; }
       }
 
