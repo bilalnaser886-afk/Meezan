@@ -1163,8 +1163,50 @@ export interface ColorRepository {
   findById(id: string, tenantId: string): Promise<ProductColor | null>;
 }
 
+/**
+ * معلومات خروج صنف من المخزون — مايجريشن ٦٢.
+ *
+ * ══ ⚠ ليه ده موجود أصلاً ══
+ * الشاشة كانت بتكتب «انباع» على أي جهاز كميته صفر. والجهاز
+ * بيوصل لصفر بأربع طرق: بيعة · تحويل لفرع · خصم جرد · خروج
+ * للورشة. يعني الشاشة كانت بتقول جملة **مش عارفاها**.
+ *
+ * تشبيه: تفتح الدرج تلاقيه فاضي وتقول «انباع». الدرج الفاضي
+ * بيقول «مفيش» — مش بيقول «اتباع».
+ *
+ * ⚠ والصنف اللي `soldQuantity` بتاعه صفر مش معلومة ناقصة —
+ * ده **كشف**: مشي من المخزون وما عليهوش أي فاتورة. يا إما
+ * اتحوّل (تمام) يا إما ضاع (مش تمام)، والاتنين عايزين عينك.
+ */
+export interface ExitedProductInfo {
+  productId: string;
+  /**
+   * مجموع بنود الفواتير على الصنف ده.
+   *
+   * ⚠ **مش صافي.** المرتجع بيتسجّل مستقل والفاتورة بتفضل، فده
+   * بيقول "اتباع كام مرة" مش "اتباع صافي". الصافي مكانه قائمة
+   * الدخل — ولو حسبناه هنا كمان كان هيبقى رقمين لنفس المعنى.
+   */
+  soldQuantity: number;
+  /** آخر فاتورة. `null` = مفيش أي فاتورة خالص. */
+  lastSoldAt: string | null;
+  /**
+   * ⚠ في رفّ المراجعة. الصنف ده **في المحل** مش برّه.
+   *
+   * بيترجع عشان الشاشة تستبعده صراحةً بدل ما نستبعده في
+   * القاعدة بصمت. المستبعد اللي بيبان أحسن من المستبعد المخفي.
+   */
+  quarantinedQuantity: number;
+}
+
 export interface ProductRepository {
   list(scope: ListScope, options: ProductListOptions): Promise<ProductRecord[]>;
+  /**
+   * الأصناف اللي كميتها صفر، ومعاها هل عليها فاتورة ولا لأ.
+   *
+   * ⚠ الصنف المؤرشف بره تمامًا — ده اتمسح مش خرج.
+   */
+  exitedInfo(tenantId: string, branchId: string | null): Promise<ExitedProductInfo[]>;
   findById(id: string, options: { includeCost: boolean }): Promise<ProductRecord | null>;
   create(data: CreateProductInput): Promise<{ id: string }>;
   update(id: string, data: UpdateProductInput): Promise<void>;
