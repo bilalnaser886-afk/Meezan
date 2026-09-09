@@ -50,6 +50,7 @@ import type {
   ProductType,
   UpdateProductInput,
   UserRepository,
+  ExitedProductInfo,
 } from '../ports';
 
 export interface ProductDeps {
@@ -240,6 +241,42 @@ export async function listProducts(
     includeCost: canSeeCost(actor),
     activeOnly: options.activeOnly ?? false,
   });
+}
+
+/**
+ * معلومات البضاعة اللي خرجت — لِلوحة «البضاعة اللي خرجت».
+ *
+ * ⚠ نفس صلاحية عرض المخزون. الخروج معلومة مخزون مش معلومة
+ * مالية: الرقم اللي بيرجع هو **عدد القطع** مش مبلغ الفاتورة.
+ *
+ * ⚠ ونفس النطاق بالحرف: المالك كل فروعه، وغيره فرعه —
+ * fail-closed. لو استخدمنا نطاق مختلف عن `listProducts`، كان
+ * ممكن يرجع معلومة خروج لصف مش ظاهر في القايمة أصلاً.
+ */
+export async function listExitedInfo(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<ExitedProductInfo[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+
+  // ══ ⚠ مش `scopeFor` هنا، والسبب مكتوب عشان ما يتكررش ══
+  //
+  // `ListScope` **تلات أشكال** مش شكل واحد، وواحد منهم
+  // (`{ allTenants: true }`) مالوش محل ولا فرع خالص. فقراية
+  // `scope.tenantId` منه مرفوضة من النوع — وهي دي الغلطة
+  // اللي البوّابة مسكتها.
+  //
+  // ⚠ والرفض ده **حماية مش عناد**: النوع بيمنعنا نكتب استعلام
+  // بلا محل من غير ما ناخد بالنا. لو عدّى، كان هيبقى استعلام
+  // بيقرا كل المحلات.
+  //
+  // فنفس نمط `alerts.ts` و`purchases.ts`: المحل من المستخدم،
+  // والفرع fail-closed — مدير بلا فرع ما يشوفش حاجة.
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+
+  return deps.products.exitedInfo(actor.tenantId, branchId);
 }
 
 /** قائمة شاشة الكاشير: المفعّل والمتاح بس */
