@@ -261,8 +261,22 @@ export async function listExitedInfo(
     throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
   }
 
-  const scope = scopeFor(actor);
-  return deps.products.exitedInfo(scope.tenantId, scope.branchId ?? null);
+  // ══ ⚠ مش `scopeFor` هنا، والسبب مكتوب عشان ما يتكررش ══
+  //
+  // `ListScope` **تلات أشكال** مش شكل واحد، وواحد منهم
+  // (`{ allTenants: true }`) مالوش محل ولا فرع خالص. فقراية
+  // `scope.tenantId` منه مرفوضة من النوع — وهي دي الغلطة
+  // اللي البوّابة مسكتها.
+  //
+  // ⚠ والرفض ده **حماية مش عناد**: النوع بيمنعنا نكتب استعلام
+  // بلا محل من غير ما ناخد بالنا. لو عدّى، كان هيبقى استعلام
+  // بيقرا كل المحلات.
+  //
+  // فنفس نمط `alerts.ts` و`purchases.ts`: المحل من المستخدم،
+  // والفرع fail-closed — مدير بلا فرع ما يشوفش حاجة.
+  const branchId = actor.roleKey === 'SUPER_ADMIN' ? null : (actor.branchId ?? '__none__');
+
+  return deps.products.exitedInfo(actor.tenantId, branchId);
 }
 
 /** قائمة شاشة الكاشير: المفعّل والمتاح بس */
