@@ -1472,6 +1472,100 @@ const PRINT_SHARED_JS = `
   }
 
   /**
+   * الكاشف المدمج في المتصفح لو موجود.
+   *
+   * ⚠ دالة واحدة لأن الكاميرا والصورة الاتنين محتاجينه. نسختين
+   * كانوا هيختلفوا في قايمة الأنواع يوم ما.
+   */
+  async function qrNativeDetector() {
+    try {
+      if (window.BarcodeDetector && window.BarcodeDetector.getSupportedFormats) {
+        var fmts = await window.BarcodeDetector.getSupportedFormats();
+        if (fmts && fmts.indexOf('qr_code') !== -1) {
+          return new window.BarcodeDetector({ formats: ['qr_code'] });
+        }
+      }
+    } catch (e) { /* مش مدعوم */ }
+    return null;
+  }
+
+  /**
+   * اختيار صورة من الموبايل وقراءة الرمز منها.
+   *
+   * ══ ⚠ الفرق عن زرار «صوّره» جوّه الماسح ══
+   * هناك السمة capture موجودة، فالأيفون بيفتح الكاميرا على طول.
+   * هنا مش موجودة، فبيفتح **الاستوديو** — وده المطلوب: الصورة
+   * جاية من واتساب أصلاً.
+   *
+   * ⚠ ونفس مسار الفكّ بالظبط (qrDecodeFile) بأربع مراحله. مسار
+   * تاني كان هيتحسّن في ناحية وينسى التانية.
+   *
+   * ⚠⚠ وحارس الإلغاء مش رفاهية: لو المستخدم قفل نافذة اختيار
+   * الصور من غير ما يختار، الحدث change **ما بيحصلش خالص**
+   * والوعد بيفضل معلّق للأبد — والزرار يبقى ميّت لحد ما يعمل
+   * تحديث للصفحة. فبنستنى رجوع التركيز للصفحة ونتأكد.
+   */
+  window.pickQrImage = function () {
+    return new Promise(function (resolve, reject) {
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.setAttribute('hidden', 'hidden');
+      document.body.appendChild(input);
+
+      var settled = false;
+      function drop() {
+        if (input.parentNode) input.parentNode.removeChild(input);
+      }
+
+      input.addEventListener('change', async function () {
+        var f = input.files && input.files[0];
+        drop();
+        if (!f) {
+          if (!settled) { settled = true; reject(new Error('أُلغي المسح.')); }
+          return;
+        }
+        settled = true;
+
+        // شاشة انتظار: الفكّ بياخد ثواني على الصور الكبيرة،
+        // ومن غيرها الموظّف بيفتكر إن الضغطة ضاعت وبيدوس تاني.
+        var busy = document.createElement('div');
+        busy.className = 'scan-wrap scan-wrap-qr';
+        busy.innerHTML =
+          '<div class="scan-box"><p class="scan-hint">بنقرا الصورة…</p></div>';
+        document.body.appendChild(busy);
+
+        try {
+          var det = await qrNativeDetector();
+          if (!det && !window.jsQR) await loadQrLib();
+          var got = await qrDecodeFile(f, det);
+          if (busy.parentNode) busy.parentNode.removeChild(busy);
+          if (got) resolve(got);
+          else reject(new Error('مقدرتش أقرا الرمز من الصورة. جرّب صورة أوضح أو أقرب.'));
+        } catch (e) {
+          if (busy.parentNode) busy.parentNode.removeChild(busy);
+          reject(new Error('مقدرتش أقرا الصورة. جرّب صورة تانية.'));
+        }
+      });
+
+      // ⚠ رجوع التركيز للصفحة معناه إن نافذة الاختيار اتقفلت.
+      // بنستنى شوية عشان change يسبقنا لو المستخدم اختار فعلاً.
+      window.addEventListener('focus', function back() {
+        window.removeEventListener('focus', back);
+        setTimeout(function () {
+          if (settled) return;
+          if (input.files && input.files.length) return;
+          settled = true;
+          drop();
+          reject(new Error('أُلغي المسح.'));
+        }, 1500);
+      });
+
+      input.click();
+    });
+  };
+
+  /**
    * بيفتح الكاميرا ويرجّع نص الـQR المقروء.
    *
    * ⚠ تلات طرق، بالترتيب:
@@ -1577,15 +1671,7 @@ const PRINT_SHARED_JS = `
     }
 
     // ══ اختيار القارئ ══
-    var det = null;
-    try {
-      if (window.BarcodeDetector && window.BarcodeDetector.getSupportedFormats) {
-        var fmts = await window.BarcodeDetector.getSupportedFormats();
-        if (fmts && fmts.indexOf('qr_code') !== -1) {
-          det = new window.BarcodeDetector({ formats: ['qr_code'] });
-        }
-      }
-    } catch (e3) { det = null; }
+    var det = await qrNativeDetector();
 
     var lib = false;
     if (!det) {
@@ -2713,21 +2799,44 @@ function tabBar(active: 'app' | 'pos' | 'products' | 'treasury', access: NavAcce
  * فما بيدوسش عليه أبدًا. الرسمة دي أركان مربّع — نفس الشكل
  * النضيف، وبتقول عن نفسها من غير كلمة مكتوبة.
  *
+ * ══ ⚠ ومربّعين مش واحد ══
+ * الأول كاميرا: الجهاز في إيدك.
+ * التاني صورة: البايع بعتلك صورة الرمز على واتساب.
+ *
+ * ⚠ والاتنين بيعدّوا على **نفس مسار الفكّ** وبيخلّصوا على **نفس
+ * الورقة**. اللي بيتغيّر مصدر الصورة بس — عشان أي تحسين في
+ * القراءة يوصل للاتنين مرة واحدة.
+ *
+ * ⚠ والمصدر سمة على الزرار مش زرارين بمعالجين: المعالج واحد
+ * في كل شاشة، وبيقرا data-qr-src.
+ *
  * ⚠ والوجهة سمة على العنصر مش شرط في السكربت: السكربت واحد في
  * كل الشاشات، والشاشة هي اللي بتعرف رايحة فين.
  */
 function scanSquare(id: string, target: 'pos' | 'products' | 'here'): Html {
-  return html`<button class="scan-sq" type="button" id="${id}" data-target="${target}"
-    aria-label="امسح رمز الجهاز" title="امسح رمز الجهاز">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M4 8V5a1 1 0 0 1 1-1h3"></path>
-      <path d="M16 4h3a1 1 0 0 1 1 1v3"></path>
-      <path d="M20 16v3a1 1 0 0 1-1 1h-3"></path>
-      <path d="M8 20H5a1 1 0 0 1-1-1v-3"></path>
-      <path d="M7 12h10"></path>
-    </svg>
-  </button>`;
+  return html`<div class="scan-tools">
+    <button class="scan-sq" type="button" id="${id}" data-target="${target}"
+      data-qr-src="camera" aria-label="امسح رمز الجهاز" title="امسح رمز الجهاز">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 8V5a1 1 0 0 1 1-1h3"></path>
+        <path d="M16 4h3a1 1 0 0 1 1 1v3"></path>
+        <path d="M20 16v3a1 1 0 0 1-1 1h-3"></path>
+        <path d="M8 20H5a1 1 0 0 1-1-1v-3"></path>
+        <path d="M7 12h10"></path>
+      </svg>
+    </button>
+    <button class="scan-sq" type="button" id="${id}-img" data-target="${target}"
+      data-qr-src="image" aria-label="ارفع صورة فيها الرمز"
+      title="ارفع صورة فيها الرمز">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+        <circle cx="8.5" cy="9.5" r="1.5"></circle>
+        <path d="M21 16l-5-5-5 5-2-2-4 4"></path>
+      </svg>
+    </button>
+  </div>`;
 }
 
 /**
@@ -4010,21 +4119,28 @@ ${MENU_JS}
     });
   }
 
-  if (dashScan) {
-    dashScan.addEventListener('click', async function () {
+  // ⚠ معالج واحد للمربّعين. المصدر سمة على الزرار، فزيادة مصدر
+  // تالت بكرة (ملف PDF مثلاً) ما بتلمسش المنطق ده.
+  var dashTools = document.querySelectorAll('[data-qr-src]');
+  for (var dt = 0; dt < dashTools.length; dt++) {
+    dashTools[dt].addEventListener('click', async function (e) {
+      var btn = e.currentTarget;
+      var fromImage = btn.getAttribute('data-qr-src') === 'image';
+
       // ⚠ الفحص ده مهم: لو السكربت المشترك ما اتحمّلش لأي سبب،
       // الزرار كان هيسكت من غير أي رسالة.
-      if (typeof window.scanQr !== 'function') {
+      if (typeof window.scanQr !== 'function' || typeof window.pickQrImage !== 'function') {
         alert('الماسح غير متاح على هذا المتصفح.');
         return;
       }
       try {
-        var code = window.qrPick(await window.scanQr());
+        var raw = fromImage ? await window.pickQrImage() : await window.scanQr();
+        var code = window.qrPick(raw);
         if (!code) return;
         // ⚠ اللوحة مفيهاش بضاعة محمّلة، فمش بتترجم الكود بنفسها.
         // بتوصّله للشاشة اللي عندها القايمة أصلاً — وده اللي
         // بيخلّي المسح من هنا بلا أي طلب شبكة زيادة.
-        window.location.href = dashScan.getAttribute('data-target') === 'pos'
+        window.location.href = btn.getAttribute('data-target') === 'pos'
           ? '/pos?add=' + encodeURIComponent(code)
           : '/products?q=' + encodeURIComponent(code);
       } catch (err) {
@@ -7848,15 +7964,18 @@ ${TIME_JS}
     });
   }
 
-  var posScan = document.getElementById('pos-scan');
-  if (posScan) {
-    posScan.addEventListener('click', async function () {
-      if (typeof window.scanQr !== 'function') {
+  // ⚠ معالج واحد للمربّعين: الكاميرا وصورة البايع.
+  var posTools = document.querySelectorAll('[data-qr-src]');
+  for (var pt = 0; pt < posTools.length; pt++) {
+    posTools[pt].addEventListener('click', async function (e) {
+      var fromImage = e.currentTarget.getAttribute('data-qr-src') === 'image';
+      if (typeof window.scanQr !== 'function' || typeof window.pickQrImage !== 'function') {
         posSay('الماسح غير متاح على هذا المتصفح.', false);
         return;
       }
       try {
-        var code = window.qrPick(await window.scanQr());
+        var raw = fromImage ? await window.pickQrImage() : await window.scanQr();
+        var code = window.qrPick(raw);
         if (code) qrOpenFor(code);
       } catch (err) {
         // ⚠ الإلغاء بيرمي زي الفشل. من غير التفرقة، كل ضغطة
@@ -10944,15 +11063,19 @@ ${MENU_JS}
   //
   // ⚠ غير زرار «مسح الرقم» تحته: ده بيقرا الرمز المربّع
   // (مضمون)، وده بيقرا الرقم المطبوع (بيخمّن).
-  var qrBtn = document.getElementById('prod-qr');
-  if (qrBtn) {
-    qrBtn.addEventListener('click', async function () {
-      if (typeof window.scanQr !== 'function') {
+  // ⚠ معالج واحد للمربّعين: الكاميرا وصورة البايع.
+  var qrTools = document.querySelectorAll('[data-qr-src]');
+  for (var qt = 0; qt < qrTools.length; qt++) {
+    qrTools[qt].addEventListener('click', async function (e) {
+      var qrBtn = e.currentTarget;
+      var fromImage = qrBtn.getAttribute('data-qr-src') === 'image';
+      if (typeof window.scanQr !== 'function' || typeof window.pickQrImage !== 'function') {
         say('الماسح غير متاح على هذا المتصفح.', false);
         return;
       }
       try {
-        var code = window.qrPick(await window.scanQr());
+        var raw = fromImage ? await window.pickQrImage() : await window.scanQr();
+        var code = window.qrPick(raw);
         if (!code) return;
 
         var row = window.qrFindEl(code, 'data-pid');
