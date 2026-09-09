@@ -8079,6 +8079,23 @@ export interface ProductsPageData {
   }>;
   /** للمالك بس — لاختيار الفرع عند الإضافة */
   branches: Array<{ id: string; name: string }>;
+  /**
+   * معلومة الخروج لكل صنف كميته صفر — مايجريشن ٦٢.
+   *
+   * ⚠ مصدرها **جدول الفواتير** مش جدول البضاعة. عشان كده هي
+   * قايمة منفصلة مش حقل جوّه `products`: المنتج ليه مصدر واحد،
+   * والفاتورة مصدر تاني، ودمجهم كان هيخلّي الاتنين ينفعوا
+   * يختلفوا.
+   *
+   * ⚠ فاضية = الاستعلام فشل. الصفوف بتفضل ظاهرة بعلامة «خرج»
+   * بدل «انباع» — يعني الفرق بيبان في الشاشة مش بيختفي.
+   */
+  exitedInfo: Array<{
+    productId: string;
+    soldQuantity: number;
+    lastSoldAt: string | null;
+    quarantinedQuantity: number;
+  }>;
   products: Array<{
     id: string;
     name: string;
@@ -8169,20 +8186,60 @@ export interface ProductsPageData {
  * في طبقة قاعدة البيانات قبل ما البيانات تسيب الخادم.
  */
 export function productsPage(data: ProductsPageData): Html {
-  const rows =
-    data.products.length === 0
-      ? html`<div class="empty">
-          <p class="empty-title">لا توجد بضاعة بعد</p>
-          <p class="empty-note">
-            ${data.canEdit
-              ? 'ابدأ بإضافة أول منتج من القسم أعلاه.'
-              : 'يضيف المديرُ البضاعةِ.'}
-          </p>
-        </div>`
-      : html`${data.products.map((p) => {
+  // ══ ⚠ القسمة: اللي في المحل واللي خرج ══
+  //
+  // المعيار **الكمية صفر** مش «انباع». الكمية صفر معناها مش
+  // عندك، وده اللي الجدول بيعرفه فعلاً. أما «ليه» فبتجاوب عليه
+  // معلومة الفاتورة تحت.
+  //
+  // ⚠ ورفّ المراجعة **مش خروج**: المرتجع كميته المتاحة صفر
+  // وهو في المحل. لو عددناه خارج، كنا هنعدّ نفس القطعة مرتين —
+  // مرة في الرفّ ومرة في اللوحة دي.
+  const exitMap = new Map(data.exitedInfo.map((e) => [e.productId, e]));
+
+  const isExited = (id: string, quantityOnHand: number): boolean =>
+    quantityOnHand === 0 && (exitMap.get(id)?.quarantinedQuantity ?? 0) === 0;
+
+  const inStock = data.products.filter((p) => !isExited(p.id, p.quantityOnHand));
+  const exited = data.products.filter((p) => isExited(p.id, p.quantityOnHand));
+
+  /**
+   * ⚠ نفس بناء الصف للقايمتين.
+   *
+   * الصف اتحوّل لدالة بدل ما يتكرر: نسختين من ماركب واحد كانوا
+   * هيختلفوا يوم ما، ووقتها الصنف اللي خرج يبقى شكله غير الصنف
+   * اللي في المحل بلا سبب. فخ ١٧ بالحرف.
+   */
+  const productRow = (p: ProductsPageData['products'][number]): Html => {
           const isDevice = p.productType === 'device';
           const priceLabel =
             p.pricePiastres === null ? 'بلا سعر' : `${formatPiastres(p.pricePiastres)} ج.م`;
+
+          // ══ ⚠ «انباع» بقت جملة معروفة مش تخمين ══
+          //
+          // كانت: الكمية صفر ← اكتب «انباع». والجهاز بيوصل
+          // لصفر بأربع طرق (بيعة · تحويل · خصم جرد · ورشة)،
+          // يعني الشاشة كانت بتقول حاجة مش عارفاها.
+          //
+          // دلوقتي الفاتورة هي اللي بتقول. ومفيش فاتورة =
+          // «خرج» — وده كشف مش نقص معلومة.
+          const exit = exitMap.get(p.id);
+          const soldReally = (exit?.soldQuantity ?? 0) > 0;
+          //
+          // ⚠ ورفّ المراجعة قبل الاتنين. الحاجة دي كميتها
+          // المتاحة صفر وهي **في المحل** — ولو كتبنا عليها
+          // «انباع» كنا هنقول إنها مشيت وهي على الرفّ قدامك.
+          // (والمحاكاة هي اللي مسكت دي، مش الفاحص.)
+          const qtyLabel =
+            p.quantityOnHand > 0
+              ? isDevice
+                ? 'متاح'
+                : String(p.quantityOnHand)
+              : (exit?.quarantinedQuantity ?? 0) > 0
+                ? 'في الرفّ'
+                : soldReally
+                  ? 'انباع'
+                  : 'خرج';
 
           return html`<div class="prod-row" data-row="${p.id}" data-pid="${p.id}"
             data-searchable="${p.name} ${p.serialNumber ?? ''}${
@@ -8229,7 +8286,7 @@ export function productsPage(data: ProductsPageData): Html {
 
             <div class="prod-row-side">
               <span class="prod-row-qty" data-zero="${p.quantityOnHand === 0 ? 'true' : 'false'}">
-                ${isDevice ? (p.quantityOnHand > 0 ? 'متاح' : 'انباع') : String(p.quantityOnHand)}
+                ${qtyLabel}
               </span>
               ${data.canEdit
                 ? html`<button class="btn-mini" type="button" data-edit="${p.id}">تعديل</button>`
@@ -8307,20 +8364,14 @@ export function productsPage(data: ProductsPageData): Html {
                     </div>
                   </div>
 
-                  ${data.canSetReorder && !isDevice
-                    ? html`<div class="field">
-                        <label class="field-label" for="reorder-${p.id}">
-                          الحد الأدنى للتنبيه
-                        </label>
-                        <input class="field-input" id="reorder-${p.id}" type="number"
-                          min="0" dir="ltr" value="${String(p.reorderPoint)}">
-                        <p class="field-hint">
-                          ${p.reorderPoint > 0
-                            ? `ينبّهك عند ${p.reorderPoint} أو أقل. صفر = معطّل.`
-                            : 'صفر = بلا تنبيه. اكتب رقمًا لتفعيله.'}
-                        </p>
-                      </div>`
-                    : ''}
+                  <!-- خانة «الحد الأدنى للتنبيه» اتشالت — مايجريشن ٦١.
+                       التنبيه بقى بالمجموعة (فرع + درج + موديل) مش
+                       بالسطر الواحد، والحد بيتحسب من الرقم القياسي
+                       تلقائيًا فمفيش رقم يتكتب بإيد.
+                       اللوحة بتاعته فوق الصفحة: «مخزون الموديلات».
+                       ⚠ عمود reorder_point ما اتمسحش من القاعدة،
+                       ولا حقل reorderPoint من النوع: الرجوع عن
+                       القرار يبقى إرجاع الكتلة دي وبس. -->
 
                   ${isDevice
                     ? html`<div class="field">
@@ -8446,7 +8497,132 @@ export function productsPage(data: ProductsPageData): Html {
                 </div>`
               : ''}
           </div>`;
-        })}`;
+  };
+
+  const rows =
+    inStock.length === 0
+      ? html`<div class="empty">
+          <p class="empty-title">لا توجد بضاعة في المخزون</p>
+          <p class="empty-note">
+            ${data.canEdit
+              ? 'ابدأ بإضافة أول منتج من القسم أعلاه.'
+              : 'يضيف المديرُ البضاعةِ.'}
+          </p>
+        </div>`
+      : html`${inStock.map(productRow)}`;
+
+  // ══ لوحة «البضاعة اللي خرجت» — مايجريشن ٦٢ ══
+  //
+  // ⚠ مجمّعة **بالدرج** مش قايمة مسطّحة. الطلب كان صريح: اللي
+  // يخرج يتحط في درجه. والدرج هنا عنوان مكتوب، مش شريحة فلتر —
+  // الشرايح فوق بتخدم المخزون، وتكرارها هنا كان هيدّي شريطين
+  // شكلهم واحد وبيعملوا حاجتين.
+  //
+  // ⚠ والأحدث فوق. الترتيب بتاريخ آخر فاتورة، واللي مالوش
+  // فاتورة بيروح لآخر مجموعته — هو أصلاً اللي محتاج مراجعة
+  // مش متابعة.
+  const exitedGroups = (() => {
+    const nameOf = new Map(data.categories.map((c) => [c.id, c.name]));
+    // ══ 🔴 عيلة الموديل — ودي اللي كانت ناقصة ══
+    //
+    // «درج الآيفون» و«درج الأندرويد» **مش أدراج مخزّنة**. الجهاز
+    // مالوش `category_id` خالص — مكتوب بالنص عند خانة الدرج في
+    // نموذج الإضافة: «مخفية للأجهزة، الجهاز هيتجمّع بموديله».
+    //
+    // فأول نسخة من اللوحة دي جمّعت بالدرج المخزّن، وكل الأجهزة
+    // وقعت تحت «بلا درج».
+    //
+    // ⚠ ومحدش من الأدوات شاف ده: الفاحص شاف كتابة سليمة، و`tsc`
+    // شاف عمود موجود. **الشاشة** هي اللي كشفته.
+    const familyOf = new Map(data.models.map((m) => [m.id, m.family]));
+    // ⚠ ترتيب الأدراج من `sortOrder` مش أبجدي.
+    //
+    // الأبجدي كان هيخلّي اللوحة دي مرتّبة بشكل مختلف عن كل شاشة
+    // تانية في النظام بلا سبب — والمستخدم بيتعلّم مكان الدرج
+    // بعينه، فتغيير الترتيب في شاشة واحدة بيضيّع التعلّم ده.
+    const orderOf = new Map(data.categories.map((c) => [c.id, c.sortOrder]));
+    const buckets = new Map<string, typeof exited>();
+
+    // ⚠ نفس تعريف الدرج اللي في القاعدة (`fn_drawer_key`)، بس
+    // بيفصل الأجهزة بالعيلة كمان عشان العرض: الآيفون في عنوان
+    // والأندرويد في عنوان.
+    const drawerOf = (p: (typeof exited)[number]): { key: string; name: string } => {
+      if (p.productType === 'device') {
+        const family = p.modelId ? familyOf.get(p.modelId) : null;
+        if (family === 'IPHONE') return { key: 'DEVICE:IPHONE', name: 'درج الآيفون' };
+        if (family === 'ANDROID') return { key: 'DEVICE:ANDROID', name: 'درج الأندرويد' };
+        // ⚠ جهاز بلا موديل أو بموديل بلا عيلة. اسم صريح أحسن
+        // من حشره في درج غلط — هو أصلاً اللي محتاج تصنيف.
+        return { key: 'DEVICE:__none__', name: 'أجهزة بلا عيلة' };
+      }
+
+      // ⚠ «إكسسوار بلا درج» مجموعة زي أي مجموعة، مش صفوف مرمية
+      // في الآخر. الصنف اللي مالوش درج هو بالظبط اللي بيهرب من
+      // كل تنظيم — فبيتحط في عنوان صريح باسمه.
+      if (!p.categoryId) return { key: '__none__', name: 'إكسسوار بلا درج' };
+      return { key: p.categoryId, name: nameOf.get(p.categoryId) ?? 'درج محذوف' };
+    };
+
+    const labelOf = new Map<string, string>();
+
+    for (const p of exited) {
+      const drawer = drawerOf(p);
+      labelOf.set(drawer.key, drawer.name);
+      const list = buckets.get(drawer.key);
+      if (list) list.push(p);
+      else buckets.set(drawer.key, [p]);
+    }
+
+    // ⚠ الأجهزة قبل الإكسسوار، و«بلا درج» في الآخر دايمًا.
+    // تقدير مكانهم بين الأدراج كان هيخلّيهم يتنقلوا كل ما درج
+    // جديد يتضاف.
+    const rank = (id: string): number => {
+      if (id === 'DEVICE:IPHONE') return -3;
+      if (id === 'DEVICE:ANDROID') return -2;
+      if (id === 'DEVICE:__none__') return -1;
+      if (id === '__none__') return 1_000_000;
+      return orderOf.get(id) ?? 999_999;
+    };
+
+    const at = (id: string): number => {
+      const iso = exitMap.get(id)?.lastSoldAt;
+      return iso ? Date.parse(iso) : 0;
+    };
+
+    return [...buckets.entries()]
+      .map(([id, items]) => ({
+        id,
+        name: labelOf.get(id) ?? 'درج',
+        items: [...items].sort((a, b) => at(b.id) - at(a.id)),
+      }))
+      // ⚠ الترتيب: الأجهزة الأول، وبعدين الأدراج بترتيبها
+      // المسجّل، و«بلا درج» آخر حاجة.
+      //
+      // ورتبة الدرج من `sortOrder` مش أبجدي: المستخدم بيتعلّم
+      // مكان الدرج بعينه، وترتيب مختلف في شاشة واحدة بيضيّع
+      // التعلّم ده.
+      .sort((a, b) => rank(a.id) - rank(b.id));
+  })();
+
+  const exitedPanel =
+    exited.length === 0
+      ? ''
+      : html`<details class="panel" id="exited-panel">
+          <summary>البضاعة اللي خرجت (${String(exited.length)})</summary>
+          <div class="panel-body">
+            <p class="field-hint">
+              أصناف كميتها صفر. «انباع» معناها إن عليها فاتورة فعلاً،
+              و«خرج» معناها إنها مشيت من غير فاتورة — يا إما اتحوّلت
+              لفرع تاني، يا إما محتاجة مراجعة.
+            </p>
+            <div id="exited-rows">
+              ${exitedGroups.map(
+                (g) => html`<p class="field-label">${g.name} (${String(g.items.length)})</p>
+                  ${g.items.map(productRow)}`,
+              )}
+            </div>
+          </div>
+        </details>`;
 
   const addPanel = !data.canEdit
     ? ''
@@ -8826,6 +9002,9 @@ export function productsPage(data: ProductsPageData): Html {
         brand: m.brand,
         family: m.family,
       })),
+      // ⚠ الأزرار بتتبني بالجافاسكربت، فالصلاحية لازم توصل
+      // للسكربت. والخادم بيفحصها برضه — ده «سِمة» والقفل هناك.
+      data.canSetReorder,
     ),
     body: html`${appBar({
       fullName: data.fullName,
@@ -8864,8 +9043,40 @@ export function productsPage(data: ProductsPageData): Html {
       </details>`
     : ''}
 
+  <!-- ══ مخزون الموديلات — مايجريشن ٦١ ══
+
+       ⚠ الوحدة هنا **المجموعة**: فرع + درج + موديل.
+
+       التنبيه القديم كان بيبصّ على السطر الواحد: الجهاز كميته ١
+       وبتبقى صفر بعد البيع، فكان بيرنّ على كل بيعة ناجحة.
+       والتنبيه اللي بيرنّ غلط بيتعوّد عليه — وساعتها بقى زينة
+       مش حارس.
+
+       ⚠ واللوحة **مخفية لما مفيش حاجة**. الكتلة الفاضية اللي
+       بتقول "كله تمام" بتعلّم العين تعدّي عليها.
+
+       ⚠ والأرقام بتيجي من نفس نداء /api/reports/alerts اللي
+       شريط اللوحة بيقرا منه. مسار تاني كان هيبقى مصدر موازي
+       ينفع يختلف يوم ما. -->
+  <details class="panel" id="ms-panel" hidden>
+    <summary>مخزون الموديلات <span id="ms-count"></span></summary>
+    <div class="panel-body">
+      <p class="field-hint">
+        الحساب بالمجموعة: الفرع والدرج والموديل مع بعض.
+        التنبيه بيرنّ لما الكمية تنزل لخُمس أعلى رقم وصلته المجموعة.
+      </p>
+      <div id="ms-rows"></div>
+
+      <!-- ⚠ الرقم ده لازم يبان.
+           البضاعة بلا درج أو بلا موديل مستحيل تتجمّع فمستحيل
+           تتنبّه — والصمت هنا كان هيخلّي المستخدم فاكر إن كل
+           حاجة محروسة. ده الفشل الصامت بعينه. -->
+      <p class="field-hint" id="ms-unassigned" hidden></p>
+    </div>
+  </details>
+
   <details class="panel" open>
-    <summary>المخزون (${String(data.products.length)})</summary>
+    <summary>المخزون (${String(inStock.length)})</summary>
     <div class="panel-body">
       <!-- ══ شريط الأدوات ══
 
@@ -9037,6 +9248,8 @@ export function productsPage(data: ProductsPageData): Html {
       ${rows}
     </div>
   </details>
+
+  ${exitedPanel}
 </main>
 
 ${tabBar('products', {
@@ -9064,6 +9277,16 @@ function productsScript(
    * ترتيبه، النموذج بيقع معاه.
    */
   models: Array<{ id: string; name: string; brand: string | null; family: string | null }>,
+  /**
+   * `inventory.reorder_point` — صاحب المحل وحده.
+   *
+   * ⚠ ده بيتحكم في **ظهور** أزرار التصفير والإيقاف بس. الخادم
+   * بيفحص نفس الصلاحية في `assertStockPolicy`.
+   *
+   * الفرق بين السِمة والقفل: إخفاء الزرار مش بيمنع حد يبعت
+   * الطلب من المتصفح. الاتنين لازم يكونوا موجودين.
+   */
+  canSetReorder: boolean,
 ): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
@@ -9076,6 +9299,7 @@ ${MENU_JS}
 (function () {
   var SHOP_NAME = ${JSON.stringify(shopName)};
   var ALL_MODELS = ${JSON.stringify(models)};
+  var CAN_SET_REORDER = ${JSON.stringify(canSetReorder)};
 
   var box = document.getElementById('prodmsg');
   var text = document.getElementById('prodmsg-text');
@@ -9248,12 +9472,9 @@ ${MENU_JS}
     // في كل حفظ — يعني يمسح مصدر الصفوف القديمة بصمت.
     if (entryEl && entryEl.value) body.entryDate = entryEl.value;
 
-    // ⚠ الخانة موجودة لصاحب المحل بس. غيابها من الصفحة معناه
-    // إن الحقل ما بيتبعتش أصلاً — والخادم بيفحص الصلاحية برضه.
-    var reorderEl = document.getElementById('reorder-' + id);
-    if (reorderEl && reorderEl.value !== '') {
-      body.reorderPoint = parseInt(reorderEl.value, 10);
-    }
+    // ⚠ الحد الأدنى مابقاش بيتبعت — الخانة اتشالت مع مايجريشن ٦١.
+    // التنبيه بقى بالمجموعة والحد بيتحسب من الرقم القياسي.
+    // سيبنا العمود في القاعدة، فالقيم القديمة مش بتتمسح.
 
     var customsEl = document.getElementById('customs-' + id);
     if (customsEl) body.customsCleared = customsEl.value === 'true';
@@ -10550,8 +10771,23 @@ ${MENU_JS}
       // ⚠ الستة كلهم بـ"و". كل شريط بيضيّق اللي قبله، فـ
       // "جرابات" + "١٢ برو ماكس" + "أسود" = الجراب الأسود
       // للـ١٢ برو ماكس بالظبط.
-      var match = browsing && okText && okMode && okFamily && okDrawer && okModel
-        && okColor && okStorage && okCustoms;
+      // ══ ⚠ صفوف «البضاعة اللي خرجت» ليها قاعدة تانية ══
+      //
+      // الصفوف دي مجمّعة بالدرج جوّه لوحتها، والشرايح فوق
+      // بتخدم المخزون. لو طبّقنا عليها نفس الشرط، اللوحة كانت
+      // هتفتح فاضية لحد ما تختار درج — وشكلها هيبقى عطل.
+      //
+      // ⚠ بس البحث لازم يوصلها. سريال جهاز اتباع بتدوّر عليه
+      // في الضمان، ولو اللوحة اتقفلت على البحث كان لازم تفتحها
+      // وتقلّب بإيدك.
+      //
+      // القاعدة: مفيش بحث ← بيّن الكل · فيه بحث ← النص بس.
+      var isExitedRow = !!row.closest('#exited-rows');
+
+      var match = isExitedRow
+        ? (!q || okText)
+        : (browsing && okText && okMode && okFamily && okDrawer && okModel
+          && okColor && okStorage && okCustoms);
       row.hidden = !match;
 
       // لوحة التعديل بتتخفي مع صفها
@@ -11592,8 +11828,167 @@ ${MENU_JS}
     }
   }
 
+  // ══════════ مخزون الموديلات ══════════
+  //
+  // ⚠ نفس مصدر شريط اللوحة بالظبط: /api/reports/alerts.
+  // حقل modelStock جوّه الرد بيتولد من **نفس الاستعلام** اللي
+  // بيولّد صفوف التنبيه، فمستحيل الشاشتين يقولوا رقمين مختلفين.
+  //
+  // ⚠ ومفيش هنا ولا نسبة ولا مقارنة. الحالة (state) جاية
+  // محسوبة من الخادم — النسبة مكتوبة في سطر واحد في alerts.ts،
+  // ولو اتحسبت هنا كمان كان هيبقى عندنا مصدرين للرقم.
+  async function loadModelStock() {
+    var panel = document.getElementById('ms-panel');
+    var rowsHost = document.getElementById('ms-rows');
+    var countEl = document.getElementById('ms-count');
+    var unEl = document.getElementById('ms-unassigned');
+    if (!panel || !rowsHost) return;
+
+    try {
+      var res = await fetch('/api/reports/alerts', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var rows = data.modelStock || [];
+      var unassigned = data.unassignedCount || 0;
+
+      // ⚠ اللوحة بتظهر لو فيه تنبيه **أو** فيه بضاعة بره الحساب.
+      // البضاعة اللي بره الحساب لازم تبان حتى لو كل الموديلات
+      // مليانة — هي بالظبط اللي محدش بيحرسها.
+      if (rows.length === 0 && unassigned === 0) { panel.hidden = true; return; }
+
+      panel.hidden = false;
+      if (countEl) countEl.textContent = rows.length > 0 ? '(' + rows.length + ')' : '';
+      rowsHost.textContent = '';
+
+      for (var i = 0; i < rows.length; i++) {
+        var g = rows[i];
+
+        var row = document.createElement('div');
+        row.className = 'prod-row';
+
+        var main = document.createElement('div');
+        main.className = 'prod-row-main';
+
+        var name = document.createElement('span');
+        name.className = 'prod-row-name';
+        // ⚠ textContent مش innerHTML — أسماء الأدراج والموديلات
+        // نص من المستخدم.
+        // ⚠ الاسم جاي **مركّب من الخادم**. «درج الآيفون» مش
+        // درج مخزّن — هو محسوب من عيلة الموديل، والتركيب في
+        // مكان واحد (drawerLabel) عشان الشاشة والإشعار يقولوا
+        // نفس الكلمة.
+        name.textContent = g.drawerLabel + ' · ' + g.modelName;
+        main.appendChild(name);
+
+        var sub = document.createElement('span');
+        sub.className = 'prod-row-sub';
+        sub.textContent = (g.state === 'EMPTY'
+          ? 'خلص خالص'
+          : 'باقي ' + g.currentQuantity + ' من ' + g.peakQuantity)
+          + ' · ' + g.branchName;
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        if (CAN_SET_REORDER) {
+          var acts = document.createElement('div');
+          acts.className = 'prod-edit-actions';
+
+          // ⚠ المفتاح المركّب بيتكتب في سِمة واحدة عشان الزرار
+          // يفضل مستقل عن ترتيب الصفوف. لو اعتمدنا على الفهرس،
+          // أول تحديث بيخلّي الزرار يشاور على مجموعة تانية.
+          var key = g.branchId + '|' + g.drawerKey + '|' + g.modelId;
+
+          var reset = document.createElement('button');
+          reset.className = 'btn-mini';
+          reset.type = 'button';
+          reset.textContent = 'صفّر الرقم (' + g.peakQuantity + ' ← ' + g.currentQuantity + ')';
+          reset.setAttribute('data-ms-reset', key);
+          acts.appendChild(reset);
+
+          var stop = document.createElement('button');
+          stop.className = 'btn-mini';
+          stop.type = 'button';
+          stop.setAttribute('data-danger', 'true');
+          stop.textContent = 'بطّلت أجيبه';
+          stop.setAttribute('data-ms-stop', key);
+          acts.appendChild(stop);
+
+          row.appendChild(acts);
+        }
+
+        rowsHost.appendChild(row);
+      }
+
+      if (unEl) {
+        if (unassigned > 0) {
+          unEl.textContent = unassigned + ' صنف بره الحساب — بلا درج أو بلا موديل، '
+            + 'فمستحيل يتنبّه عليه. افتح الصنف وحدّد درجه وموديله.';
+          unEl.hidden = false;
+        } else {
+          unEl.hidden = true;
+        }
+      }
+    } catch (err) {
+      // ⚠ صامت عن قصد: فشل اللوحة دي ما يصحّش يوقّع شاشة البضاعة.
+      // وده مش إخفاء عطل — المخزون نفسه ظاهر في القايمة تحت،
+      // واللوحة دي قراءة تانية ليه مش المصدر.
+    }
+  }
+
+  // ── أزرار المجموعة ──
+  //
+  // ⚠ المفتاح بيتفكّ هنا مرة واحدة. الخادم بيستقبل التلات
+  // معرّفات مفكوكة — لو بعتنا النص المركّب، كان لازم يتفكّ في
+  // مكانين والاتنين ينفع يختلفوا.
+  function msTarget(key) {
+    var parts = String(key || '').split('|');
+    if (parts.length !== 3) return null;
+    return { branchId: parts[0], drawerKey: parts[1], modelId: parts[2] };
+  }
+
+  document.addEventListener('click', async function (e) {
+    if (!e.target.closest) return;
+
+    var resetBtn = e.target.closest('[data-ms-reset]');
+    if (resetBtn) {
+      var t1 = msTarget(resetBtn.getAttribute('data-ms-reset'));
+      if (!t1) { say('المجموعة غير معروفة.', false); return; }
+
+      // ⚠ سؤال قبل التنفيذ. الرقم القياسي بيتمسح ومفيش رجوع
+      // ليه — التاريخ اللي فات مش مخزّن في أي مكان تاني.
+      if (!confirm('هيبقى الرقم القياسي هو الكمية الحالية. الرقم القديم بيضيع نهائيًا. تمام؟')) {
+        return;
+      }
+
+      var r1 = await send('/api/products/model-stock/reset', t1, resetBtn, 'جارٍ…');
+      if (r1) {
+        say('اتصفّر. الرقم القياسي بقى ' + r1.peakQuantity + '.', true);
+        await loadModelStock();
+      }
+      return;
+    }
+
+    var stopBtn = e.target.closest('[data-ms-stop]');
+    if (stopBtn) {
+      var t2 = msTarget(stopBtn.getAttribute('data-ms-stop'));
+      if (!t2) { say('المجموعة غير معروفة.', false); return; }
+
+      t2.value = true;
+      var r2 = await send('/api/products/model-stock/discontinued', t2, stopBtn, 'جارٍ…');
+      if (r2) {
+        // ⚠ الرسالة بتقول إنه بيرجع لوحده. من غيرها المستخدم
+        // بيفتكرها إخفاء دائم، وساعتها مش هيثق في إنه يضغطها.
+        say('اتوقّف. هيرجع لوحده أول ما بضاعة جديدة تدخل المجموعة دي.', true);
+        await loadModelStock();
+      }
+      return;
+    }
+  });
+
   loadTransfers();
   loadQuarantine();
+  loadModelStock();
 })();
 `;
 }
