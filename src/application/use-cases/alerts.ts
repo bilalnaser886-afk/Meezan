@@ -149,9 +149,40 @@ export function modelStockView(
   return { state: 'OK', threshold };
 }
 
+/**
+ * اسم الدرج المعروض.
+ *
+ * ══ 🔴 ليه ده موجود أصلاً ══
+ * «درج الآيفون» و«درج الأندرويد» **مش أدراج مخزّنة** في
+ * القاعدة. الجهاز مالوش `category_id` خالص — درجه محسوب من
+ * عيلة موديله.
+ *
+ * ملف ٦١ ما كانش عارف ده وجمّع بالدرج المخزّن، فكل الأجهزة
+ * وقعت برّه التنبيه. الملف ده والمايجريشن ٦٣ بيصلّحوا ده.
+ *
+ * ⚠ والتركيب هنا **مكان واحد**: الشاشة والتنبيه والإشعار كلهم
+ * بيقروا منه. لو اتكرر، «درج الآيفون» تبقى «الآيفون» في مكان
+ * و«أجهزة آيفون» في مكان.
+ */
+export function drawerLabel(group: ModelStockGroup): string {
+  if (group.drawerKey === 'DEVICE') {
+    if (group.modelFamily === 'IPHONE') return 'درج الآيفون';
+    if (group.modelFamily === 'ANDROID') return 'درج الأندرويد';
+    // ⚠ موديل بلا عيلة: موجود وبيتجمّع، بس مالوش درج معروف.
+    // اسم صريح أحسن من حشره في درج غلط.
+    return 'أجهزة بلا عيلة';
+  }
+
+  if (group.drawerKey === 'NOCAT') return 'إكسسوار بلا درج';
+
+  // ⚠ الدرج اتمسح بعد ما المجموعة اتكوّنت. بنقول كده صراحةً
+  // بدل ما نسيب الاسم فاضي — السطر الفاضي بيبان كعطل عرض.
+  return group.drawerName ?? 'درج محذوف';
+}
+
 /** نص التنبيه. مكان واحد عشان الشاشة والإشعار يقولوا نفس الكلام. */
 export function modelStockMessage(group: ModelStockGroup, state: 'NEAR' | 'EMPTY'): string {
-  const place = `${group.categoryName} · ${group.modelName}`;
+  const place = `${drawerLabel(group)} · ${group.modelName}`;
 
   if (state === 'EMPTY') {
     return `${place} — خلص خالص في ${group.branchName}.`;
@@ -171,7 +202,7 @@ export function modelStockMessage(group: ModelStockGroup, state: 'NEAR' | 'EMPTY
  * في الرد فيه الحقول جاهزة.
  */
 function groupKey(group: ModelStockGroup): string {
-  return `${group.branchId}|${group.categoryId}|${group.modelId}`;
+  return `${group.branchId}|${group.drawerKey}|${group.modelId}`;
 }
 
 export interface AlertSummary {
@@ -309,8 +340,8 @@ async function modelStockAlerts(
     detail.push({
       branchId: group.branchId,
       branchName: group.branchName,
-      categoryId: group.categoryId,
-      categoryName: group.categoryName,
+      drawerKey: group.drawerKey,
+      drawerLabel: drawerLabel(group),
       modelId: group.modelId,
       modelName: group.modelName,
       currentQuantity: group.currentQuantity,
@@ -366,21 +397,25 @@ function assertGroupScope(actor: AuthenticatedUser, branchId: string): void {
 
 export interface ModelStockTarget {
   branchId: string;
-  categoryId: string;
+  /**
+   * ⚠ مفتاح الدرج مش معرّف درج: 'DEVICE' للأجهزة، 'NOCAT'
+   * للإكسسوار بلا درج، وغير كده معرّف حقيقي.
+   */
+  drawerKey: string;
   modelId: string;
 }
 
 function readTarget(input: Partial<ModelStockTarget>): ModelStockTarget {
   const branchId = String(input.branchId ?? '').trim();
-  const categoryId = String(input.categoryId ?? '').trim();
+  const drawerKey = String(input.drawerKey ?? '').trim();
   const modelId = String(input.modelId ?? '').trim();
 
   // ⚠ رسالة صريحة لكل واحد. "بيانات ناقصة" بتخلّيك تدوّر.
   if (!branchId) throw Errors.validation('الفرع مفقود.');
-  if (!categoryId) throw Errors.validation('الدرج مفقود.');
+  if (!drawerKey) throw Errors.validation('الدرج مفقود.');
   if (!modelId) throw Errors.validation('الموديل مفقود.');
 
-  return { branchId, categoryId, modelId };
+  return { branchId, drawerKey, modelId };
 }
 
 /**
@@ -407,7 +442,7 @@ export async function resetModelPeak(
   const peakQuantity = await deps.modelStock.resetPeak(
     actor.tenantId,
     target.branchId,
-    target.categoryId,
+    target.drawerKey,
     target.modelId,
   );
 
@@ -415,7 +450,7 @@ export async function resetModelPeak(
     actorId: actor.id,
     action: 'model_stock.reset_peak',
     entity: 'ModelStockPeak',
-    entityId: `${target.branchId}|${target.categoryId}|${target.modelId}`,
+    entityId: `${target.branchId}|${target.drawerKey}|${target.modelId}`,
     metadata: { ...target, peakQuantity, tenantId: actor.tenantId },
   });
 
@@ -448,7 +483,7 @@ export async function setModelDiscontinued(
   await deps.modelStock.setDiscontinued(
     actor.tenantId,
     target.branchId,
-    target.categoryId,
+    target.drawerKey,
     target.modelId,
     value,
     deps.clock.now(),
@@ -458,7 +493,7 @@ export async function setModelDiscontinued(
     actorId: actor.id,
     action: value ? 'model_stock.discontinue' : 'model_stock.resume',
     entity: 'ModelStockPeak',
-    entityId: `${target.branchId}|${target.categoryId}|${target.modelId}`,
+    entityId: `${target.branchId}|${target.drawerKey}|${target.modelId}`,
     metadata: { ...target, tenantId: actor.tenantId },
   });
 }
