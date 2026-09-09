@@ -2024,10 +2024,28 @@ export interface AlertRepository {
 export interface ModelStockGroup {
   branchId: string;
   branchName: string;
-  categoryId: string;
-  categoryName: string;
+  /**
+   * ⚠ مفتاح الدرج — نص مش دايمًا معرّف.
+   *
+   *   'DEVICE'  →  جهاز. درجه من عيلة موديله مش من عمود عليه.
+   *   'NOCAT'   →  إكسسوار بلا درج
+   *   غير كده   →  معرّف درج حقيقي
+   *
+   * ══ 🔴 والسبب إن ده اتغيّر عن `categoryId` ══
+   * ملف ٦١ جمّع بـ`category_id`، **والأجهزة مالهاش واحد**.
+   * مكتوب بالنص في نموذج الإضافة: «مخفية للأجهزة — الجهاز
+   * هيتجمّع بموديله».
+   *
+   * يعني كل الأجهزة كانت برّه التنبيه من أول يوم، والميزة
+   * مشتغلتش على الحالة الأساسية بتاعتها ولا مرة.
+   */
+  drawerKey: string;
+  /** اسم الدرج لو كان درج حقيقي. `null` للأجهزة وللي بلا درج. */
+  drawerName: string | null;
   modelId: string;
   modelName: string;
+  /** عيلة الموديل — بتحدّد اسم درج الأجهزة المعروض */
+  modelFamily: 'IPHONE' | 'ANDROID' | null;
   /**
    * الكمية دلوقتي.
    *
@@ -2062,8 +2080,15 @@ export interface ModelStockGroup {
 export interface ModelStockAlert {
   branchId: string;
   branchName: string;
-  categoryId: string;
-  categoryName: string;
+  drawerKey: string;
+  /**
+   * اسم الدرج المعروض، مركّب في `alerts.ts`.
+   *
+   * ⚠ مكان واحد للتركيب عشان الشاشة والتنبيه يقولوا نفس
+   * الكلمة. لو اتركّب في الاتنين، «درج الآيفون» ممكن تبقى
+   * «الآيفون» في مكان و«أجهزة آيفون» في مكان.
+   */
+  drawerLabel: string;
   modelId: string;
   modelName: string;
   currentQuantity: number;
@@ -2081,7 +2106,10 @@ export interface ModelStockRepository {
    */
   groups(tenantId: string, branchId: string | null): Promise<ModelStockGroup[]>;
   /**
-   * عدد الأصناف اللي **بره الحساب**: بلا درج أو بلا موديل.
+   * عدد الأصناف اللي **بره الحساب**: بلا موديل.
+   *
+   * ⚠ بقى الموديل وبس. قبل كده كان بيشمل اللي مالوش درج كمان —
+   * والأجهزة كلها مالهاش درج، فالرقم كان بيبلع كل أجهزتك.
    *
    * ⚠ الرقم ده لازم يتعرض. البضاعة دي مستحيل تتجمّع فمستحيل
    * تتنبّه، والصمت هنا كان هيخلّي المستخدم فاكر إن كل حاجة
@@ -2099,7 +2127,7 @@ export interface ModelStockRepository {
   resetPeak(
     tenantId: string,
     branchId: string,
-    categoryId: string,
+    drawerKey: string,
     modelId: string,
   ): Promise<number>;
   /**
@@ -2112,7 +2140,7 @@ export interface ModelStockRepository {
   setDiscontinued(
     tenantId: string,
     branchId: string,
-    categoryId: string,
+    drawerKey: string,
     modelId: string,
     value: boolean,
     at: Date,
