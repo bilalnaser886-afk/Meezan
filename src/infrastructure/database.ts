@@ -3055,10 +3055,18 @@ export function createModelStockRepository(db: SupabaseClient): ModelStockReposi
         (row): ModelStockGroup => ({
           branchId: String(row.branch_id),
           branchName: String(row.branch_name),
-          categoryId: String(row.category_id),
-          categoryName: String(row.category_name),
+          drawerKey: String(row.drawer_key),
+          // ⚠ `null` مقصود للأجهزة وللإكسسوار بلا درج — الاسم
+          // المعروض بيتركّب في `alerts.ts` مش هنا.
+          drawerName: row.drawer_name === null || row.drawer_name === undefined
+            ? null
+            : String(row.drawer_name),
           modelId: String(row.model_id),
           modelName: String(row.model_name),
+          modelFamily:
+            row.model_family === 'IPHONE' || row.model_family === 'ANDROID'
+              ? row.model_family
+              : null,
           currentQuantity: Number(row.current_quantity),
           peakQuantity: Number(row.peak_quantity),
           discontinued: row.discontinued === true,
@@ -3075,11 +3083,11 @@ export function createModelStockRepository(db: SupabaseClient): ModelStockReposi
       return Number(data ?? 0);
     },
 
-    async resetPeak(tenantId, branchId, categoryId, modelId) {
+    async resetPeak(tenantId, branchId, drawerKey, modelId) {
       const { data, error } = await db.rpc('fn_reset_model_peak', {
         p_tenant_id: tenantId,
         p_branch_id: branchId,
-        p_category_id: categoryId,
+        p_drawer_key: drawerKey,
         p_model_id: modelId,
       });
 
@@ -3094,7 +3102,7 @@ export function createModelStockRepository(db: SupabaseClient): ModelStockReposi
       return Number(data ?? 0);
     },
 
-    async setDiscontinued(tenantId, branchId, categoryId, modelId, value, at) {
+    async setDiscontinued(tenantId, branchId, drawerKey, modelId, value, at) {
       // ⚠ المحل جزء من الشرط مش سياق حواليه. من غيره، أي حد
       // يعرف معرّفات مجموعة في محل تاني يقدر يسكّت تنبيهها.
       const { data, error } = await db
@@ -3108,7 +3116,7 @@ export function createModelStockRepository(db: SupabaseClient): ModelStockReposi
         })
         .eq('tenant_id', tenantId)
         .eq('branch_id', branchId)
-        .eq('category_id', categoryId)
+        .eq('drawer_key', drawerKey)
         .eq('model_id', modelId)
         .select('id');
 
