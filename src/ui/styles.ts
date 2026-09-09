@@ -526,10 +526,12 @@ button{font:inherit}
    ⚠ والحشو على الخانة مش هامش على المربّع: الهامش كان هيسيب
    النص يعدّي تحت المربّع لما يطول. */
 .scan-field{position:relative}
-.scan-field .field-input{padding-inline-end:46px}
-.scan-sq{position:absolute;inset-inline-end:7px;top:50%;
-  transform:translateY(-50%);
-  width:34px;height:34px;padding:0;
+/* ⚠ الحشو 84 مش 46: بقى فيه مربّعين. لو فضل 46، النص الطويل
+   كان هيعدّي تحت مربّع الصورة ويتقرا نص حرف. */
+.scan-field .field-input{padding-inline-end:84px}
+.scan-tools{position:absolute;inset-inline-end:7px;top:50%;
+  transform:translateY(-50%);display:flex;gap:6px}
+.scan-sq{width:34px;height:34px;padding:0;
   display:grid;place-items:center;
   border:1px solid var(--line);border-radius:9px;
   background:var(--card);color:var(--ink);cursor:pointer;
