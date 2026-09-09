@@ -84,7 +84,11 @@ import {
   updateSaleExitDate,
 } from '../application/use-cases/sales';
 import { getIncomeReport } from '../application/use-cases/reports';
-import { listAlerts } from '../application/use-cases/alerts';
+import {
+  listAlerts,
+  resetModelPeak,
+  setModelDiscontinued,
+} from '../application/use-cases/alerts';
 import {
   createRepairShop,
   createTicket,
@@ -978,6 +982,77 @@ productRoutes.get(
     return c.json({ ok: true, items });
   },
 );
+
+// ═══════════════════ مخزون الموديلات ═══════════════════
+//
+// ⚠ المسارات دي فوق `/:id` عن قصد، زي الأدراج بالظبط. هونو
+// بيطابق أول مسار مناسب — ولو نزلت تحت، الاحتمال يفضل قايم إن
+// مسار جديد بكرة ياخدها كمعرّف منتج.
+//
+// ⚠ والصلاحية `inventory.reorder_point` — صاحب المحل وحده.
+// تعديل الكمية عملية يومية، لكن تحديد **الحد** قرار سياسة.
+// ولو المندوب قدر يسكّت تنبيه، التنبيه بيبقى بلا معنى: اللي
+// بيتضايق من الرنّة هو اللي هيطفيها.
+//
+// ⚠ ومفيش مسار قراءة هنا. الأرقام بترجع مع
+// `/api/reports/alerts` في حقل `modelStock` — من **نفس
+// الاستعلام** اللي بيولّد التنبيه. مسار تاني كان هيبقى مصدر
+// موازي ينفع يختلف يوم ما.
+
+interface ModelStockBody {
+  branchId?: string;
+  categoryId?: string;
+  modelId?: string;
+}
+
+/** تصفير الرقم القياسي على الكمية الحالية */
+productRoutes.post(
+  '/model-stock/reset',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_REORDER_POINT] }),
+  async (c) => {
+    const body = await readJson<ModelStockBody>(c);
+    const container = buildContainer(c.env);
+
+    const result = await resetModelPeak(container.alerts, c.get('user'), {
+      branchId: body.branchId,
+      categoryId: body.categoryId,
+      modelId: body.modelId,
+    });
+
+    return c.json({ ok: true, peakQuantity: result.peakQuantity });
+  },
+);
+
+/**
+ * إيقاف موديل أو تشغيله.
+ *
+ * ⚠ `value` إلزامي وبيتقرا كقيمة منطقية صريحة. لو خلّيناه
+ * اختياري وافترضنا `true`، أي طلب ناقص كان هيسكّت تنبيه —
+ * والمستخدم مش هيعرف ليه التنبيه اختفى.
+ */
+productRoutes.post(
+  '/model-stock/discontinued',
+  requireAuth({ requireAll: [PERMISSIONS.INVENTORY_REORDER_POINT] }),
+  async (c) => {
+    const body = await readJson<ModelStockBody & { value?: unknown }>(c);
+
+    if (typeof body.value !== 'boolean') {
+      throw Errors.validation('حدّد الحالة: متوقّف أو شغّال.');
+    }
+
+    const container = buildContainer(c.env);
+
+    await setModelDiscontinued(
+      container.alerts,
+      c.get('user'),
+      { branchId: body.branchId, categoryId: body.categoryId, modelId: body.modelId },
+      body.value,
+    );
+
+    return c.json({ ok: true, discontinued: body.value });
+  },
+);
+
 
 // ═══════════════════ أدراج البضاعة ═══════════════════
 //
