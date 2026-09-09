@@ -1887,6 +1887,22 @@ export interface TransferRepository {
  */
 export type AlertType =
   | 'LOW_STOCK'
+  /**
+   * ⚠ نقص مخزون **بالمجموعة** — فرع + درج + موديل.
+   *
+   * ══ ليه ده وليه `LOW_STOCK` اتوقف ══
+   * `LOW_STOCK` بيبصّ على **السطر الواحد**. الجهاز كميته ١
+   * وبتبقى صفر بعد البيع — وده بيع ناجح مش نقص، فالتنبيه كان
+   * بيرنّ على كل بيعة.
+   *
+   * والتنبيه اللي بيرنّ غلط بيتعوّد عليه، وساعتها بقى زينة مش
+   * حارس. نفس اللي حصل مع البوّابة الصفرا في ملف ٦.
+   *
+   * ⚠ `LOW_STOCK` **لسه بيترجع من `fn_alerts`** — الدالة ما
+   * اتلمستش (فخ ٧)، والفلترة بتحصل في `alerts.ts`. سيبته في
+   * النوع عشان الفلتر نفسه يفضل مكتوب بالنوع مش بنص حرّ.
+   */
+  | 'MODEL_LOW_STOCK'
   | 'QUARANTINE_STALE'
   | 'TREASURY_OVERDRAFT'
   /**
@@ -1941,6 +1957,124 @@ export interface AlertRepository {
    * تنبيه حدّ السحب يتحسب بره — مكتوب في `alerts.ts`.
    */
   ticketCostAlerts(tenantId: string, branchId: string | null): Promise<TicketCostAlert[]>;
+}
+
+// ─────────── مخزون الموديلات ───────────
+
+/**
+ * مجموعة مخزون — **فرع + درج + موديل**.
+ *
+ * ══ ليه التلاتة مع بعض؟ ══
+ * الموديل لوحده مش كافي. «١٥ برو ماكس» في درج الأجهزة و«١٥
+ * برو ماكس» في درج الجرابات دول مخزونين مختلفين تمامًا،
+ * وخلوّ واحد فيهم مالوش علاقة بالتاني.
+ *
+ * والفرع لوحده مش كافي كمان: فرع طنطا ممكن يكون فاضي وفرع
+ * المنصورة مليان، والمجموع بيكدب على الاتنين.
+ *
+ * ══ ⚠ الأرقام دي **خام** ══
+ * مفيش هنا «قرّب» ولا «خلص». الحالة بتتحسب في `alerts.ts`
+ * من `modelStockView`، والنسبة مكتوبة هناك في سطر واحد.
+ *
+ * نفس ترتيب حدّ السحب بالظبط: القاعدة بتدّي الرصيد والحد،
+ * و`overdraftView` بيقرر.
+ */
+export interface ModelStockGroup {
+  branchId: string;
+  branchName: string;
+  categoryId: string;
+  categoryName: string;
+  modelId: string;
+  modelName: string;
+  /**
+   * الكمية دلوقتي.
+   *
+   * ⚠ محسوبة **حيّة** من `products` في كل نداء، مش مقروءة من
+   * أي عمود مخزّن. نفس مبدأ رصيد الخزنة.
+   */
+  currentQuantity: number;
+  /**
+   * أعلى كمية وصلتها المجموعة — المقام اللي النسبة بتتحسب منه.
+   *
+   * ⚠ ده الرقم **الوحيد** المخزّن في الميزة دي، والسبب إنه
+   * مستحيل يتحسب: النظام بيعرف الكمية دلوقتي بس، ومفيش تاريخ
+   * كميات يتقرا منه أعلى رقم.
+   *
+   * بيتصفّر لوحده عند أول توريد بعد الصفر، وبيتصفّر بإيدك من
+   * زرار «صفّر الرقم».
+   */
+  peakQuantity: number;
+  /** المالك قال «بطّلت أجيبه». بيتلغي لوحده مع أول توريد. */
+  discontinued: boolean;
+}
+
+/**
+ * صف تنبيه بالموديل — للشاشة اللي فيها أزرار.
+ *
+ * ⚠ نوع مستقل عن `AlertRow` عن قصد، ونفس سبب `TicketCostAlert`
+ * بالحرف: الشاشة محتاجة **معرّفات المجموعة التلاتة** عشان
+ * أزرار التصفير والإيقاف، و`AlertRow.entityId` حقل واحد.
+ *
+ * ⚠ والاتنين بيخرجوا من **نفس الاستعلام** — فمستحيل يختلفوا.
+ */
+export interface ModelStockAlert {
+  branchId: string;
+  branchName: string;
+  categoryId: string;
+  categoryName: string;
+  modelId: string;
+  modelName: string;
+  currentQuantity: number;
+  peakQuantity: number;
+  /** 'EMPTY' = خلص خالص · 'NEAR' = تحت النسبة */
+  state: 'NEAR' | 'EMPTY';
+  severity: AlertSeverity;
+}
+
+export interface ModelStockRepository {
+  /**
+   * كل المجموعات في النطاق، بأرقامها الخام.
+   *
+   * ⚠ مفيش `limit` — الطلب كان صريح: مفيش أي أسقف.
+   */
+  groups(tenantId: string, branchId: string | null): Promise<ModelStockGroup[]>;
+  /**
+   * عدد الأصناف اللي **بره الحساب**: بلا درج أو بلا موديل.
+   *
+   * ⚠ الرقم ده لازم يتعرض. البضاعة دي مستحيل تتجمّع فمستحيل
+   * تتنبّه، والصمت هنا كان هيخلّي المستخدم فاكر إن كل حاجة
+   * محروسة — وده الفشل الصامت اللي الدفتر كله بيحذّر منه.
+   */
+  unassignedCount(tenantId: string, branchId: string | null): Promise<number>;
+  /**
+   * تصفير الرقم القياسي على الكمية الحالية. بترجّع الرقم الجديد.
+   *
+   * ⚠ دالة في القاعدة مش `update` من هنا: الرقم الجديد = المجموع
+   * الحالي، والاتنين لازم يتقروا ويتكتبوا في نفس المعاملة. لو
+   * قرينا المجموع هنا وبعدين كتبناه، أي بيعة بين الاتنين بتخلّي
+   * الرقم غلط من لحظة كتابته.
+   */
+  resetPeak(
+    tenantId: string,
+    branchId: string,
+    categoryId: string,
+    modelId: string,
+  ): Promise<number>;
+  /**
+   * علامة «موديل متوقّف».
+   *
+   * ⚠ ده `update` عادي مش دالة، على عكس اللي فوق — مفيش قراءة
+   * وكتابة لازم يبقوا في نفس المعاملة، والمحل جزء من الشرط.
+   * نفس نمط حدّ السحب على المكشوف.
+   */
+  setDiscontinued(
+    tenantId: string,
+    branchId: string,
+    categoryId: string,
+    modelId: string,
+    value: boolean,
+    at: Date,
+  ): Promise<void>;
 }
 
 // ─────────── التقارير ───────────
