@@ -8307,20 +8307,14 @@ export function productsPage(data: ProductsPageData): Html {
                     </div>
                   </div>
 
-                  ${data.canSetReorder && !isDevice
-                    ? html`<div class="field">
-                        <label class="field-label" for="reorder-${p.id}">
-                          الحد الأدنى للتنبيه
-                        </label>
-                        <input class="field-input" id="reorder-${p.id}" type="number"
-                          min="0" dir="ltr" value="${String(p.reorderPoint)}">
-                        <p class="field-hint">
-                          ${p.reorderPoint > 0
-                            ? `ينبّهك عند ${p.reorderPoint} أو أقل. صفر = معطّل.`
-                            : 'صفر = بلا تنبيه. اكتب رقمًا لتفعيله.'}
-                        </p>
-                      </div>`
-                    : ''}
+                  <!-- خانة «الحد الأدنى للتنبيه» اتشالت — مايجريشن ٦١.
+                       التنبيه بقى بالمجموعة (فرع + درج + موديل) مش
+                       بالسطر الواحد، والحد بيتحسب من الرقم القياسي
+                       تلقائيًا فمفيش رقم يتكتب بإيد.
+                       اللوحة بتاعته فوق الصفحة: «مخزون الموديلات».
+                       ⚠ عمود reorder_point ما اتمسحش من القاعدة،
+                       ولا حقل reorderPoint من النوع: الرجوع عن
+                       القرار يبقى إرجاع الكتلة دي وبس. -->
 
                   ${isDevice
                     ? html`<div class="field">
@@ -8826,6 +8820,9 @@ export function productsPage(data: ProductsPageData): Html {
         brand: m.brand,
         family: m.family,
       })),
+      // ⚠ الأزرار بتتبني بالجافاسكربت، فالصلاحية لازم توصل
+      // للسكربت. والخادم بيفحصها برضه — ده «سِمة» والقفل هناك.
+      data.canSetReorder,
     ),
     body: html`${appBar({
       fullName: data.fullName,
@@ -8863,6 +8860,38 @@ export function productsPage(data: ProductsPageData): Html {
         </div>
       </details>`
     : ''}
+
+  <!-- ══ مخزون الموديلات — مايجريشن ٦١ ══
+
+       ⚠ الوحدة هنا **المجموعة**: فرع + درج + موديل.
+
+       التنبيه القديم كان بيبصّ على السطر الواحد: الجهاز كميته ١
+       وبتبقى صفر بعد البيع، فكان بيرنّ على كل بيعة ناجحة.
+       والتنبيه اللي بيرنّ غلط بيتعوّد عليه — وساعتها بقى زينة
+       مش حارس.
+
+       ⚠ واللوحة **مخفية لما مفيش حاجة**. الكتلة الفاضية اللي
+       بتقول "كله تمام" بتعلّم العين تعدّي عليها.
+
+       ⚠ والأرقام بتيجي من نفس نداء /api/reports/alerts اللي
+       شريط اللوحة بيقرا منه. مسار تاني كان هيبقى مصدر موازي
+       ينفع يختلف يوم ما. -->
+  <details class="panel" id="ms-panel" hidden>
+    <summary>مخزون الموديلات <span id="ms-count"></span></summary>
+    <div class="panel-body">
+      <p class="field-hint">
+        الحساب بالمجموعة: الفرع والدرج والموديل مع بعض.
+        التنبيه بيرنّ لما الكمية تنزل لخُمس أعلى رقم وصلته المجموعة.
+      </p>
+      <div id="ms-rows"></div>
+
+      <!-- ⚠ الرقم ده لازم يبان.
+           البضاعة بلا درج أو بلا موديل مستحيل تتجمّع فمستحيل
+           تتنبّه — والصمت هنا كان هيخلّي المستخدم فاكر إن كل
+           حاجة محروسة. ده الفشل الصامت بعينه. -->
+      <p class="field-hint" id="ms-unassigned" hidden></p>
+    </div>
+  </details>
 
   <details class="panel" open>
     <summary>المخزون (${String(data.products.length)})</summary>
@@ -9064,6 +9093,16 @@ function productsScript(
    * ترتيبه، النموذج بيقع معاه.
    */
   models: Array<{ id: string; name: string; brand: string | null; family: string | null }>,
+  /**
+   * `inventory.reorder_point` — صاحب المحل وحده.
+   *
+   * ⚠ ده بيتحكم في **ظهور** أزرار التصفير والإيقاف بس. الخادم
+   * بيفحص نفس الصلاحية في `assertStockPolicy`.
+   *
+   * الفرق بين السِمة والقفل: إخفاء الزرار مش بيمنع حد يبعت
+   * الطلب من المتصفح. الاتنين لازم يكونوا موجودين.
+   */
+  canSetReorder: boolean,
 ): string {
   const shared = IDLE_SHARED_JS.replace('__IDLE__', String(idleTimeout))
     .replace('__WARN__', String(warnAt))
@@ -9076,6 +9115,7 @@ ${MENU_JS}
 (function () {
   var SHOP_NAME = ${JSON.stringify(shopName)};
   var ALL_MODELS = ${JSON.stringify(models)};
+  var CAN_SET_REORDER = ${JSON.stringify(canSetReorder)};
 
   var box = document.getElementById('prodmsg');
   var text = document.getElementById('prodmsg-text');
@@ -9248,12 +9288,9 @@ ${MENU_JS}
     // في كل حفظ — يعني يمسح مصدر الصفوف القديمة بصمت.
     if (entryEl && entryEl.value) body.entryDate = entryEl.value;
 
-    // ⚠ الخانة موجودة لصاحب المحل بس. غيابها من الصفحة معناه
-    // إن الحقل ما بيتبعتش أصلاً — والخادم بيفحص الصلاحية برضه.
-    var reorderEl = document.getElementById('reorder-' + id);
-    if (reorderEl && reorderEl.value !== '') {
-      body.reorderPoint = parseInt(reorderEl.value, 10);
-    }
+    // ⚠ الحد الأدنى مابقاش بيتبعت — الخانة اتشالت مع مايجريشن ٦١.
+    // التنبيه بقى بالمجموعة والحد بيتحسب من الرقم القياسي.
+    // سيبنا العمود في القاعدة، فالقيم القديمة مش بتتمسح.
 
     var customsEl = document.getElementById('customs-' + id);
     if (customsEl) body.customsCleared = customsEl.value === 'true';
@@ -11592,8 +11629,163 @@ ${MENU_JS}
     }
   }
 
+  // ══════════ مخزون الموديلات ══════════
+  //
+  // ⚠ نفس مصدر شريط اللوحة بالظبط: /api/reports/alerts.
+  // حقل modelStock جوّه الرد بيتولد من **نفس الاستعلام** اللي
+  // بيولّد صفوف التنبيه، فمستحيل الشاشتين يقولوا رقمين مختلفين.
+  //
+  // ⚠ ومفيش هنا ولا نسبة ولا مقارنة. الحالة (state) جاية
+  // محسوبة من الخادم — النسبة مكتوبة في سطر واحد في alerts.ts،
+  // ولو اتحسبت هنا كمان كان هيبقى عندنا مصدرين للرقم.
+  async function loadModelStock() {
+    var panel = document.getElementById('ms-panel');
+    var rowsHost = document.getElementById('ms-rows');
+    var countEl = document.getElementById('ms-count');
+    var unEl = document.getElementById('ms-unassigned');
+    if (!panel || !rowsHost) return;
+
+    try {
+      var res = await fetch('/api/reports/alerts', { credentials: 'same-origin' });
+      var data = await res.json().catch(function () { return null; });
+      if (!res.ok || !data || !data.ok) return;
+
+      var rows = data.modelStock || [];
+      var unassigned = data.unassignedCount || 0;
+
+      // ⚠ اللوحة بتظهر لو فيه تنبيه **أو** فيه بضاعة بره الحساب.
+      // البضاعة اللي بره الحساب لازم تبان حتى لو كل الموديلات
+      // مليانة — هي بالظبط اللي محدش بيحرسها.
+      if (rows.length === 0 && unassigned === 0) { panel.hidden = true; return; }
+
+      panel.hidden = false;
+      if (countEl) countEl.textContent = rows.length > 0 ? '(' + rows.length + ')' : '';
+      rowsHost.textContent = '';
+
+      for (var i = 0; i < rows.length; i++) {
+        var g = rows[i];
+
+        var row = document.createElement('div');
+        row.className = 'prod-row';
+
+        var main = document.createElement('div');
+        main.className = 'prod-row-main';
+
+        var name = document.createElement('span');
+        name.className = 'prod-row-name';
+        // ⚠ textContent مش innerHTML — أسماء الأدراج والموديلات
+        // نص من المستخدم.
+        name.textContent = g.categoryName + ' · ' + g.modelName;
+        main.appendChild(name);
+
+        var sub = document.createElement('span');
+        sub.className = 'prod-row-sub';
+        sub.textContent = (g.state === 'EMPTY'
+          ? 'خلص خالص'
+          : 'باقي ' + g.currentQuantity + ' من ' + g.peakQuantity)
+          + ' · ' + g.branchName;
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        if (CAN_SET_REORDER) {
+          var acts = document.createElement('div');
+          acts.className = 'prod-edit-actions';
+
+          // ⚠ المفتاح المركّب بيتكتب في سِمة واحدة عشان الزرار
+          // يفضل مستقل عن ترتيب الصفوف. لو اعتمدنا على الفهرس،
+          // أول تحديث بيخلّي الزرار يشاور على مجموعة تانية.
+          var key = g.branchId + '|' + g.categoryId + '|' + g.modelId;
+
+          var reset = document.createElement('button');
+          reset.className = 'btn-mini';
+          reset.type = 'button';
+          reset.textContent = 'صفّر الرقم (' + g.peakQuantity + ' ← ' + g.currentQuantity + ')';
+          reset.setAttribute('data-ms-reset', key);
+          acts.appendChild(reset);
+
+          var stop = document.createElement('button');
+          stop.className = 'btn-mini';
+          stop.type = 'button';
+          stop.setAttribute('data-danger', 'true');
+          stop.textContent = 'بطّلت أجيبه';
+          stop.setAttribute('data-ms-stop', key);
+          acts.appendChild(stop);
+
+          row.appendChild(acts);
+        }
+
+        rowsHost.appendChild(row);
+      }
+
+      if (unEl) {
+        if (unassigned > 0) {
+          unEl.textContent = unassigned + ' صنف بره الحساب — بلا درج أو بلا موديل، '
+            + 'فمستحيل يتنبّه عليه. افتح الصنف وحدّد درجه وموديله.';
+          unEl.hidden = false;
+        } else {
+          unEl.hidden = true;
+        }
+      }
+    } catch (err) {
+      // ⚠ صامت عن قصد: فشل اللوحة دي ما يصحّش يوقّع شاشة البضاعة.
+      // وده مش إخفاء عطل — المخزون نفسه ظاهر في القايمة تحت،
+      // واللوحة دي قراءة تانية ليه مش المصدر.
+    }
+  }
+
+  // ── أزرار المجموعة ──
+  //
+  // ⚠ المفتاح بيتفكّ هنا مرة واحدة. الخادم بيستقبل التلات
+  // معرّفات مفكوكة — لو بعتنا النص المركّب، كان لازم يتفكّ في
+  // مكانين والاتنين ينفع يختلفوا.
+  function msTarget(key) {
+    var parts = String(key || '').split('|');
+    if (parts.length !== 3) return null;
+    return { branchId: parts[0], categoryId: parts[1], modelId: parts[2] };
+  }
+
+  document.addEventListener('click', async function (e) {
+    if (!e.target.closest) return;
+
+    var resetBtn = e.target.closest('[data-ms-reset]');
+    if (resetBtn) {
+      var t1 = msTarget(resetBtn.getAttribute('data-ms-reset'));
+      if (!t1) { say('المجموعة غير معروفة.', false); return; }
+
+      // ⚠ سؤال قبل التنفيذ. الرقم القياسي بيتمسح ومفيش رجوع
+      // ليه — التاريخ اللي فات مش مخزّن في أي مكان تاني.
+      if (!confirm('هيبقى الرقم القياسي هو الكمية الحالية. الرقم القديم بيضيع نهائيًا. تمام؟')) {
+        return;
+      }
+
+      var r1 = await send('/api/products/model-stock/reset', t1, resetBtn, 'جارٍ…');
+      if (r1) {
+        say('اتصفّر. الرقم القياسي بقى ' + r1.peakQuantity + '.', true);
+        await loadModelStock();
+      }
+      return;
+    }
+
+    var stopBtn = e.target.closest('[data-ms-stop]');
+    if (stopBtn) {
+      var t2 = msTarget(stopBtn.getAttribute('data-ms-stop'));
+      if (!t2) { say('المجموعة غير معروفة.', false); return; }
+
+      t2.value = true;
+      var r2 = await send('/api/products/model-stock/discontinued', t2, stopBtn, 'جارٍ…');
+      if (r2) {
+        // ⚠ الرسالة بتقول إنه بيرجع لوحده. من غيرها المستخدم
+        // بيفتكرها إخفاء دائم، وساعتها مش هيثق في إنه يضغطها.
+        say('اتوقّف. هيرجع لوحده أول ما بضاعة جديدة تدخل المجموعة دي.', true);
+        await loadModelStock();
+      }
+      return;
+    }
+  });
+
   loadTransfers();
   loadQuarantine();
+  loadModelStock();
 })();
 `;
 }
