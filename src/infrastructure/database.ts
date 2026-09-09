@@ -68,6 +68,7 @@ import type {
   TicketStatus,
   TransferRepository,
   AlertRow,
+  ExitedProductInfo,
   ModelStockGroup,
   ModelStockRepository,
   ReportRepository,
@@ -1803,6 +1804,31 @@ export function createColorRepository(db: SupabaseClient): ColorRepository {
 
 export function createProductRepository(db: SupabaseClient): ProductRepository {
   return {
+    /**
+     * ⚠ استعلام مستقل مش عمود جوّه `list`.
+     *
+     * السبب إن المعلومة دي من **جدول تاني** (`sale_items`)،
+     * وضمّها لقائمة البضاعة كان معناه ربط كل صف بفواتيره في
+     * كل فتحة للشاشة — تمن كبير على معلومة بتخصّ الصفوف اللي
+     * كميتها صفر بس.
+     */
+    async exitedInfo(tenantId, branchId) {
+      const { data, error } = await db.rpc('fn_exited_products', {
+        p_tenant_id: tenantId,
+        p_branch_id: branchId,
+      });
+      if (error) throw Errors.internal(`fn_exited_products: ${error.message}`);
+
+      return ((data as Array<Record<string, unknown>> | null) ?? []).map(
+        (row): ExitedProductInfo => ({
+          productId: String(row.product_id),
+          soldQuantity: Number(row.sold_quantity ?? 0),
+          lastSoldAt: row.last_sold_at ? String(row.last_sold_at) : null,
+          quarantinedQuantity: Number(row.quarantined_quantity ?? 0),
+        }),
+      );
+    },
+
     async list(scope, options: ProductListOptions) {
       let query = db
         .from('products')
