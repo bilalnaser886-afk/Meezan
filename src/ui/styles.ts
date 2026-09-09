@@ -482,6 +482,85 @@ button{font:inherit}
 /* زرارين جنب بعض في شاشة المسح: إلغاء والكتابة اليدوية */
 .scan-box .btn-mini{margin:0 4px}
 
+/* ═══ ماسح الرمز — إطار التصويب ═══
+
+   ⚠ الإطار مش زينة. هو اللي بيقول للموظّف يحط الرمز فين،
+   والقارئ بيقص من **نص الصورة** — فاللي بره الإطار ممكن
+   يتفوّت. من غير الإطار الموظّف بيصوّب على الملصق كله
+   والرمز بيبقى في ركن.
+
+   ⚠ والفيديو ملوّ الشاشة (cover) مش محبوس في مربّع: الرمز
+   بياخد بيكسلات أكتر، وده الفرق بين يتقرا وما يتقراش. */
+.scan-wrap-qr .scan-box{width:min(100vw,560px)}
+.scan-stage{position:relative;width:100%;height:56vh;
+  border-radius:var(--r);overflow:hidden;background:#000}
+.scan-wrap-qr .scan-video{position:absolute;inset:0;
+  width:100%;height:100%;max-height:none;border-radius:0;
+  object-fit:cover}
+.scan-frame{position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:min(62%,240px);aspect-ratio:1;
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.5);
+  border-radius:18px;pointer-events:none}
+.scan-frame i{position:absolute;width:30px;height:30px;border:3px solid #fff}
+.scan-frame i:nth-child(1){inset-block-start:0;inset-inline-start:0;
+  border-width:3px 0 0 3px;border-start-start-radius:16px}
+.scan-frame i:nth-child(2){inset-block-start:0;inset-inline-end:0;
+  border-width:3px 3px 0 0;border-start-end-radius:16px}
+.scan-frame i:nth-child(3){inset-block-end:0;inset-inline-start:0;
+  border-width:0 0 3px 3px;border-end-start-radius:16px}
+.scan-frame i:nth-child(4){inset-block-end:0;inset-inline-end:0;
+  border-width:0 3px 3px 0;border-end-end-radius:16px}
+/* ⚠ سطر الخطأ لونه مختلف عن التلميحة: التلميحة بتقول اعمل
+   إيه، والخطأ بيقول إيه اللي حصل. لو الاتنين بنفس الشكل،
+   الموظّف بيقرا الأولانية بس. */
+.scan-err{color:#FCA5A5;font-size:var(--fs-3);margin:0 0 10px;
+  min-height:1.2em;padding:0 10px;line-height:1.8}
+
+/* ═══ مربّع المسح جوّه خانة البحث ═══
+
+   ⚠ المربّع على الطرف الشمال (inline-end في RTL) عن قصد.
+   الكتابة بتبدأ من اليمين، فالطرف ده هو الوحيد اللي مستحيل
+   الإصبع يلمسه وهو بيكتب.
+
+   ⚠ والحشو على الخانة مش هامش على المربّع: الهامش كان هيسيب
+   النص يعدّي تحت المربّع لما يطول. */
+.scan-field{position:relative}
+/* ⚠ الحشو 84 مش 46: بقى فيه مربّعين. لو فضل 46، النص الطويل
+   كان هيعدّي تحت مربّع الصورة ويتقرا نص حرف. */
+.scan-field .field-input{padding-inline-end:84px}
+.scan-tools{position:absolute;inset-inline-end:7px;top:50%;
+  transform:translateY(-50%);display:flex;gap:6px}
+.scan-sq{width:34px;height:34px;padding:0;
+  display:grid;place-items:center;
+  border:1px solid var(--line);border-radius:9px;
+  background:var(--card);color:var(--ink);cursor:pointer;
+  /* ⚠ 34 بكسل مش أصغر: ده الحد اللي الإصبع بيصيبه من أول مرة.
+     أي حاجة تحته بتخلّي الموظّف يدوس مرتين وتلاتة. */
+  -webkit-tap-highlight-color:transparent}
+.scan-sq:active{background:var(--line)}
+.scan-sq svg{width:19px;height:19px;display:block}
+
+/* ═══ ورقة تفاصيل الجهاز بعد المسح ═══ */
+.qr-sheet-wrap{position:fixed;inset:0;z-index:290;
+  display:grid;place-items:end center;
+  background:rgba(0,0,0,.55);
+  padding:0 0 env(safe-area-inset-bottom)}
+.qr-sheet-card{width:min(100%,520px);background:var(--card);
+  border-top-left-radius:18px;border-top-right-radius:18px;
+  border:1px solid var(--line);border-bottom:0;
+  padding:18px var(--pad) 20px;
+  max-height:82vh;overflow:auto}
+.qr-sheet-title{font-family:var(--font-display);font-size:var(--fs-7);
+  font-weight:600;margin-bottom:12px}
+.qr-sheet-row{display:flex;justify-content:space-between;gap:14px;
+  padding:8px 0;border-bottom:1px solid var(--line)}
+.qr-sheet-row span{color:var(--ink-soft)}
+.qr-sheet-row b{font-family:var(--font-mono);text-align:end}
+.qr-sheet-note{color:var(--ink-soft);font-size:var(--fs-2);margin:10px 0 0}
+.qr-sheet-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.qr-sheet-acts .btn-primary{flex:1 1 100%}
+
 @media print{
   body > *{display:none !important}
   #print-root{display:block !important;color:#000;background:#fff}
