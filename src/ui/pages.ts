@@ -8079,6 +8079,23 @@ export interface ProductsPageData {
   }>;
   /** للمالك بس — لاختيار الفرع عند الإضافة */
   branches: Array<{ id: string; name: string }>;
+  /**
+   * معلومة الخروج لكل صنف كميته صفر — مايجريشن ٦٢.
+   *
+   * ⚠ مصدرها **جدول الفواتير** مش جدول البضاعة. عشان كده هي
+   * قايمة منفصلة مش حقل جوّه `products`: المنتج ليه مصدر واحد،
+   * والفاتورة مصدر تاني، ودمجهم كان هيخلّي الاتنين ينفعوا
+   * يختلفوا.
+   *
+   * ⚠ فاضية = الاستعلام فشل. الصفوف بتفضل ظاهرة بعلامة «خرج»
+   * بدل «انباع» — يعني الفرق بيبان في الشاشة مش بيختفي.
+   */
+  exitedInfo: Array<{
+    productId: string;
+    soldQuantity: number;
+    lastSoldAt: string | null;
+    quarantinedQuantity: number;
+  }>;
   products: Array<{
     id: string;
     name: string;
@@ -8169,20 +8186,60 @@ export interface ProductsPageData {
  * في طبقة قاعدة البيانات قبل ما البيانات تسيب الخادم.
  */
 export function productsPage(data: ProductsPageData): Html {
-  const rows =
-    data.products.length === 0
-      ? html`<div class="empty">
-          <p class="empty-title">لا توجد بضاعة بعد</p>
-          <p class="empty-note">
-            ${data.canEdit
-              ? 'ابدأ بإضافة أول منتج من القسم أعلاه.'
-              : 'يضيف المديرُ البضاعةِ.'}
-          </p>
-        </div>`
-      : html`${data.products.map((p) => {
+  // ══ ⚠ القسمة: اللي في المحل واللي خرج ══
+  //
+  // المعيار **الكمية صفر** مش «انباع». الكمية صفر معناها مش
+  // عندك، وده اللي الجدول بيعرفه فعلاً. أما «ليه» فبتجاوب عليه
+  // معلومة الفاتورة تحت.
+  //
+  // ⚠ ورفّ المراجعة **مش خروج**: المرتجع كميته المتاحة صفر
+  // وهو في المحل. لو عددناه خارج، كنا هنعدّ نفس القطعة مرتين —
+  // مرة في الرفّ ومرة في اللوحة دي.
+  const exitMap = new Map(data.exitedInfo.map((e) => [e.productId, e]));
+
+  const isExited = (id: string, quantityOnHand: number): boolean =>
+    quantityOnHand === 0 && (exitMap.get(id)?.quarantinedQuantity ?? 0) === 0;
+
+  const inStock = data.products.filter((p) => !isExited(p.id, p.quantityOnHand));
+  const exited = data.products.filter((p) => isExited(p.id, p.quantityOnHand));
+
+  /**
+   * ⚠ نفس بناء الصف للقايمتين.
+   *
+   * الصف اتحوّل لدالة بدل ما يتكرر: نسختين من ماركب واحد كانوا
+   * هيختلفوا يوم ما، ووقتها الصنف اللي خرج يبقى شكله غير الصنف
+   * اللي في المحل بلا سبب. فخ ١٧ بالحرف.
+   */
+  const productRow = (p: ProductsPageData['products'][number]): Html => {
           const isDevice = p.productType === 'device';
           const priceLabel =
             p.pricePiastres === null ? 'بلا سعر' : `${formatPiastres(p.pricePiastres)} ج.م`;
+
+          // ══ ⚠ «انباع» بقت جملة معروفة مش تخمين ══
+          //
+          // كانت: الكمية صفر ← اكتب «انباع». والجهاز بيوصل
+          // لصفر بأربع طرق (بيعة · تحويل · خصم جرد · ورشة)،
+          // يعني الشاشة كانت بتقول حاجة مش عارفاها.
+          //
+          // دلوقتي الفاتورة هي اللي بتقول. ومفيش فاتورة =
+          // «خرج» — وده كشف مش نقص معلومة.
+          const exit = exitMap.get(p.id);
+          const soldReally = (exit?.soldQuantity ?? 0) > 0;
+          //
+          // ⚠ ورفّ المراجعة قبل الاتنين. الحاجة دي كميتها
+          // المتاحة صفر وهي **في المحل** — ولو كتبنا عليها
+          // «انباع» كنا هنقول إنها مشيت وهي على الرفّ قدامك.
+          // (والمحاكاة هي اللي مسكت دي، مش الفاحص.)
+          const qtyLabel =
+            p.quantityOnHand > 0
+              ? isDevice
+                ? 'متاح'
+                : String(p.quantityOnHand)
+              : (exit?.quarantinedQuantity ?? 0) > 0
+                ? 'في الرفّ'
+                : soldReally
+                  ? 'انباع'
+                  : 'خرج';
 
           return html`<div class="prod-row" data-row="${p.id}" data-pid="${p.id}"
             data-searchable="${p.name} ${p.serialNumber ?? ''}${
@@ -8229,7 +8286,7 @@ export function productsPage(data: ProductsPageData): Html {
 
             <div class="prod-row-side">
               <span class="prod-row-qty" data-zero="${p.quantityOnHand === 0 ? 'true' : 'false'}">
-                ${isDevice ? (p.quantityOnHand > 0 ? 'متاح' : 'انباع') : String(p.quantityOnHand)}
+                ${qtyLabel}
               </span>
               ${data.canEdit
                 ? html`<button class="btn-mini" type="button" data-edit="${p.id}">تعديل</button>`
@@ -8440,7 +8497,77 @@ export function productsPage(data: ProductsPageData): Html {
                 </div>`
               : ''}
           </div>`;
-        })}`;
+  };
+
+  const rows =
+    inStock.length === 0
+      ? html`<div class="empty">
+          <p class="empty-title">لا توجد بضاعة في المخزون</p>
+          <p class="empty-note">
+            ${data.canEdit
+              ? 'ابدأ بإضافة أول منتج من القسم أعلاه.'
+              : 'يضيف المديرُ البضاعةِ.'}
+          </p>
+        </div>`
+      : html`${inStock.map(productRow)}`;
+
+  // ══ لوحة «البضاعة اللي خرجت» — مايجريشن ٦٢ ══
+  //
+  // ⚠ مجمّعة **بالدرج** مش قايمة مسطّحة. الطلب كان صريح: اللي
+  // يخرج يتحط في درجه. والدرج هنا عنوان مكتوب، مش شريحة فلتر —
+  // الشرايح فوق بتخدم المخزون، وتكرارها هنا كان هيدّي شريطين
+  // شكلهم واحد وبيعملوا حاجتين.
+  //
+  // ⚠ والأحدث فوق. الترتيب بتاريخ آخر فاتورة، واللي مالوش
+  // فاتورة بيروح لآخر مجموعته — هو أصلاً اللي محتاج مراجعة
+  // مش متابعة.
+  const exitedGroups = (() => {
+    const nameOf = new Map(data.categories.map((c) => [c.id, c.name]));
+    const buckets = new Map<string, typeof exited>();
+
+    for (const p of exited) {
+      // ⚠ «بلا درج» مجموعة زي أي مجموعة، مش صفوف مرمية في
+      // الآخر. الصنف اللي مالوش درج هو بالظبط اللي بيهرب من
+      // كل تنظيم — فبيتحط في عنوان صريح باسمه.
+      const key = p.categoryId ?? '__none__';
+      const list = buckets.get(key);
+      if (list) list.push(p);
+      else buckets.set(key, [p]);
+    }
+
+    const at = (id: string): number => {
+      const iso = exitMap.get(id)?.lastSoldAt;
+      return iso ? Date.parse(iso) : 0;
+    };
+
+    return [...buckets.entries()]
+      .map(([id, items]) => ({
+        id,
+        name: id === '__none__' ? 'بلا درج' : (nameOf.get(id) ?? 'درج محذوف'),
+        items: [...items].sort((a, b) => at(b.id) - at(a.id)),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  })();
+
+  const exitedPanel =
+    exited.length === 0
+      ? ''
+      : html`<details class="panel" id="exited-panel">
+          <summary>البضاعة اللي خرجت (${String(exited.length)})</summary>
+          <div class="panel-body">
+            <p class="field-hint">
+              أصناف كميتها صفر. «انباع» معناها إن عليها فاتورة فعلاً،
+              و«خرج» معناها إنها مشيت من غير فاتورة — يا إما اتحوّلت
+              لفرع تاني، يا إما محتاجة مراجعة.
+            </p>
+            <div id="exited-rows">
+              ${exitedGroups.map(
+                (g) => html`<p class="field-label">${g.name} (${String(g.items.length)})</p>
+                  ${g.items.map(productRow)}`,
+              )}
+            </div>
+          </div>
+        </details>`;
 
   const addPanel = !data.canEdit
     ? ''
@@ -8894,7 +9021,7 @@ export function productsPage(data: ProductsPageData): Html {
   </details>
 
   <details class="panel" open>
-    <summary>المخزون (${String(data.products.length)})</summary>
+    <summary>المخزون (${String(inStock.length)})</summary>
     <div class="panel-body">
       <!-- ══ شريط الأدوات ══
 
@@ -9066,6 +9193,8 @@ export function productsPage(data: ProductsPageData): Html {
       ${rows}
     </div>
   </details>
+
+  ${exitedPanel}
 </main>
 
 ${tabBar('products', {
@@ -10587,8 +10716,23 @@ ${MENU_JS}
       // ⚠ الستة كلهم بـ"و". كل شريط بيضيّق اللي قبله، فـ
       // "جرابات" + "١٢ برو ماكس" + "أسود" = الجراب الأسود
       // للـ١٢ برو ماكس بالظبط.
-      var match = browsing && okText && okMode && okFamily && okDrawer && okModel
-        && okColor && okStorage && okCustoms;
+      // ══ ⚠ صفوف «البضاعة اللي خرجت» ليها قاعدة تانية ══
+      //
+      // الصفوف دي مجمّعة بالدرج جوّه لوحتها، والشرايح فوق
+      // بتخدم المخزون. لو طبّقنا عليها نفس الشرط، اللوحة كانت
+      // هتفتح فاضية لحد ما تختار درج — وشكلها هيبقى عطل.
+      //
+      // ⚠ بس البحث لازم يوصلها. سريال جهاز اتباع بتدوّر عليه
+      // في الضمان، ولو اللوحة اتقفلت على البحث كان لازم تفتحها
+      // وتقلّب بإيدك.
+      //
+      // القاعدة: مفيش بحث ← بيّن الكل · فيه بحث ← النص بس.
+      var isExitedRow = !!row.closest('#exited-rows');
+
+      var match = isExitedRow
+        ? (!q || okText)
+        : (browsing && okText && okMode && okFamily && okDrawer && okModel
+          && okColor && okStorage && okCustoms);
       row.hidden = !match;
 
       // لوحة التعديل بتتخفي مع صفها
