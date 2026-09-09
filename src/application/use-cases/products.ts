@@ -50,6 +50,7 @@ import type {
   ProductType,
   UpdateProductInput,
   UserRepository,
+  ExitedProductInfo,
 } from '../ports';
 
 export interface ProductDeps {
@@ -240,6 +241,28 @@ export async function listProducts(
     includeCost: canSeeCost(actor),
     activeOnly: options.activeOnly ?? false,
   });
+}
+
+/**
+ * معلومات البضاعة اللي خرجت — لِلوحة «البضاعة اللي خرجت».
+ *
+ * ⚠ نفس صلاحية عرض المخزون. الخروج معلومة مخزون مش معلومة
+ * مالية: الرقم اللي بيرجع هو **عدد القطع** مش مبلغ الفاتورة.
+ *
+ * ⚠ ونفس النطاق بالحرف: المالك كل فروعه، وغيره فرعه —
+ * fail-closed. لو استخدمنا نطاق مختلف عن `listProducts`، كان
+ * ممكن يرجع معلومة خروج لصف مش ظاهر في القايمة أصلاً.
+ */
+export async function listExitedInfo(
+  deps: ProductDeps,
+  actor: AuthenticatedUser,
+): Promise<ExitedProductInfo[]> {
+  if (!actor.permissions.includes(PERMISSIONS.INVENTORY_VIEW)) {
+    throw Errors.forbidden(PERMISSIONS.INVENTORY_VIEW);
+  }
+
+  const scope = scopeFor(actor);
+  return deps.products.exitedInfo(scope.tenantId, scope.branchId ?? null);
 }
 
 /** قائمة شاشة الكاشير: المفعّل والمتاح بس */
