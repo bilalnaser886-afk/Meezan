@@ -45,7 +45,9 @@ import {
   listMovements,
   listTransfers,
 } from './application/use-cases/treasury';
-import { listCategories, listColors, listModels, listProducts, listSellableProducts } from './application/use-cases/products';
+import { listCategories, listColors, listModels, listProducts, listSellableProducts,
+  listExitedInfo,
+} from './application/use-cases/products';
 import { listSupplierNames } from './application/use-cases/purchases';
 import { listShopAccounts } from './application/use-cases/shops';
 import { DEFAULT_WARRANTY_DAYS, listSales } from './application/use-cases/sales';
@@ -585,6 +587,20 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
         .catch(() => [])
     : [];
 
+  // ══ البضاعة اللي خرجت — مايجريشن ٦٢ ══
+  //
+  // ⚠ `catch` بيرجّع قايمة فاضية: فشل المعلومة دي ما يصحّش
+  // يوقّع شاشة البضاعة كلها. المخزون هو الأصل، واللوحة دي
+  // قراءة تانية جنبه.
+  //
+  // ⚠ وده **مش فشل صامت**: الصفوف نفسها بتفضل ظاهرة في اللوحة
+  // بعلامة «خرج بلا بيعة»، يعني الفرق بيبان في الشاشة. اللي
+  // بيضيع هو تمييز المباع بس، مش الصف.
+  const exitedInfo = await listExitedInfo(container.products, user).catch((err) => {
+    console.error('[products] تعذّر جلب بيانات الخروج:', err);
+    return [];
+  });
+
   return c.html(
     productsPage({
       fullName: user.fullName,
@@ -620,6 +636,10 @@ app.get('/products', requireAuth({ redirectOnFail: true }), async (c) => {
       canSendToRepair: user.permissions.includes(PERMISSIONS.MAINTENANCE_MANAGE),
       repairShops,
       products,
+      // ⚠ معلومة الخروج منفصلة عن المنتج نفسه عن قصد: مصدرها
+      // جدول الفواتير مش جدول البضاعة. لو دمجناها في `products`،
+      // كان هيبقى للمنتج مصدرين وينفع يختلفوا.
+      exitedInfo,
       today: todayInCairo(),
       idleTimeoutSeconds: idleRule.seconds,
       idleWarningSeconds: SESSION_POLICY.IDLE_WARNING_SECONDS,
