@@ -8523,6 +8523,12 @@ export function productsPage(data: ProductsPageData): Html {
   // مش متابعة.
   const exitedGroups = (() => {
     const nameOf = new Map(data.categories.map((c) => [c.id, c.name]));
+    // ⚠ ترتيب الأدراج من `sortOrder` مش أبجدي.
+    //
+    // الأبجدي كان هيخلّي اللوحة دي مرتّبة بشكل مختلف عن كل شاشة
+    // تانية في النظام بلا سبب — والمستخدم بيتعلّم مكان الدرج
+    // بعينه، فتغيير الترتيب في شاشة واحدة بيضيّع التعلّم ده.
+    const orderOf = new Map(data.categories.map((c) => [c.id, c.sortOrder]));
     const buckets = new Map<string, typeof exited>();
 
     for (const p of exited) {
@@ -8546,7 +8552,13 @@ export function productsPage(data: ProductsPageData): Html {
         name: id === '__none__' ? 'بلا درج' : (nameOf.get(id) ?? 'درج محذوف'),
         items: [...items].sort((a, b) => at(b.id) - at(a.id)),
       }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+      // ⚠ «بلا درج» آخر واحد دايمًا. هو مش درج حقيقي، وتقدير
+      // مكانه بين الأدراج كان هيخلّيه يتنقل كل ما درج يتضاف.
+      .sort((a, b) => {
+        if (a.id === '__none__') return 1;
+        if (b.id === '__none__') return -1;
+        return (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0);
+      });
   })();
 
   const exitedPanel =
