@@ -1001,7 +1001,12 @@ productRoutes.get(
 
 interface ModelStockBody {
   branchId?: string;
-  categoryId?: string;
+  /**
+   * ⚠ مفتاح الدرج مش معرّف درج.
+   * 'DEVICE' للأجهزة · 'NOCAT' للإكسسوار بلا درج · وغير كده
+   * معرّف حقيقي. الأجهزة مالهاش `category_id` أصلاً.
+   */
+  drawerKey?: string;
   modelId?: string;
 }
 
@@ -1015,7 +1020,7 @@ productRoutes.post(
 
     const result = await resetModelPeak(container.alerts, c.get('user'), {
       branchId: body.branchId,
-      categoryId: body.categoryId,
+      drawerKey: body.drawerKey,
       modelId: body.modelId,
     });
 
@@ -1045,7 +1050,7 @@ productRoutes.post(
     await setModelDiscontinued(
       container.alerts,
       c.get('user'),
-      { branchId: body.branchId, categoryId: body.categoryId, modelId: body.modelId },
+      { branchId: body.branchId, drawerKey: body.drawerKey, modelId: body.modelId },
       body.value,
     );
 
