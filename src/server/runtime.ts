@@ -50,6 +50,7 @@ import {
   createProductRepository,
   createRateLimiter,
   createAlertRepository,
+  createModelStockRepository,
   createClosingRepository,
   createMaintenanceRepository,
   createPurchaseRepository,
@@ -188,12 +189,22 @@ export function buildContainer(env: Env): Container {
     },
     alerts: {
       alerts: createAlertRepository(db),
+      // ⚠ مخزون الموديلات — مايجريشن ٦١.
+      //
+      // مستودع مستقل مش دالة جوّه `createAlertRepository`:
+      // ده بيقرا **ويكتب** (تصفير الرقم القياسي · إيقاف موديل)،
+      // ومستودع التنبيهات كله قراءة. خلطهم كان هيخلّي اسم
+      // "التنبيهات" يكدب على نص محتواه.
+      modelStock: createModelStockRepository(db),
       // ⚠ **نفس النسخة** اللي شاشة الخزينة بتستخدمها، مش واحدة
       // جديدة. `treasuryRepo` متعرّفة فوق ومستخدمة في كذا مكان،
       // وإنشاء نسخة تانية هنا كان هيبقى مسار قراءة موازي —
       // ينفع يختلف يوم ما من غير ما حد ياخد باله.
       treasuries: treasuryRepo,
       clock: systemClock,
+      // ⚠ التصفير والإيقاف قرارات بتغيّر سلوك التنبيه — وقرار
+      // بلا سجل معناه إن حد سكّت تنبيه ومحدش يعرف مين ولا إمتى.
+      audit,
     },
     transfers: {
       transfers: createTransferRepository(db),
